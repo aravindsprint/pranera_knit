@@ -1,0 +1,20 @@
+<script>window.csrf_token="{{ csrf_token }}";</script>
+{%- raw -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Knit App — Pranera</title>
+  <meta name="theme-color" content="#0f6e56"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-title" content="Knit App"/>
+  <link rel="stylesheet" href="/assets/pranera_knit/knit_app/index.css"/>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/assets/pranera_knit/knit_app/index.js"></script>
+</body>
+</html>
+{%- endraw -%}

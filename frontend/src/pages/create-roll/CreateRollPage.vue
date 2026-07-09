@@ -1,0 +1,1934 @@
+<template>
+  <div class="cr-page">
+
+    <!-- Header -->
+    <AppHeader
+      title="Create Roll"
+      :subtitle="rollStore.productData?.name || ''"
+      :username="auth.username"
+      :designation="auth.designation"
+      :show-back="true"
+      active=""
+    />
+
+    <!-- Reset button (top-right, next to back arrow) -->
+    <button class="cr-reset-btn" @click="resetSession" title="Reset session">↺</button>
+
+    <!-- Loading overlay -->
+    <div v-if="initializing" class="cr-overlay">
+      <div class="cr-overlay__spinner"></div>
+      <div class="cr-overlay__text">{{ loadingMsg }}</div>
+    </div>
+
+    <div class="cr-content">
+
+      <!-- Product info card -->
+      <div class="cr-info-card" v-if="rollStore.productData">
+        <div class="cr-info-row">
+          <div class="cr-info-item">
+            <span class="cr-info-label">JOB CARD</span>
+            <span class="cr-info-value">{{ rollStore.productData.name }}</span>
+          </div>
+          <div class="cr-info-item">
+            <span class="cr-info-label">WORK ORDER</span>
+            <span class="cr-info-value">{{ rollStore.productData.work_order || '—' }}</span>
+          </div>
+        </div>
+        <div class="cr-info-divider"></div>
+        <div class="cr-info-row">
+          <div class="cr-info-item">
+            <span class="cr-info-label">ITEM</span>
+            <span class="cr-info-value cr-info-value--mono">{{ rollStore.productData.production_item || '—' }}<span v-if="rollStore.productData.commercial_name" class="cr-info-commercial"> · {{ rollStore.productData.commercial_name }}</span></span>
+          </div>
+          <div class="cr-info-item" v-if="rollStore.productData.workstation">
+            <span class="cr-info-label">WORKSTATION</span>
+            <span class="cr-info-value">{{ rollStore.productData.workstation }}</span>
+          </div>
+        </div>
+        <div class="cr-info-row" style="margin-top:8px" v-if="batchNo">
+          <div class="cr-info-item">
+            <span class="cr-info-label">BATCH</span>
+            <span class="cr-info-value cr-info-value--batch">{{ batchNo }}</span>
+          </div>
+          <div class="cr-info-item" v-if="rollStore.productData.status">
+            <span class="cr-info-label">STATUS</span>
+            <span :class="`cr-status cr-status--${statusColor(rollStore.productData.status)}`">
+              {{ rollStore.productData.status }}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast notification -->
+      <transition name="toast">
+        <div v-if="toast.show" :class="`cr-toast cr-toast--${toast.type}`">
+          {{ toast.msg }}
+        </div>
+      </transition>
+
+      <!-- ── START JOB (if not started) ── -->
+      <div class="cr-card" v-if="!isJobStarted && !isRollActive && !showEndRollForm && !showPrintButtons && !isJobSubmitted && !isJobCancelled">
+        <div class="cr-card__title">Start Job</div>
+        <div v-if="assignedEmployee" class="cr-assigned-badge">👤 {{ assignedEmployee }}</div>
+        <div v-else class="cr-no-employee-warn">⚠ No employee assigned — assign one before starting</div>
+        <p class="cr-card__desc">Start this job card to begin recording rolls. This will mark the job as Work In Progress.</p>
+        <button class="cr-btn cr-btn--primary cr-btn--full cr-btn--lg" @click="startJob">
+          ▶ Start Job
+        </button>
+      </div>
+
+      <!-- ── START NEW ROLL (job started, no active roll) ── -->
+      <div class="cr-card" v-if="isJobStarted && !isRollActive && !showEndRollForm && !showPrintButtons && !isJobSubmitted">
+        <div class="cr-card__title">{{ rollCount > 0 ? "Continue Rolling" : "Start Rolling" }}</div>
+        <div v-if="rollCount > 0" style="margin-bottom:14px">
+          <div class="cr-alert cr-alert--success">
+            ✓ {{ rollCount }} roll(s) completed · {{ totalRollWeight.toFixed(3) }} kg total
+          </div>
+        </div>
+        <p class="cr-card__desc">
+          {{ rollCount > 0 ? "Start another roll for this job card." : "No rolls created yet. Start the first roll." }}
+        </p>
+        <button class="cr-btn cr-btn--primary cr-btn--full cr-btn--lg" @click="startNewRoll" :disabled="creatingRoll">
+          <span v-if="creatingRoll" class="cr-spinner"></span>
+          {{ creatingRoll ? "Starting…" : "▶ Start New Roll" }}
+        </button>
+        <button
+          v-if="rollCount > 0"
+          class="cr-btn cr-btn--submit cr-btn--full"
+          style="margin-top:10px"
+          @click="submitJobCard"
+          :disabled="submitting"
+        >
+          ✓ Submit Job Card
+        </button>
+      </div>
+
+      <!-- ── ACTIVE ROLL TIMER ── -->
+      <div class="cr-timer-card" v-if="isRollActive && !showEndRollForm">
+        <div class="cr-timer-card__header">
+          <div class="cr-timer-badge">RUNNING</div>
+          <div class="cr-timer-rollno">Roll #{{ currentRollNo }}</div>
+        </div>
+        <div class="cr-timer-display">{{ formattedRunningTime }}</div>
+
+        <!-- Breakdown stats -->
+        <div class="cr-timer-stats" v-if="totalBreakdownTime > 0">
+          <div class="cr-timer-stat">
+            <span class="cr-timer-stat__num">{{ formatTime(totalBreakdownTime) }}</span>
+            <span class="cr-timer-stat__lbl">Breakdown Time</span>
+          </div>
+          <div class="cr-timer-stat">
+            <span class="cr-timer-stat__num">{{ formatTime(Math.max(0, runningTime - totalBreakdownTime)) }}</span>
+            <span class="cr-timer-stat__lbl">Net Production</span>
+          </div>
+        </div>
+
+        <!-- Breakdown in progress -->
+        <div class="cr-alert cr-alert--warning" v-if="isBreakdownActive">
+          ⚠ Breakdown in progress — {{ formatTime(breakdownDuration) }}
+        </div>
+
+        <!-- Actions -->
+        <div class="cr-timer-actions">
+          <button class="cr-btn cr-btn--breakdown" @click="recordBreakdown">
+            {{ isBreakdownActive ? '▶ End Breakdown' : '⏸ Breakdown' }}
+          </button>
+          <button
+            class="cr-btn cr-btn--end"
+            @click="endCurrentRoll"
+            :disabled="!canClickEndRoll"
+          >
+            {{ canClickEndRoll ? '⏹ End Roll' : `Wait ${endRollCooldownTime}` }}
+          </button>
+        </div>
+        <!-- Print last completed roll's label -->
+        <button
+          v-if="lastCompletedRollData"
+          class="cr-btn cr-btn--ghost cr-btn--full"
+          style="margin-top:10px"
+          @click="generatePrintLabel"
+        >
+          📱 Print / QR — Roll #{{ lastCompletedRollData.roll_no }}
+        </button>
+        <!-- Submit job (end last roll + submit) -->
+        <button
+          class="cr-btn cr-btn--submit cr-btn--full"
+          style="margin-top:10px"
+          @click="endRollAndSubmitJob"
+          :disabled="!canClickEndRoll"
+        >
+          ✓ End Roll & Submit Job Card
+        </button>
+      </div>
+
+      <!-- ── END ROLL FORM ── -->
+      <div class="cr-card" v-if="showEndRollForm">
+        <div class="cr-card__title">
+          {{ isJobSubmissionMode ? '⏹ End Roll & Submit Job' : '⏹ End Roll' }}
+        </div>
+        <div class="cr-card__subtitle" v-if="completingRollNo">
+          Completing Roll #{{ completingRollNo }}
+        </div>
+
+        <div class="cr-field">
+          <label class="cr-label">Roll Weight (kg) *</label>
+          <input v-model.number="rollWeight" type="number" step="0.001" min="0.1" max="40" class="cr-input" placeholder="0.000" @input="validateRollWeight" />
+          <div v-if="rollWeightError" class="cr-field-error">{{ rollWeightError }}</div>
+        </div>
+
+        <div class="cr-grid-2" v-if="isPcsUOM">
+          <div class="cr-field">
+            <label class="cr-label">Total Qty (pcs) *</label>
+            <input v-model.number="totalQty" type="number" class="cr-input" placeholder="0" />
+          </div>
+          <div class="cr-field">
+            <label class="cr-label">Mistake Qty</label>
+            <input v-model.number="mistakeQty" type="number" class="cr-input" placeholder="0" />
+          </div>
+        </div>
+
+        <div class="cr-grid-2" style="margin-top:12px">
+          <button class="cr-btn cr-btn--ghost cr-btn--full" @click="cancelEndRoll">
+            ✕ Cancel
+          </button>
+          <button
+            class="cr-btn cr-btn--danger cr-btn--full"
+            @click="submitRollWeight"
+            :disabled="submitting || !rollWeight || rollWeight <= 0"
+          >
+            <span v-if="submitting" class="cr-spinner"></span>
+            {{ submitting ? 'Saving…' : '💾 Save Roll' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- ── POST SUBMISSION (print buttons) ── -->
+      <div class="cr-card" v-if="showPrintButtons && lastCompletedRollData">
+        <div class="cr-alert cr-alert--success" style="margin-bottom:14px">
+          ✓ Roll {{ lastCompletedRollData.roll_no }} completed!
+        </div>
+
+        <div class="cr-completed-grid">
+          <div class="cr-completed-item">
+            <span class="cr-completed-label">Roll No</span>
+            <span class="cr-completed-value">{{ lastCompletedRollData.roll_no }}</span>
+          </div>
+          <div class="cr-completed-item">
+            <span class="cr-completed-label">Weight</span>
+            <span class="cr-completed-value">{{ lastCompletedRollData.roll_weight }} kg</span>
+          </div>
+          <div class="cr-completed-item" v-if="isPcsUOM">
+            <span class="cr-completed-label">Total Qty</span>
+            <span class="cr-completed-value">{{ lastCompletedRollData.total_qty }}</span>
+          </div>
+          <div class="cr-completed-item" v-if="isPcsUOM">
+            <span class="cr-completed-label">Mistake Qty</span>
+            <span class="cr-completed-value">{{ lastCompletedRollData.mistake_qty }}</span>
+          </div>
+          <div class="cr-completed-item">
+            <span class="cr-completed-label">Batch</span>
+            <span class="cr-completed-value">{{ lastCompletedRollData.batch_no }}</span>
+          </div>
+          <div class="cr-completed-item">
+            <span class="cr-completed-label">Shift</span>
+            <span class="cr-completed-value">{{ lastCompletedRollData.shift }}</span>
+          </div>
+        </div>
+
+        <div style="margin-top:16px">
+          <button class="cr-btn cr-btn--ghost cr-btn--full" @click="generatePrintLabel">
+            📱 Print / QR
+          </button>
+        </div>
+
+        <!-- Submit job card button -->
+        <button
+          class="cr-btn cr-btn--submit cr-btn--full"
+          style="margin-top:10px"
+          @click="submitJobCard"
+          :disabled="submitting"
+        >
+          ✓ Submit Job Card
+        </button>
+      </div>
+
+      <!-- ── Job submitted ── -->
+      <div class="cr-card" v-if="isJobSubmitted">
+        <div class="cr-alert cr-alert--success">
+          ✓ Job Card submitted successfully with {{ rollCount }} roll(s)!
+        </div>
+        <div style="margin-top:12px;font-size:13px;color:#64748b;text-align:center">
+          Total weight: {{ totalRollWeight.toFixed(3) }} kg
+          <span v-if="isPcsUOM"> · {{ totalRollPcs }} pcs</span>
+        </div>
+      </div>
+
+      <!-- Stock Entry shortcut (shown after submission) -->
+      <!-- Cancelled state -->
+      <div class="cr-card" v-if="isJobCancelled">
+        <div class="cr-alert cr-alert--error">
+          ⚠ Job Card was cancelled in ERP
+        </div>
+        <div style="margin-top:10px;font-size:13px;color:#64748b;">
+          <p>The Job Card, Roll Packing List, or Stock Entry was cancelled directly in ERPNext.</p>
+          <ul style="margin-top:8px;padding-left:18px;line-height:1.8;">
+            <li v-if="!rplExists">🔴 Roll Packing List — cancelled / missing</li>
+            <li v-if="rplExists" style="color:#16a34a">✓ Roll Packing List — OK</li>
+            <li v-if="!manufactureSeExists">🔴 Stock Entry (Manufacture) — cancelled / missing</li>
+            <li v-if="manufactureSeExists" style="color:#16a34a">✓ Stock Entry (Manufacture) — OK</li>
+          </ul>
+          <p style="margin-top:10px;color:#92400e;font-weight:600;">
+            To resubmit: amend the Job Card in ERP first, then return here and click Submit Job Card.
+          </p>
+        </div>
+        <button class="cr-btn cr-btn--primary cr-btn--full" style="margin-top:14px"
+          @click="isJobCancelled = false; isJobStarted = true">
+          ↩ Try Resubmit
+        </button>
+      </div>
+
+      <!-- ── Reconcile table ── -->
+      <div class="cr-card" v-if="showReconcileTable && reconcileData.length">
+        <div class="cr-card__title">Stock Reconciliation</div>
+        <div class="cr-recon-validation" v-if="reconcileValidationMsg" style="color:#dc2626;font-size:12px;margin-bottom:8px;font-weight:600">
+          ⚠ {{ reconcileValidationMsg }}
+        </div>
+        <div class="cr-reconcile-table">
+          <div class="cr-recon-header">
+            <span>#</span><span>Item</span><span>Batch</span><span>ERP Qty</span><span>Physical</span>
+          </div>
+          <div v-for="(item, i) in reconcileData" :key="i" class="cr-recon-row">
+            <span>{{ item.s_no }}</span>
+            <span>{{ item.item_code }}</span>
+            <select v-if="!item.is_special" v-model="item.batch_no" class="cr-input cr-input--sm">
+              <option value="">-- Select Batch --</option>
+              <option v-for="b in item.available_batches" :key="b" :value="b">{{ b }}</option>
+            </select>
+            <span v-else style="font-size:12px;color:#475569;align-self:center">{{ item.batch_no }}</span>
+            <span>{{ item.erp_qty }} {{ item.uom }}</span>
+            <input v-model="item.phy_qty" type="number" step="0.001" min="0" class="cr-input cr-input--sm"
+              :class="item.invalidQty ? 'cr-input--error' : ''"
+              placeholder="0" @input="validatePhysicalQty(item)" />
+          </div>
+        </div>
+        <div v-if="reconcileData.length > 1" style="font-size:12px;color:#64748b;margin-top:8px;text-align:right">
+          Total physical: {{ reconcilePhysicalTotal }} | Total ERP: {{ reconcileErpTotal }}
+          <span v-if="reconcileBalanced" style="color:#047857"> ✓ Balanced</span>
+        </div>
+        <div class="cr-grid-2" style="margin-top:12px">
+          <button class="cr-btn cr-btn--ghost cr-btn--full" @click="showReconcileTable = false">Cancel</button>
+          <button class="cr-btn cr-btn--primary cr-btn--full" @click="submitReconcile" :disabled="!isReconcileValid() || submitting">
+            Submit Reconcile
+          </button>
+        </div>
+      </div>
+
+      <!-- ── MTM / Reconcile button (shown when job is started OR submitted) ── -->
+      <div v-if="hasMTMData && !isReconcileSubmitted" class="cr-card" style="padding:12px">
+        <button class="cr-btn cr-btn--outline cr-btn--full" @click="showReconcile">
+          📋 {{ showReconcileTable ? 'Hide' : 'Show' }} Stock Reconciliation
+        </button>
+      </div>
+
+      <!-- Reconcile submitted confirmation -->
+      <div v-if="hasMTMData && isReconcileSubmitted" class="cr-card" style="padding:12px">
+        <div class="cr-alert cr-alert--success" style="margin:0">
+          ✓ Stock Reconciliation submitted
+        </div>
+      </div>
+
+    </div>
+
+    <!-- QR / Print Modal -->
+    <div v-if="showQRModal" class="cr-qr-overlay" @click="showQRModal=false">
+      <div class="cr-qr-modal" @click.stop>
+        <div class="cr-qr-modal__title">Roll Label</div>
+        <div class="cr-qr-label">
+          <div class="cr-qr-label__row"><span>Roll No</span><strong>{{ printData.rollNo }}</strong></div>
+          <div class="cr-qr-label__row"><span>Item</span><strong>{{ printData.itemCode }}</strong></div>
+          <div class="cr-qr-label__row"><span>Work Order</span><strong>{{ printData.workOrder }}</strong></div>
+          <div class="cr-qr-label__row"><span>Batch</span><strong>{{ printData.batchNo }}</strong></div>
+          <div class="cr-qr-label__row"><span>Weight</span><strong>{{ printData.weight }} kg</strong></div>
+          <div class="cr-qr-label__row" v-if="isPcsUOM"><span>Qty</span><strong>{{ printData.totalQty }}</strong></div>
+          <div class="cr-qr-label__row"><span>Date</span><strong>{{ printData.date }}</strong></div>
+        </div>
+        <canvas ref="qrCanvas" style="margin:12px auto;display:block;border-radius:8px"></canvas>
+        <div class="cr-grid-2" style="margin-top:12px">
+          <button class="cr-btn cr-btn--ghost cr-btn--full" @click="showQRModal=false">Close</button>
+          <button class="cr-btn cr-btn--primary cr-btn--full" @click="printLabel">🖨 Print</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Before Snapshot Modal (on Start Job / Start New Roll, first job card) ── -->
+    <div v-if="beforeModal.open" class="cr-cons-overlay" @click.self="closeBeforeModal">
+      <div class="cr-cons-modal">
+        <div class="cr-cons-hd">
+          <div>
+            <div class="cr-cons-title">Yarn Before Starting</div>
+            <div class="cr-cons-sub">{{ rollStore.productData.name }} · {{ rollStore.productData.work_order }}</div>
+          </div>
+          <button class="cr-cons-close" @click="closeBeforeModal">✕</button>
+        </div>
+
+        <div class="cr-cons-body">
+          <div v-if="beforeModal.loading" class="cr-cons-loading">Capturing opening stock…</div>
+
+          <template v-else>
+            <p class="cr-cons-hint">
+              Enter the current cone weight of each yarn before starting. This is recorded on the
+              work order for reference.
+            </p>
+
+            <div v-if="!beforeModal.rows.length" class="cr-cons-loading">
+              No transferred materials found for this work order.
+            </div>
+
+            <div v-else class="cr-cons-table cr-cons-table--before">
+              <div class="cr-cons-row cr-cons-row--head cr-cons-row--before">
+                <span>Item</span><span>Transferred</span><span>Before</span>
+              </div>
+              <div v-for="(row, i) in beforeModal.rows" :key="i" class="cr-cons-row cr-cons-row--before">
+                <span class="cr-cons-item">{{ row.item_code }}</span>
+                <span>{{ row.transferred }}</span>
+                <input v-model.number="row.before_qty" type="number" step="0.001" class="cr-cons-input"
+                  placeholder="0.000" />
+              </div>
+            </div>
+
+            <div v-if="beforeModal.error" class="cr-cons-err">⚠ {{ beforeModal.error }}</div>
+          </template>
+        </div>
+
+        <div class="cr-cons-ft">
+          <button class="cr-btn cr-btn--submit cr-btn--full" @click="confirmBeforeAndStart"
+            :disabled="beforeModal.saving">
+            {{ beforeModal.saving ? 'Starting…' : (beforeModal.mode === 'newRoll' ? '▶ Confirm & Start Roll' : '▶ Confirm & Start Job') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Actual Consumption Modal (on Submit Job Card) ── -->
+    <div v-if="consumptionModal.open" class="cr-cons-overlay" @click.self="closeConsumptionModal">
+      <div class="cr-cons-modal">
+        <div class="cr-cons-hd">
+          <div>
+            <div class="cr-cons-title">Actual Yarn Consumption</div>
+            <div class="cr-cons-sub">{{ rollStore.productData.name }} · {{ rollStore.productData.work_order }}</div>
+          </div>
+          <button class="cr-cons-close" @click="closeConsumptionModal">✕</button>
+        </div>
+
+        <div class="cr-cons-body">
+          <div v-if="consumptionModal.loading" class="cr-cons-loading">Loading transferred materials…</div>
+
+          <template v-else>
+            <p class="cr-cons-hint">
+              Enter the current cone weight of each yarn in “After”. Actual consumption is split from the
+              total roll weight ({{ totalRollWeight.toFixed(3) }} kg) in proportion to each yarn’s After
+              weight. “Use Planned” falls back to BOM quantities.
+            </p>
+
+            <div v-if="!consumptionModal.rows.length" class="cr-cons-loading">
+              No transferred materials found for this work order.
+            </div>
+
+            <div v-else class="cr-cons-table">
+              <div class="cr-cons-row cr-cons-row--head">
+                <span>Item</span><span>Transferred</span><span>Before</span><span>After</span><span>Actual</span>
+              </div>
+              <div v-for="(row, i) in consumptionModal.rows" :key="i" class="cr-cons-row"
+                :class="{ 'cr-cons-row--invalid': row.invalid }">
+                <span class="cr-cons-item">{{ row.item_code }}</span>
+                <span>{{ row.transferred }}</span>
+                <span v-if="row.before_qty" class="cr-cons-before" title="Captured at Start Job">
+                  {{ Number(row.before_qty || 0).toFixed(3) }}
+                </span>
+                <input v-else v-model.number="row.before_qty" type="number" step="0.001" class="cr-cons-input"
+                  placeholder="0.000" title="Never captured at Start Job — enter it now"
+                  @input="recomputeActuals" />
+                <input v-model.number="row.after_qty" type="number" step="0.001" class="cr-cons-input"
+                  @input="recomputeActuals" />
+                <span class="cr-cons-actual">{{ Number(row.actual || 0).toFixed(3) }}</span>
+              </div>
+              <div class="cr-cons-row cr-cons-row--total">
+                <span>Total</span><span></span><span></span><span></span>
+                <span class="cr-cons-actual">{{ consumptionActualTotal.toFixed(3) }}</span>
+              </div>
+            </div>
+
+            <div v-if="consumptionModal.error" class="cr-cons-err">⚠ {{ consumptionModal.error }}</div>
+          </template>
+        </div>
+
+        <div class="cr-cons-ft">
+          <button class="cr-btn cr-btn--ghost" @click="submitWithPlanned" :disabled="consumptionModal.saving">
+            Use Planned (BOM)
+          </button>
+          <button class="cr-btn cr-btn--submit" @click="submitWithActuals"
+            :disabled="consumptionModal.saving || !consumptionModal.rows.length || !consumptionValid">
+            {{ consumptionModal.saving ? 'Submitting…' : 'Submit with Actuals' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
+import { useRollStore } from '@/stores/roll'
+import { useAuthStore } from '@/stores/auth'
+import { isOnline } from '@/composables/useSync'
+import { db } from '@/db'
+import { getLastRollNo, nextOfflineRollNo, isCachedRollNoStale } from '@/api/frappe'
+import AppHeader from '@/components/AppHeader.vue'
+import { call, createDoc, ensureCSRF, initCSRF } from '@/api/frappe'
+import QRCode from 'qrcode'
+import moment from 'moment'
+
+const router    = useRouter()
+const rollStore = useRollStore()
+const auth      = useAuthStore()
+
+// ── UI State ──────────────────────────────────────────────────────────────
+const initializing  = ref(true)
+const loadingMsg    = ref('Loading…')
+const submitting    = ref(false)
+const consumptionModal = ref({ open: false, loading: false, saving: false, rows: [], error: '' })
+const beforeModal = ref({ open: false, loading: false, saving: false, rows: [], error: '', mode: 'startJob' })
+const returnCreating = ref(false)
+const returnResult = ref({ ok: false, msg: '', stockEntry: '', warehouse: '', items: [] })
+const creatingRoll  = ref(false)
+const showQRModal   = ref(false)
+const qrCanvas      = ref(null)
+const printData     = ref({})
+
+// ── Job / Roll State ──────────────────────────────────────────────────────
+const isJobStarted      = ref(false)
+const isJobSubmitted    = ref(false)
+const isRollActive      = ref(false)
+const currentRollNo     = ref(null)
+const batchNo           = ref('')
+const isPcsUOM          = ref(false)
+const isJobSubmissionMode = ref(false)
+const showEndRollForm   = ref(false)
+const showPrintButtons  = ref(false)
+const lastCompletedRollData = ref(null)
+const completingRollNo  = ref(null)
+
+// ── Form fields ────────────────────────────────────────────────────────────
+const rollWeight  = ref(null)
+const rollWeightError = ref('')
+const totalQty    = ref(null)
+const mistakeQty  = ref(0)
+
+// ── Timer ─────────────────────────────────────────────────────────────────
+const runningTime           = ref(0)
+const formattedRunningTime  = ref('00:00:00')
+const isBreakdownActive     = ref(false)
+const breakdownDuration     = ref(0)
+const totalBreakdownTime    = ref(0)
+let timerInterval = null
+let actualRollStartTime = null
+let breakdownStartTime  = null
+let endRollClickTime    = null
+let endRollRunningTime  = null
+let nextRollStartTime   = null
+
+// ── End roll cooldown ─────────────────────────────────────────────────────
+const ENDROLL_COOLDOWN    = 1 * 10 * 1000
+// const ENDROLL_COOLDOWN    = 3 * 60 * 1000
+const canClickEndRoll     = ref(true)
+const endRollCooldownTime = ref('')
+let cooldownInterval = null
+
+// ── Roll stats ─────────────────────────────────────────────────────────────
+const rollCount       = ref(0)
+const totalRollWeight = ref(0)
+const totalRollPcs    = ref(0)
+const hasMTMData      = ref(false)
+const reconcileData   = ref([])
+const showReconcileTable = ref(false)
+const isReconcileSubmitted = ref(false)
+const isJobCancelled       = ref(false)
+const assignedEmployee     = ref('')
+const manufactureSeExists  = ref(false)
+const rplExists            = ref(false)
+const qiExists = ref(false)
+const reconcileValidationMsg = ref('')
+const reconcilePhysicalTotal = computed(() =>
+  reconcileData.value.reduce((s, i) => s + (parseFloat(i.phy_qty) || 0), 0).toFixed(3)
+)
+const reconcileErpTotal = computed(() =>
+  reconcileData.value.reduce((s, i) => s + (parseFloat(i.erp_qty) || 0), 0).toFixed(3)
+)
+const reconcileBalanced = computed(() =>
+  Math.abs(parseFloat(reconcilePhysicalTotal.value) - parseFloat(reconcileErpTotal.value)) < 0.001
+)
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+const toast = ref({ show: false, msg: '', type: 'info' })
+let toastTimer = null
+
+function showToast(msg, type = 'success') {
+  clearTimeout(toastTimer)
+  toast.value = { show: true, msg, type }
+  toastTimer = setTimeout(() => { toast.value.show = false }, 3500)
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function formatTime(s) {
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`
+}
+function statusColor(s) {
+  if (!s) return 'secondary'
+  if (s === 'Work In Progress') return 'warning'
+  if (s === 'Completed') return 'success'
+  if (s === 'Cancelled') return 'danger'
+  return 'secondary'
+}
+// Format a Date as local datetime string for Frappe (YYYY-MM-DD HH:MM:SS)
+function toLocalDatetime(date) {
+  if (!date) return ''
+  const d = new Date(date)
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function calculateShift(ts) {
+  const h = new Date(ts).getHours()
+  return (h >= 8 && h < 20) ? '1' : '2'
+}
+function getSessionKey() {
+  return `cr_session_${rollStore.productData?.name || 'unknown'}`
+}
+
+// ── Session ────────────────────────────────────────────────────────────────
+function saveSession() {
+  if (!rollStore.productData?.name) return
+  const data = {
+    jobCardId: rollStore.productData.name,
+    isJobStarted: isJobStarted.value,
+    isRollActive: isRollActive.value,
+    currentRollNo: currentRollNo.value,
+    batchNo: batchNo.value,
+    actualRollStartTime: actualRollStartTime?.toISOString() || null,
+    endRollClickTime: endRollClickTime?.toISOString() || null,
+    endRollRunningTime: endRollRunningTime,
+    nextRollStartTime: nextRollStartTime?.toISOString() || null,
+    breakdownStartTime: breakdownStartTime?.toISOString() || null,
+    isBreakdownActive: isBreakdownActive.value,
+    totalBreakdownTime: totalBreakdownTime.value,
+    runningTime: runningTime.value,
+    showEndRollForm: showEndRollForm.value,
+    showPrintButtons: showPrintButtons.value,
+    isJobSubmissionMode: isJobSubmissionMode.value,
+    rollWeight: rollWeight.value,
+    totalQty: totalQty.value,
+    mistakeQty: mistakeQty.value,
+    completingRollNo: completingRollNo.value,
+    lastCompletedRollData: lastCompletedRollData.value,
+  }
+  localStorage.setItem(getSessionKey(), JSON.stringify(data))
+}
+
+function restoreSession() {
+  if (!rollStore.productData?.name) return false
+  try {
+    const raw = localStorage.getItem(getSessionKey())
+    if (!raw) return false
+    const d = JSON.parse(raw)
+    if (d.jobCardId !== rollStore.productData.name) return false
+
+    isJobStarted.value      = d.isJobStarted || false
+    isRollActive.value      = d.isRollActive || false
+    currentRollNo.value     = d.currentRollNo || null
+    batchNo.value           = d.batchNo || ''
+    totalBreakdownTime.value = d.totalBreakdownTime || 0
+    showEndRollForm.value   = d.showEndRollForm || false
+    showPrintButtons.value  = d.showPrintButtons || false
+    isJobSubmissionMode.value = d.isJobSubmissionMode || false
+    rollWeight.value        = d.rollWeight || null
+    totalQty.value          = d.totalQty || null
+    mistakeQty.value        = d.mistakeQty || 0
+    completingRollNo.value  = d.completingRollNo || null
+    lastCompletedRollData.value = d.lastCompletedRollData || null
+
+    if (d.actualRollStartTime) actualRollStartTime = new Date(d.actualRollStartTime)
+    if (d.endRollClickTime)    endRollClickTime    = new Date(d.endRollClickTime)
+    if (d.nextRollStartTime)   nextRollStartTime   = new Date(d.nextRollStartTime)
+    if (d.endRollRunningTime)  endRollRunningTime  = d.endRollRunningTime
+
+    if (d.breakdownStartTime) {
+      breakdownStartTime = new Date(d.breakdownStartTime)
+      isBreakdownActive.value = d.isBreakdownActive || false
+      breakdownDuration.value = Math.floor((Date.now() - breakdownStartTime.getTime()) / 1000)
+    }
+
+    if (d.isRollActive && actualRollStartTime) {
+      runningTime.value = Math.floor((Date.now() - actualRollStartTime.getTime()) / 1000)
+      formattedRunningTime.value = formatTime(runningTime.value)
+      startTimer()
+    } else {
+      runningTime.value = d.runningTime || 0
+      formattedRunningTime.value = formatTime(runningTime.value)
+    }
+
+    if (d.showEndRollForm) stopTimer()
+    return true
+  } catch(e) {
+    console.error('restoreSession error:', e)
+    return false
+  }
+}
+
+function clearSession() {
+  localStorage.removeItem(getSessionKey())
+  localStorage.removeItem(`cr_cooldown_${rollStore.productData?.name}`)
+}
+
+// ── Reset session ─────────────────────────────────────────────────────────
+async function resetSession() {
+  if (!confirm('Reset session? This will clear the current roll state and reload the page.')) return
+  stopTimer()
+  clearInterval(cooldownInterval)
+  // Delete orphan roll (weight = 0) if one was created
+  if (currentRollNo.value) {
+    try {
+      await call('knit_delete_roll', { roll_name: String(currentRollNo.value) })
+    } catch(e) {
+      console.warn('Could not delete orphan roll:', e.message)
+    }
+  }
+  clearSession()
+  location.reload()
+}
+
+// ── Timer ─────────────────────────────────────────────────────────────────
+function startTimer() {
+  stopTimer()
+  timerInterval = setInterval(() => {
+    if (actualRollStartTime) {
+      runningTime.value = Math.floor((Date.now() - actualRollStartTime.getTime()) / 1000)
+    } else {
+      runningTime.value++
+    }
+    formattedRunningTime.value = formatTime(runningTime.value)
+    if (isBreakdownActive.value && breakdownStartTime) {
+      breakdownDuration.value = Math.floor((Date.now() - breakdownStartTime.getTime()) / 1000)
+    }
+    if (runningTime.value % 30 === 0) saveSession()
+  }, 1000)
+}
+function stopTimer() {
+  clearInterval(timerInterval)
+  timerInterval = null
+}
+
+// ── Cooldown ──────────────────────────────────────────────────────────────
+function checkCooldown() {
+  const key = `cr_cooldown_${rollStore.productData?.name}`
+  const last = localStorage.getItem(key)
+  if (!last) { canClickEndRoll.value = true; return }
+  const elapsed = Date.now() - new Date(last).getTime()
+  if (elapsed < ENDROLL_COOLDOWN) {
+    canClickEndRoll.value = false
+    startCooldownTimer(ENDROLL_COOLDOWN - elapsed)
+  } else {
+    canClickEndRoll.value = true
+  }
+}
+function setCooldown() {
+  const key = `cr_cooldown_${rollStore.productData?.name}`
+  localStorage.setItem(key, new Date().toISOString())
+  canClickEndRoll.value = false
+  startCooldownTimer(ENDROLL_COOLDOWN)
+}
+function startCooldownTimer(ms) {
+  clearInterval(cooldownInterval)
+  updateCooldownDisplay(ms)
+  cooldownInterval = setInterval(() => {
+    ms -= 1000
+    if (ms <= 0) {
+      canClickEndRoll.value = true
+      endRollCooldownTime.value = ''
+      clearInterval(cooldownInterval)
+    } else {
+      updateCooldownDisplay(ms)
+    }
+  }, 1000)
+}
+function updateCooldownDisplay(ms) {
+  const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000)
+  endRollCooldownTime.value = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+onMounted(async () => {
+  // Pre-fetch last roll number so offline increments stay in sequence
+  if (navigator.onLine && isCachedRollNoStale()) {
+    getLastRollNo().catch(() => {})
+  }
+  await initCSRF()
+
+  rollStore.loadProductDataFromSession?.()
+  const pd = rollStore.productData
+  if (!pd) { initializing.value = false; return }
+
+  isPcsUOM.value = (pd.stock_uom || '').toLowerCase() === 'pcs'
+  isJobStarted.value = ['Work In Progress', 'Completed'].includes(pd.status)
+
+  // Check if job card is already submitted in ERP (docstatus=1)
+  try {
+    const jcResp = await call('frappe.client.get_value', {
+      doctype: 'Job Card',
+      filters: { name: pd.name },
+      fieldname: 'docstatus'
+    })
+    const docstatus = jcResp?.message?.docstatus
+    if (docstatus === 1) {
+      await checkIfRollsExist()
+      await checkMTMData()
+      isJobSubmitted.value = true
+      isJobStarted.value = false
+      initializing.value = false
+      return
+    }
+    if (docstatus === 2) {
+      // Job Card was cancelled in ERP
+      await checkIfRollsExist()
+      isJobCancelled.value = true
+      isJobStarted.value = false
+      initializing.value = false
+      return
+    }
+  } catch(e) {}
+
+  const restored = restoreSession()
+  if (!restored) {
+    if (!batchNo.value && pd.production_item) {
+      loadingMsg.value = 'Creating batch…'
+      await createBatch()
+    }
+  }
+
+  checkCooldown()
+
+  if (isJobStarted.value) {
+    await checkIfRollsExist()
+  }
+  checkMTMData()
+
+  // Fetch assigned employee for display
+  if (isOnline.value) {
+    try {
+      const empResp = await call('knit_get_job_card_employees', { job_card: rollStore.productData.name })
+      const emps = empResp?.message || []
+      assignedEmployee.value = emps.length ? (emps[0].custom_employee_name || emps[0].employee) : ''
+      // Cache assignment state so Start Job / Create Roll work offline afterwards
+      try {
+        await db.rollSessions.put({
+          jobCardId: rollStore.productData.name,
+          _assignedName: assignedEmployee.value,
+          _hasAssignment: emps.length > 0,
+          _updatedAt: new Date().toISOString()
+        })
+      } catch(_) {}
+    } catch(e) { /* silent */ }
+  } else {
+    // Offline — read cached assignment written during a previous online visit
+    try {
+      const sess = await db.rollSessions.get(rollStore.productData.name)
+      if (sess?._assignedName) assignedEmployee.value = sess._assignedName
+    } catch(_) {}
+  }
+
+  initializing.value = false
+})
+
+onUnmounted(() => {
+  stopTimer()
+  clearInterval(cooldownInterval)
+  saveSession()
+})
+
+// ── Batch creation ────────────────────────────────────────────────────────
+async function createBatch() {
+  const pd = rollStore.productData
+  if (!pd) return
+  const batchId = `${pd.work_order}/${pd.name}`
+  // Check if batch already exists using frappe.client.get_value (no 404 noise)
+  try {
+    const exists = await call('frappe.client.get_value', {
+      doctype: 'Batch', filters: { name: batchId }, fieldname: 'name'
+    })
+    if (exists?.message?.name) { batchNo.value = batchId; return }
+  } catch(e) { /* batch doesn't exist yet */ }
+  // Create the batch
+  try {
+    const token = await ensureCSRF()
+    const res = await fetch('/api/resource/Batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': token },
+      credentials: 'include',
+      body: JSON.stringify({ item: pd.production_item, batch_id: batchId })
+    })
+    const data = await res.json()
+    batchNo.value = data.data?.name || batchId
+  } catch(e) {
+    batchNo.value = batchId
+  }
+}
+
+// ── Start Job ─────────────────────────────────────────────────────────────
+async function startJob() {
+  // Block start if no employee assigned
+  if (isOnline.value) {
+    try {
+      const empResp = await call('knit_get_job_card_employees', {
+        job_card: rollStore.productData.name
+      })
+      const assigned = empResp?.message || []
+      if (!assigned.length) {
+        showToast('⚠ Please assign an employee before starting this job card.', 'error')
+        return
+      }
+    } catch(e) {
+      showToast('⚠ Could not verify employee assignment. Please try again.', 'error')
+      console.warn('Employee check failed:', e.message)
+      return
+    }
+  } else {
+    // Offline — rely on cached assignment state. Block only if we know for
+    // certain (from a prior online visit) that nobody is assigned.
+    try {
+      const sess = await db.rollSessions.get(rollStore.productData.name)
+      if (sess && sess._hasAssignment === false) {
+        showToast('⚠ Please assign an employee before starting this job card.', 'error')
+        return
+      }
+    } catch(_) { /* no cache — allow, will validate on sync */ }
+  }
+
+  // First job card of the WO: capture the "Before" opening stock and show a
+  // read-only snapshot before actually starting. Subsequent cards start直接.
+  if (isOnline.value) {
+    let isFirst = true
+    try {
+      const resp = await call('knit_is_first_job_card', {
+        work_order: rollStore.productData.work_order,
+        job_card:   rollStore.productData.name,
+      })
+      isFirst = resp?.message?.is_first !== false
+    } catch (e) {
+      console.warn('first-job-card check failed, starting without snapshot:', e.message)
+      isFirst = false
+    }
+    if (isFirst) {
+      await openBeforeModal('startJob')
+      return
+    }
+  }
+
+  if (!confirm('Start this job card? This will begin the first roll.')) return
+  await _doStartJob()
+}
+
+// "Start New Roll" button. When this job card has no rolls yet (the
+// "No rolls created yet. Start the first roll." state), capture the
+// operator-entered Before cone weights first, then create the roll.
+async function startNewRoll() {
+  if (rollCount.value === 0) {
+    await openBeforeModal('newRoll')
+    return
+  }
+  await createKnitRoll()
+}
+
+// Capture opening WIP stock (Before) and show the read-only snapshot modal
+async function openBeforeModal(mode = 'startJob') {
+  beforeModal.value = { open: true, loading: true, saving: false, rows: [], error: '', mode }
+  try {
+    const resp = await call('knit_snapshot_before_consumption', {
+      work_order: rollStore.productData.work_order,
+      job_card:   rollStore.productData.name,
+    })
+    const items = resp?.message || []
+    beforeModal.value.rows = items.map(it => ({
+      item_code:   it.item_code,
+      batch_no:    it.batch_no || '',
+      transferred: +Number(it.transferred ?? 0).toFixed(3),
+      before_qty:  +Number(it.before_qty ?? 0).toFixed(3),
+    }))
+  } catch (e) {
+    // Fallback to the transferred-materials endpoint (same one the reconcile
+    // step and consumption modal use) when the snapshot method isn't available.
+    try {
+      const resp = await call('knit_get_mtm_data', {
+        work_order: rollStore.productData.work_order,
+      })
+      const items = resp?.message || []
+      beforeModal.value.rows = items.map(it => ({
+        item_code:   it.item_code,
+        batch_no:    it.batch_no || '',
+        transferred: +Number(it.qty ?? 0).toFixed(3),
+        before_qty:  0,
+      }))
+    } catch (e2) {
+      beforeModal.value.error = 'Could not load transferred materials: ' + e2.message
+    }
+  } finally {
+    beforeModal.value.loading = false
+  }
+}
+
+function closeBeforeModal() {
+  beforeModal.value.open = false
+}
+
+// Operator entered Before cone weights → persist them, then start
+async function confirmBeforeAndStart() {
+  beforeModal.value.saving = true
+  try {
+    const befores = beforeModal.value.rows.map(r => ({
+      item_code: r.item_code,
+      before_qty: Number(r.before_qty) || 0,
+      batch_no: r.batch_no || '',
+    }))
+    try {
+      await call('knit_save_before_consumption', {
+        work_order: rollStore.productData.work_order,
+        job_card:   rollStore.productData.name,
+        before_data: JSON.stringify(befores),
+      })
+    } catch (e) {
+      console.warn('save before weights failed (continuing):', e.message)
+    }
+    beforeModal.value.open = false
+    if (beforeModal.value.mode === 'newRoll') {
+      await createKnitRoll()      // job already WIP — just create the first roll
+    } else {
+      await _doStartJob()         // Open → WIP: start job (which creates first roll)
+    }
+  } finally {
+    beforeModal.value.saving = false
+  }
+}
+
+// The real start-job body (status → WIP, create first roll)
+async function _doStartJob() {
+  loadingMsg.value = 'Starting job…'
+  initializing.value = true
+  try {
+    if (isOnline.value) {
+      await call('frappe.client.set_value', {
+        doctype: 'Job Card',
+        name: rollStore.productData.name,
+        fieldname: 'status',
+        value: 'Work In Progress'
+      })
+    } else {
+      // Offline — queue the status change so it syncs on reconnect
+      const { enqueue } = await import('@/composables/useSync')
+      await enqueue('startJobCard', 'POST', { jobCardId: rollStore.productData.name })
+    }
+    rollStore.productData.status = 'Work In Progress'
+    isJobStarted.value = true
+    showToast(isOnline.value ? 'Job started! Creating first roll…' : 'Job started offline — will sync. Creating first roll…')
+    await createKnitRoll()
+  } catch(e) {
+    showToast('Failed to start job: ' + e.message, 'error')
+  } finally {
+    initializing.value = false
+  }
+}
+
+// ── Create Roll in ERP ────────────────────────────────────────────────────
+async function createKnitRoll({ keepTimer = false } = {}) {
+  if (creatingRoll.value) return
+  const pd = rollStore.productData
+  if (!pd) return
+
+  // Block roll creation if no employee assigned (online check only)
+  if (isOnline.value) {
+    try {
+      const empResp = await call('knit_get_job_card_employees', { job_card: pd.name })
+      if (!(empResp?.message?.length)) {
+        showToast('⚠ Please assign an employee to this job card first.', 'error')
+        return
+      }
+    } catch(e) {
+      // Network dropped mid-session — fall through to offline roll creation
+      console.warn('Employee check failed, continuing offline:', e.message)
+    }
+  } else {
+    // Offline — block only if cache positively says nobody is assigned
+    try {
+      const sess = await db.rollSessions.get(pd.name)
+      if (sess && sess._hasAssignment === false) {
+        showToast('⚠ Please assign an employee to this job card first.', 'error')
+        return
+      }
+    } catch(_) { /* no cache — allow, validated on sync */ }
+  }
+
+  if (!batchNo.value) await createBatch()
+
+  creatingRoll.value = true
+  try {
+    const resp = await call('knit_create_roll', {
+      job_card: pd.name,
+      batch_no: batchNo.value,
+    })
+    const rollData = resp?.message?.[0]
+    const rollIdx  = rollData?.idx || rollData?.name || Date.now()
+
+    // Keep local sequence cache in sync with ERP
+    if (typeof rollIdx === 'number' || (typeof rollIdx === 'string' && /^[0-9]+$/.test(rollIdx))) {
+      const n = parseInt(rollIdx, 10)
+      const cached = parseInt(localStorage.getItem('KNIT_LAST_ROLL_NO') || '0', 10)
+      if (n > cached) {
+        localStorage.setItem('KNIT_LAST_ROLL_NO', String(n))
+        localStorage.setItem('KNIT_LAST_ROLL_TS', String(Date.now()))
+      }
+    }
+
+    currentRollNo.value    = rollIdx
+    isRollActive.value     = true
+    totalBreakdownTime.value = 0
+    isBreakdownActive.value  = false
+    breakdownStartTime       = null
+    showPrintButtons.value   = false
+    showEndRollForm.value    = false
+    isJobSubmissionMode.value = false
+    endRollClickTime         = null
+    endRollRunningTime       = null
+    rollWeight.value         = null
+    totalQty.value           = null
+    mistakeQty.value         = 0
+    if (!keepTimer) {
+      actualRollStartTime        = new Date()
+      runningTime.value          = 0
+      formattedRunningTime.value = '00:00:00'
+      startTimer()
+    }
+    saveSession()
+    showToast(keepTimer ? `Roll #${rollIdx} started!` : `Roll #${rollIdx} started!`)
+  } catch(e) {
+    // Offline: assign next sequential roll number matching ERP's sequence
+    const idx = nextOfflineRollNo()
+    currentRollNo.value  = idx
+    isRollActive.value   = true
+    if (!keepTimer) {
+      actualRollStartTime = new Date()
+      runningTime.value   = 0
+      formattedRunningTime.value = '00:00:00'
+      startTimer()
+    }
+    saveSession()
+    showToast(`Roll #${idx} started (offline — will sync when reconnected)`, 'warning')
+    console.warn('createKnitRoll fallback (offline):', e.message)
+    // Refresh cached sequence in background for next time
+    getLastRollNo().catch(() => {})
+  } finally {
+    creatingRoll.value = false
+  }
+}
+
+// ── Breakdown ─────────────────────────────────────────────────────────────
+function recordBreakdown() {
+  if (isBreakdownActive.value) {
+    const duration = Math.floor((Date.now() - breakdownStartTime.getTime()) / 1000)
+    totalBreakdownTime.value += duration
+    isBreakdownActive.value = false
+    breakdownStartTime = null
+    breakdownDuration.value = 0
+    saveSession()
+    showToast(`Breakdown ended. Duration: ${formatTime(duration)}`)
+  } else {
+    if (!confirm('Record a breakdown?')) return
+    isBreakdownActive.value = true
+    breakdownStartTime = new Date()
+    breakdownDuration.value = 0
+    saveSession()
+    showToast('Breakdown started.')
+  }
+}
+
+// ── End roll ──────────────────────────────────────────────────────────────
+async function endCurrentRoll() {
+  if (!canClickEndRoll.value) return
+  endRollClickTime    = new Date()
+  endRollRunningTime  = runningTime.value
+  nextRollStartTime   = endRollClickTime
+  setCooldown()
+  completingRollNo.value = currentRollNo.value
+  currentRollNo.value    = null
+  showEndRollForm.value  = true
+  isJobSubmissionMode.value = false
+  stopTimer()
+  actualRollStartTime = nextRollStartTime
+  runningTime.value = 0
+  formattedRunningTime.value = '00:00:00'
+  startTimer()
+  saveSession()
+  showToast('Enter roll weight to complete. Next roll timer started.', 'info')
+}
+
+async function endRollAndSubmitJob() {
+  if (!canClickEndRoll.value) return
+  if (!confirm('End current roll and submit job card?')) return
+  endRollClickTime    = new Date()
+  endRollRunningTime  = runningTime.value
+  stopTimer()
+  completingRollNo.value = currentRollNo.value
+  showEndRollForm.value  = true
+  isJobSubmissionMode.value = true
+  saveSession()
+}
+
+function cancelEndRoll() {
+  showEndRollForm.value = false
+  rollWeight.value  = null
+  totalQty.value    = null
+  mistakeQty.value  = 0
+  if (isJobSubmissionMode.value) {
+    isJobSubmissionMode.value = false
+    currentRollNo.value = completingRollNo.value
+    completingRollNo.value = null
+    endRollClickTime = null
+    endRollRunningTime = null
+    if (isRollActive.value && actualRollStartTime) startTimer()
+    showToast('Submission cancelled. Roll continues.', 'info')
+  } else {
+    nextRollStartTime = null
+    endRollClickTime  = null
+    endRollRunningTime = null
+    currentRollNo.value = completingRollNo.value
+    completingRollNo.value = null
+    stopTimer()
+    if (isRollActive.value && actualRollStartTime) startTimer()
+    showToast('Roll end cancelled.', 'info')
+  }
+  saveSession()
+}
+
+// ── Submit roll weight ────────────────────────────────────────────────────
+function validateRollWeight() {
+  const v = rollWeight.value
+  if (!v || v <= 0) { rollWeightError.value = 'Roll weight is required'; return false }
+  if (v < 0.1) { rollWeightError.value = 'Minimum weight is 0.1 kg'; return false }
+  if (v > 40) { rollWeightError.value = 'Maximum weight is 40 kg'; return false }
+  const dec = String(v).split('.')[1]
+  if (dec && dec.length > 3) { rollWeightError.value = 'Max 3 decimal places allowed'; return false }
+  rollWeightError.value = ''
+  return true
+}
+
+async function submitRollWeight() {
+  if (!completingRollNo.value) {
+    completingRollNo.value = currentRollNo.value
+  }
+  if (!validateRollWeight()) { showToast(rollWeightError.value || 'Invalid roll weight.', 'error'); return }
+  if (isPcsUOM.value && (!totalQty.value || totalQty.value <= 0)) {
+    showToast('Please enter a valid total quantity.', 'error'); return
+  }
+
+  submitting.value = true
+  const endTime     = endRollClickTime || new Date()
+  const finalTime   = endRollRunningTime || runningTime.value
+  const netTime     = finalTime - totalBreakdownTime.value
+  const efficiency  = finalTime > 0 ? ((netTime / finalTime) * 100).toFixed(1) : '0.0'
+  const shift       = calculateShift(endTime.toISOString())
+  const pd          = rollStore.productData
+
+  const rollData = {
+    job_card:          pd.name,
+    work_order:        pd.work_order,
+    item_code:         pd.production_item,
+    item_name:         pd.item_name || '',
+    commercial_name:   pd.commercial_name || '',
+    color:             pd.color || '',
+    width:             pd.width || '',
+    batch:             batchNo.value,
+    stock_uom:         pd.stock_uom || 'Kgs',
+    project:           pd.project || '',
+    roll_no:           completingRollNo.value,
+    roll_weight:       rollWeight.value,
+    total_qty:         isPcsUOM.value ? (totalQty.value || 0) : null,
+    mistake_qty:       isPcsUOM.value ? (mistakeQty.value || 0) : null,
+    shift,
+    start_time:        toLocalDatetime(actualRollStartTime || new Date()),
+    end_time:          toLocalDatetime(endTime),
+    total_time_seconds:      finalTime,
+    breakdown_time_seconds:  totalBreakdownTime.value,
+    net_production_time_seconds: netTime,
+    efficiency_percentage: parseFloat(efficiency),
+    knitting_machine_no: pd.workstation || '',
+    knit_operator_name:  pd.custom_employee_name || auth.username || '',
+    complete_roll: true,
+  }
+
+  try {
+    await saveRollToERP(rollData)
+
+    lastCompletedRollData.value = {
+      roll_no:     completingRollNo.value,
+      roll_weight: rollWeight.value,
+      total_qty:   totalQty.value,
+      mistake_qty: mistakeQty.value,
+      batch_no:    batchNo.value,
+      shift,
+    }
+
+    completingRollNo.value   = null
+    showPrintButtons.value   = true
+    showEndRollForm.value    = false
+    isRollActive.value       = false
+    totalBreakdownTime.value = 0
+    isBreakdownActive.value  = false
+
+    rollCount.value++
+    totalRollWeight.value += rollWeight.value
+    if (isPcsUOM.value) totalRollPcs.value += (totalQty.value || 0)
+
+    if (isJobSubmissionMode.value) {
+      stopTimer()
+      saveSession()
+      await submitJobCard()
+    } else {
+      saveSession()
+      // Auto-start the next roll in the background (timer already running from End Roll)
+      rollWeight.value = null
+      totalQty.value   = null
+      mistakeQty.value = 0
+      actualRollStartTime = nextRollStartTime || actualRollStartTime || new Date()
+      nextRollStartTime   = null
+      await createKnitRoll({ keepTimer: true })
+      showToast(`Roll completed! Next roll started automatically.`)
+    }
+  } catch(e) {
+    showToast('Failed to save roll: ' + e.message, 'error')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function saveRollToERP(rollData) {
+  if (isOnline.value) {
+    try {
+      await call('knit_save_roll_data', rollData)
+      return
+    } catch(e) {
+      console.warn('ERP save failed, falling back to offline queue:', e.message)
+    }
+  }
+  // Offline path — queue for sync; the real roll_no will come from ERP after sync
+  const { saveRollOffline } = await import('@/composables/useSync')
+  const localId = await saveRollOffline(rollData)
+  // Update lastCompletedRollData with localId so QR print knows it's pending
+  if (lastCompletedRollData.value) {
+    lastCompletedRollData.value = { ...lastCompletedRollData.value, roll_no: localId }
+  }
+}
+
+// ── Navigate to Stock Entry with WO required items pre-filled ────────────
+async function goToStockEntry() {
+  // Pass only the work_order — StockEntryPage fetches fresh data itself
+  router.push({
+    path: '/knit-app/stock-entry',
+    query: { work_order: rollStore.productData.work_order }
+  })
+}
+
+// ── Start next roll after print ───────────────────────────────────────────
+async function startNextRollAfterPrint() {
+  showPrintButtons.value = false
+  lastCompletedRollData.value = null
+  rollWeight.value = null
+  totalQty.value   = null
+  mistakeQty.value = 0
+  actualRollStartTime = nextRollStartTime || new Date()
+  nextRollStartTime   = null
+  await createKnitRoll()
+}
+
+// ── Submit Job Card ───────────────────────────────────────────────────────
+async function submitJobCard() {
+  const hasRolls = await checkIfRollsExist()
+  if (!hasRolls && rollCount.value === 0) {
+    showToast('No rolls found. Create at least one roll before submitting.', 'error')
+    return
+  }
+  if (!qiExists.value) {
+    showToast('Quality Inspection is mandatory before submitting. Please create a QI first.', 'error')
+    return
+  }
+  // The Actual Yarn Consumption step runs ONLY for the first job card of the
+  // work order. That first card's actuals build a new BOM which every later
+  // job card of the same WO reuses — so later cards submit straight through.
+  let isFirst = true
+  try {
+    const resp = await call('knit_is_first_job_card', {
+      work_order: rollStore.productData.work_order,
+      job_card:   rollStore.productData.name,
+    })
+    // Backend returns { is_first: true/false }; default to true if unknown
+    isFirst = resp?.message?.is_first !== false
+  } catch (e) {
+    console.warn('first-job-card check failed, defaulting to show modal:', e.message)
+  }
+
+  if (isFirst) {
+    // Open the actual-consumption step, pre-filled from before/after stock
+    await openConsumptionModal()
+  } else {
+    // Later cards: submit using the WO's (already actuals-based) BOM
+    await doSubmitJobCard(null)
+  }
+}
+
+// Load transferred yarns for the consumption step.
+// before_qty  = WIP stock available when the job card started (snapshot)
+// after_qty   = WIP stock remaining now
+// actual      = before_qty − after_qty (what was actually consumed), editable
+async function openConsumptionModal() {
+  consumptionModal.value = { open: true, loading: true, saving: false, rows: [], error: '' }
+  try {
+    const resp = await call('knit_get_yarn_consumption', {
+      work_order: rollStore.productData.work_order,
+      job_card:   rollStore.productData.name,
+    })
+    const items = resp?.message || []
+    consumptionModal.value.rows = items.map(it => ({
+      item_code:   it.item_code,
+      batch_no:    it.batch_no || '',
+      transferred: +Number(it.transferred ?? it.qty ?? 0).toFixed(3),
+      before_qty:  +Number(it.before_qty ?? 0).toFixed(3),
+      after_qty:   +Number(it.after_qty ?? 0).toFixed(3),
+      actual:      0,
+      invalid:     false,
+    }))
+    recomputeActuals()
+  } catch (e) {
+    // Fallback to the legacy MTM endpoint if the new one isn't deployed yet
+    try {
+      const resp = await call('knit_get_mtm_data', {
+        work_order: rollStore.productData.work_order
+      })
+      const items = resp?.message || []
+      consumptionModal.value.rows = items.map(it => ({
+        item_code:   it.item_code,
+        batch_no:    it.batch_no || '',
+        transferred: +Number(it.qty || 0).toFixed(3),
+        before_qty:  0,
+        after_qty:   0,
+        actual:      0,
+        invalid:     false,
+      }))
+      recomputeActuals()
+    } catch (e2) {
+      consumptionModal.value.error = 'Could not load transferred materials: ' + e2.message
+    }
+  } finally {
+    consumptionModal.value.loading = false
+  }
+}
+
+// Actual per yarn = total roll weight × (after_qty ÷ Σ after_qty).
+// Before/After are operator-entered cone weights; only After drives the split.
+function recomputeActuals() {
+  const rows = consumptionModal.value.rows
+  const totalAfter = rows.reduce((s, r) => s + (Number(r.after_qty) || 0), 0)
+  const rollTotal = Number(totalRollWeight.value) || 0
+  rows.forEach(r => {
+    const after = Number(r.after_qty) || 0
+    r.actual = totalAfter > 0 ? +(rollTotal * (after / totalAfter)).toFixed(3) : 0
+    r.invalid = after < -0.0001
+  })
+}
+
+const consumptionActualTotal = computed(() =>
+  consumptionModal.value.rows.reduce((s, r) => s + (Number(r.actual) || 0), 0)
+)
+
+const consumptionValid = computed(() => {
+  const rows = consumptionModal.value.rows
+  if (!rows.length) return false
+  const totalAfter = rows.reduce((s, r) => s + (Number(r.after_qty) || 0), 0)
+  if (totalAfter <= 0) return false            // need After weights to split by
+  return rows.every(r => (Number(r.after_qty) || 0) >= -0.0001)
+})
+
+function closeConsumptionModal() {
+  consumptionModal.value.open = false
+}
+
+// Skip = submit using BOM planned qty (no actuals sent)
+async function submitWithPlanned() {
+  await doSubmitJobCard(null)
+}
+
+// Submit using computed actual consumption (roll-weight split).
+// Persists before/after onto the WO, builds a new BOM from the actuals, then submits.
+async function submitWithActuals() {
+  recomputeActuals()
+  if (!consumptionValid.value) {
+    consumptionModal.value.error = 'Enter the After cone weight for each yarn (at least one must be > 0).'
+    return
+  }
+  const actuals = consumptionModal.value.rows.map(r => ({
+    item_code: r.item_code,
+    qty: Number(r.actual),
+    before_qty: Number(r.before_qty) || 0,
+    after_qty: Number(r.after_qty) || 0,
+    batch_no: r.batch_no || '',
+  }))
+
+  consumptionModal.value.saving = true
+  try {
+    await call('knit_apply_actual_bom', {
+      work_order: rollStore.productData.work_order,
+      actual_consumption: JSON.stringify(actuals),
+    })
+  } catch (e) {
+    consumptionModal.value.saving = false
+    consumptionModal.value.error = 'Could not build actuals BOM: ' + e.message
+    return
+  }
+
+  await doSubmitJobCard(actuals)
+}
+
+async function createLeftoverReturn() {
+  returnCreating.value = true
+  returnResult.value = { ok: false, msg: '', stockEntry: '', warehouse: '', items: [] }
+  try {
+    // Post-submit, WIP balance already reflects consumption, so the remaining
+    // balance IS the leftover. Return whatever remains in WIP.
+    const resp = await call('knit_create_leftover_return', {
+      work_order: rollStore.productData.work_order
+    })
+    const d = resp?.message || {}
+    if (d.success) {
+      returnResult.value = {
+        ok: true,
+        msg: `Draft return entry created: ${d.stock_entry}`,
+        stockEntry: d.stock_entry,
+        warehouse: d.return_warehouse,
+        items: d.items || [],
+      }
+    } else {
+      returnResult.value = { ok: false, msg: d.reason || 'Nothing to return.', stockEntry: '', warehouse: '', items: [] }
+    }
+  } catch (e) {
+    returnResult.value = { ok: false, msg: 'Failed: ' + e.message, stockEntry: '', warehouse: '', items: [] }
+  } finally {
+    returnCreating.value = false
+  }
+}
+
+async function doSubmitJobCard(actuals) {
+  if (!confirm(`Submit job card with ${rollCount.value} roll(s), total ${totalRollWeight.value.toFixed(3)} kg?`)) return
+  consumptionModal.value.saving = true
+  submitting.value = true
+  try {
+    const args = {
+      jobcard: rollStore.productData.name,
+      work_order: rollStore.productData.work_order,
+    }
+    if (actuals && actuals.length) {
+      args.actual_consumption = JSON.stringify(actuals)
+    }
+    await call('knit_submit_roll_packing_list_v2', args)
+    consumptionModal.value.open = false
+    isJobSubmitted.value      = true
+    isJobStarted.value        = false
+    isJobSubmissionMode.value = false
+    showPrintButtons.value    = false
+    clearSession()
+    showToast(`Job card submitted with ${rollCount.value} roll(s)!`)
+    await checkMTMData()
+    setTimeout(() => location.reload(), 1500)
+  } catch(e) {
+    consumptionModal.value.error = 'Failed to submit: ' + e.message
+    showToast('Failed to submit: ' + e.message, 'error')
+  } finally {
+    submitting.value = false
+    consumptionModal.value.saving = false
+  }
+}
+
+// ── Check rolls ───────────────────────────────────────────────────────────
+async function checkIfRollsExist() {
+  try {
+    const resp = await call('knit_check_job_card_rolls', {
+      job_card: rollStore.productData.name
+    })
+    const d = resp?.message || {}
+    rollCount.value       = d.roll_count || 0
+    totalRollWeight.value = d.total_weight || 0
+    totalRollPcs.value    = d.total_pcs || 0
+    if (d.reconcile_submitted) isReconcileSubmitted.value = true
+    if (d.qi_exists) qiExists.value = true
+    if (d.jc_cancelled) isJobCancelled.value = true
+    if (d.manufacture_se_exists) manufactureSeExists.value = true
+    if (d.rpl_exists) rplExists.value = true
+    return rollCount.value > 0
+  } catch(e) {
+    return rollCount.value > 0
+  }
+}
+
+// ── MTM / Reconcile ───────────────────────────────────────────────────────
+async function checkMTMData() {
+  try {
+    const resp = await call('knit_get_mtm_data', {
+      work_order: rollStore.productData.work_order
+    })
+    hasMTMData.value = (resp?.message?.length || 0) > 0
+  } catch(e) {
+    hasMTMData.value = false
+  }
+}
+
+async function showReconcile() {
+  if (showReconcileTable.value) { showReconcileTable.value = false; return }
+  try {
+    const resp = await call('knit_get_mtm_data', {
+      work_order: rollStore.productData.work_order
+    })
+    const items = resp?.message || []
+    const wo = rollStore.productData.work_order
+    const base = items.map((item, i) => ({
+      s_no: i + 1,
+      item_code: item.item_code,
+      s_warehouse: item.t_warehouse,
+      batch_no: item.batch_no || '',
+      available_batches: item.available_batches || [],
+      erp_qty: item.qty,
+      phy_qty: '',
+      uom: item.stock_uom || 'Kgs',
+      is_special: false,
+    }))
+    // Append Scrap and Process Loss rows (batch derived from work order).
+    // These are target-only (go into SCRAP STORE); erp_qty is 0, operator enters physical.
+    base.push({
+      s_no: base.length + 1,
+      item_code: 'SCRAP',
+      s_warehouse: 'NAP_E1/FF/SCRAP STORE  - PSS',
+      batch_no: `SCRAP/${wo}`,
+      available_batches: [`SCRAP/${wo}`],
+      erp_qty: 0,
+      phy_qty: '',
+      uom: 'Kgs',
+      is_special: true,
+    })
+    base.push({
+      s_no: base.length + 1,
+      item_code: 'PROCESS-LOSS',
+      s_warehouse: 'NAP_E1/FF/SCRAP STORE  - PSS',
+      batch_no: `LOSS/${wo}`,
+      available_batches: [`LOSS/${wo}`],
+      erp_qty: 0,
+      phy_qty: '',
+      uom: 'Kgs',
+      is_special: true,
+    })
+    reconcileData.value = base
+    showReconcileTable.value = true
+  } catch(e) {
+    showToast('Failed to fetch MTM data.', 'error')
+  }
+}
+
+function validatePhysicalQty(item) {
+  const v = parseFloat(item.phy_qty)
+  item.invalidQty = isNaN(v) || v < 0
+  if (v < 0) item.phy_qty = 0
+  reconcileValidationMsg.value = ''
+}
+function isReconcileValid() {
+  if (!reconcileData.value.length) return false
+  const allValid = reconcileData.value.every(item => {
+    const v = parseFloat(item.phy_qty)
+    return !isNaN(v) && v >= 0 && item.batch_no
+  })
+  if (!allValid) return false
+  const physTotal = reconcileData.value.reduce((s, i) => s + (parseFloat(i.phy_qty) || 0), 0)
+  const erpTotal  = reconcileData.value.reduce((s, i) => s + (parseFloat(i.erp_qty) || 0), 0)
+  if (Math.abs(physTotal - erpTotal) > 0.001) {
+    reconcileValidationMsg.value = `Physical total (${physTotal.toFixed(3)}) must equal ERP total (${erpTotal.toFixed(3)})`
+    return false
+  }
+  reconcileValidationMsg.value = ''
+  return true
+}
+async function submitReconcile() {
+  submitting.value = true
+  try {
+    await call('knit_submit_reconciliation', {
+      work_order: rollStore.productData.work_order,
+      reconcile_items: JSON.stringify(reconcileData.value)
+    })
+    showReconcileTable.value = false
+    isReconcileSubmitted.value = true
+    showToast('Reconciliation submitted!')
+  } catch(e) {
+    showToast('Reconciliation failed: ' + e.message, 'error')
+  } finally {
+    submitting.value = false
+  }
+}
+
+// ── Print / QR ────────────────────────────────────────────────────────────
+async function generatePrintLabel() {
+  if (!lastCompletedRollData.value) return
+  const pd = rollStore.productData
+  const d  = lastCompletedRollData.value
+  printData.value = {
+    rollNo:    d.roll_no,
+    itemCode:  pd.production_item,
+    workOrder: pd.work_order,
+    batchNo:   d.batch_no,
+    weight:    parseFloat(d.roll_weight || 0).toFixed(3),
+    totalQty:  d.total_qty,
+    date:      moment().format('DD-MM-YYYY'),
+  }
+  showQRModal.value = true
+  await nextTick()
+  const qrData = `${pd.production_item}#${pd.work_order}#${d.roll_no}`
+  try {
+    await QRCode.toCanvas(qrCanvas.value, qrData, { width: 200 })
+  } catch(e) { console.error(e) }
+}
+
+async function printLabel() {
+  const w = window.open('', '_blank')
+  if (!w) { showToast('Allow pop-ups to print.', 'error'); return }
+  const pd = rollStore.productData
+  const d  = printData.value
+  const qrData = `${pd.production_item}#${pd.work_order}#${d.rollNo}`
+  // Generate the QR as a data URL using the bundled qrcode package so it works
+  // offline (no CDN). Embedded directly as an <img> in the print HTML.
+  let qrImg = ''
+  try {
+    qrImg = await QRCode.toDataURL(qrData, { width: 200, margin: 1 })
+  } catch(e) { console.error('QR generation failed:', e) }
+  w.document.write(buildStickerHTML({
+    itemCode:       pd.production_item,
+    commercialName: pd.commercial_name || '',
+    workOrder:      pd.work_order,
+    rollNo:         d.rollNo,
+    weight:         d.weight,
+    batch:          d.batchNo,
+    qty:            d.totalQty,
+    qrImg,
+  }))
+  w.document.close()
+  showQRModal.value = false
+}
+
+function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight, batch, qty, qrImg }) {
+  const batchRow = batch ? `<tr><td>${batch}</td></tr>` : ''
+  const qtyRow   = qty   ? `<tr><td>${qty} pcs</td></tr>` : ''
+  const qrCell   = qrImg ? `<img src="${qrImg}" style="width:26mm;height:26mm" alt="QR"/>` : ''
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:60mm; height:80mm; }
+  body { font-family:Arial,sans-serif; }
+  .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex; flex-direction:column; }
+  .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
+             border-bottom:1px solid #000; flex:0 0 auto; }
+  table { width:100%; border-collapse:collapse; flex:1; }
+  td { padding:1.5mm 3mm; border-bottom:0.3px solid #888; font-size:8pt; font-weight:700;
+       font-family:Arial,sans-serif; color:#000; line-height:1.2; }
+  tr:last-child td { border-bottom:none; }
+  .noprint { text-align:center; padding:10px; }
+  .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
+    cursor:pointer; font-size:12px; font-weight:600; }
+  .btn-p { background:#000; color:#fff; }
+  .btn-c { background:#eee; color:#333; }
+  @media print {
+    .noprint { display:none; }
+    html, body { width:60mm; height:80mm; margin:0; padding:0; }
+    @page { size:60mm 80mm; margin:0; }
+  }
+</style>
+</head><body>
+<div class="sticker">
+  <div class="qr-cell">${qrCell}</div>
+  <table>
+    <tr><td>${itemCode}</td></tr>
+    <tr><td>${commercialName}</td></tr>
+    <tr><td>${workOrder}</td></tr>
+    <tr><td>${rollNo}</td></tr>
+    <tr><td>${Number(weight).toFixed(3)} kg</td></tr>
+    ${batchRow}
+    ${qtyRow}
+  </table>
+</div>
+<div class="noprint">
+  <button class="btn-p" onclick="window.print()">🖨 Print</button>
+  <button class="btn-c" onclick="window.close()">Close</button>
+</div>
+</body></html>`
+}
+</script>
+
+<style scoped>
+.cr-page    { min-height:100vh; display:flex; flex-direction:column; background:#f8fafc; overflow-x:hidden; }
+.cr-content { flex:1; padding:16px 16px 40px; max-width:760px; width:100%; margin:0 auto; box-sizing:border-box; }
+
+/* Reset button */
+.cr-reset-btn { position:fixed; top:14px; right:56px; z-index:300; background:rgba(255,255,255,0.15); border:none; color:white; font-size:18px; width:34px; height:34px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; }
+.cr-reset-btn:active { transform:scale(0.93); }
+
+/* Loading */
+.cr-overlay { position:fixed; inset:0; background:rgba(255,255,255,0.92); z-index:500; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; }
+.cr-overlay__spinner { width:40px; height:40px; border:4px solid #e2e8f0; border-top-color:var(--app-primary,#0f6e56); border-radius:50%; animation:spin 0.75s linear infinite; }
+.cr-overlay__text { font-size:14px; font-weight:600; color:#64748b; }
+
+/* Info card */
+.cr-info-card { background:linear-gradient(135deg, var(--app-primary,#0f6e56), color-mix(in srgb, var(--app-primary,#0f6e56) 65%, black)); border-radius:16px; padding:16px; margin-bottom:14px; }
+.cr-info-row  { display:flex; gap:12px; }
+.cr-info-divider { height:1px; background:rgba(255,255,255,0.15); margin:10px 0; }
+.cr-info-item { flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.cr-info-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.65); }
+.cr-info-value { font-size:14px; font-weight:700; color:white; word-break:break-all; }
+.cr-info-value--mono { font-family:monospace; font-size:12px; color:#a7f3d0; }
+.cr-info-commercial { font-family:inherit; color:rgba(255,255,255,0.75); font-weight:600; }
+.cr-info-value--batch { font-family:monospace; font-size:12px; color:#fde68a; }
+.cr-status { font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; }
+.cr-status--warning  { background:rgba(251,191,36,0.3); color:#fef3c7; }
+.cr-status--success  { background:rgba(16,185,129,0.3); color:#a7f3d0; }
+.cr-status--danger   { background:rgba(239,68,68,0.3);  color:#fca5a5; }
+.cr-status--secondary{ background:rgba(255,255,255,0.15); color:rgba(255,255,255,0.8); }
+
+/* Toast */
+.cr-toast { position:fixed; top:70px; left:50%; transform:translateX(-50%); padding:10px 20px; border-radius:10px; font-size:13px; font-weight:600; z-index:400; max-width:90vw; text-align:center; box-shadow:0 4px 16px rgba(0,0,0,0.15); }
+.cr-toast--success { background:#047857; color:white; }
+.cr-toast--error   { background:#dc2626; color:white; }
+.cr-toast--warning { background:#d97706; color:white; }
+.cr-toast--info    { background:#1e40af; color:white; }
+.toast-enter-active,.toast-leave-active { transition:all 0.25s; }
+.toast-enter-from,.toast-leave-to { opacity:0; transform:translateX(-50%) translateY(-10px); }
+
+/* Cards */
+.cr-card { background:white; border-radius:14px; padding:16px; margin-bottom:14px; border:1px solid #e2e8f0; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+.cr-card__title { font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:12px; }
+.cr-card__subtitle { font-size:12px; color:#64748b; margin-top:-8px; margin-bottom:12px; }
+.cr-card__desc { font-size:13px; color:#64748b; margin-bottom:16px; line-height:1.5; }
+
+/* Timer card */
+.cr-timer-card { background:linear-gradient(135deg, color-mix(in srgb, var(--app-primary,#0f6e56) 70%, black), var(--app-primary,#0f6e56)); border-radius:16px; padding:20px; margin-bottom:14px; color:white; }
+.cr-timer-card__header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; }
+.cr-timer-badge { font-size:10px; font-weight:800; letter-spacing:0.1em; background:rgba(255,255,255,0.2); padding:3px 12px; border-radius:20px; }
+.cr-timer-rollno { font-size:13px; font-weight:600; color:rgba(255,255,255,0.8); }
+.cr-timer-display { font-size:64px; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:2px; text-align:center; line-height:1; margin-bottom:16px; }
+.cr-timer-stats { display:flex; justify-content:center; gap:32px; padding-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.15); margin-bottom:14px; }
+.cr-timer-stat { display:flex; flex-direction:column; align-items:center; gap:3px; }
+.cr-timer-stat__num { font-size:16px; font-weight:800; font-variant-numeric:tabular-nums; }
+.cr-timer-stat__lbl { font-size:10px; color:rgba(255,255,255,0.65); font-weight:600; text-transform:uppercase; letter-spacing:0.05em; }
+.cr-timer-actions { display:flex; gap:10px; }
+
+/* Alerts */
+.cr-alert { padding:11px 14px; border-radius:10px; font-size:13px; font-weight:600; margin-bottom:10px; }
+.cr-alert--success { background:#d1fae5; color:#047857; }
+.cr-alert--error   { background:#fee2e2; color:#dc2626; font-weight:700; padding:10px 14px; border-radius:8px; }
+.cr-alert--warning { background:rgba(251,191,36,0.2); color:#fef3c7; border:1px solid rgba(251,191,36,0.3); }
+.cr-alert--error   { background:#fee2e2; color:#dc2626; }
+
+/* Fields */
+.cr-field { margin-bottom:12px; }
+.cr-label { display:block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#94a3b8; margin-bottom:4px; }
+.cr-input { width:100%; padding:11px 13px; border:1.5px solid #e2e8f0; border-radius:8px; font-size:15px; color:#0f172a; background:white; outline:none; box-sizing:border-box; font-family:inherit; }
+.cr-input:focus { border-color:var(--app-primary,#0f6e56); }
+.cr-field-error { font-size:11px; color:#dc2626; margin-top:4px; font-weight:600; }
+.cr-input--sm { padding:8px 10px; font-size:13px; }
+
+/* Grid */
+.cr-grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+
+/* Buttons */
+.cr-btn { display:flex; align-items:center; justify-content:center; gap:6px; padding:11px 16px; border-radius:10px; border:none; font-size:14px; font-weight:700; cursor:pointer; font-family:inherit; transition:opacity 0.15s, transform 0.1s; white-space:nowrap; }
+.cr-btn:active { transform:scale(0.97); }
+.cr-btn:disabled { opacity:0.45; cursor:not-allowed; transform:none; }
+.cr-btn--full { width:100%; }
+.cr-btn--lg { padding:14px; font-size:15px; }
+.cr-btn--primary  { background:var(--app-primary,#0f6e56); color:white; flex:1; }
+.cr-btn--danger   { background:#dc2626; color:white; }
+.cr-btn--ghost    { background:#f1f5f9; color:#334155; }
+.cr-btn--outline  { background:transparent; border:1.5px solid var(--app-primary,#0f6e56); color:var(--app-primary,#0f6e56); }
+.cr-btn--breakdown { background:rgba(251,191,36,0.25); color:#fef3c7; border:1px solid rgba(251,191,36,0.4); flex:1; }
+.cr-btn--end      { background:rgba(239,68,68,0.25); color:#fca5a5; border:1px solid rgba(239,68,68,0.4); flex:1; }
+.cr-btn--submit   { background:#059669; color:white; border:1px solid #047857; font-weight:800; }
+.cr-btn--submit:disabled { background:rgba(16,185,129,0.2); color:#a7f3d0; border:1px solid rgba(16,185,129,0.3); }
+
+/* Completed grid */
+.cr-completed-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.cr-completed-item { display:flex; flex-direction:column; gap:3px; padding:10px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; }
+.cr-completed-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#94a3b8; }
+.cr-completed-value { font-size:16px; font-weight:800; color:#0f172a; font-variant-numeric:tabular-nums; }
+
+/* Reconcile */
+.cr-reconcile-table { overflow-x:auto; }
+.cr-recon-header,.cr-recon-row { display:grid; grid-template-columns:40px 1fr 1fr 80px 90px; gap:8px; align-items:center; padding:8px 4px; border-bottom:1px solid #f1f5f9; font-size:12px; }
+.cr-recon-header { font-weight:700; color:#94a3b8; text-transform:uppercase; font-size:10px; }
+
+/* Spinner */
+.cr-spinner { width:14px; height:14px; border:2px solid rgba(255,255,255,0.4); border-top-color:white; border-radius:50%; animation:spin 0.7s linear infinite; display:inline-block; }
+
+/* QR Modal */
+.cr-qr-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:200; padding:20px; }
+.cr-qr-modal { background:white; border-radius:18px; padding:24px; width:100%; max-width:340px; box-shadow:0 10px 30px rgba(0,0,0,0.2); }
+.cr-qr-modal__title { font-size:16px; font-weight:800; color:#0f172a; margin-bottom:12px; text-align:center; }
+.cr-qr-label { background:#f8fafc; border-radius:10px; padding:12px; margin-bottom:4px; }
+.cr-qr-label__row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+.cr-qr-label__row:last-child { border-bottom:none; }
+.cr-qr-label__row span { color:#64748b; }
+.cr-qr-label__row strong { color:#0f172a; font-weight:700; }
+
+@media (min-width:768px) { .cr-content { padding:20px 24px 40px; } .cr-timer-display { font-size:80px; } }
+@keyframes spin { to { transform:rotate(360deg); } }
+.cr-assigned-badge { background:#f0fdf4; color:#16a34a; border-radius:8px; padding:6px 12px;
+  font-size:13px; font-weight:600; margin-bottom:8px; display:inline-block; }
+.cr-no-employee-warn { background:#fef2f2; color:#dc2626; border-radius:8px; padding:6px 12px;
+  font-size:13px; font-weight:600; margin-bottom:8px; }
+
+/* Actual Consumption Modal */
+.cr-cons-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center;
+  justify-content:center; z-index:400; padding:16px; }
+.cr-cons-modal { background:#fff; border-radius:16px; width:100%; max-width:560px; max-height:88vh;
+  display:flex; flex-direction:column; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,0.25); }
+.cr-cons-hd { display:flex; justify-content:space-between; align-items:flex-start; padding:18px 20px 12px; }
+.cr-cons-title { font-size:17px; font-weight:800; color:#0f172a; }
+.cr-cons-sub { font-size:12px; color:#64748b; margin-top:2px; }
+.cr-cons-close { background:none; border:none; font-size:18px; cursor:pointer; color:#94a3b8; }
+.cr-cons-body { padding:0 20px 8px; overflow-y:auto; }
+.cr-cons-loading { text-align:center; padding:24px; color:#64748b; font-size:14px; }
+.cr-cons-hint { font-size:12px; color:#64748b; line-height:1.5; margin-bottom:12px; }
+.cr-cons-table { display:flex; flex-direction:column; }
+.cr-cons-row { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr 1fr; gap:8px; align-items:center; padding:8px 0;
+  border-bottom:1px solid #f1f5f9; font-size:13px; }
+.cr-cons-row--head { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+  color:#94a3b8; border-bottom:1px solid #e2e8f0; }
+.cr-cons-row--invalid .cr-cons-input { border-color:#dc2626; background:#fef2f2; }
+.cr-cons-row--total { font-weight:700; border-top:2px solid #e2e8f0; border-bottom:none; color:#0f172a; }
+.cr-cons-actual { font-weight:700; color:#166534; text-align:right; }
+.cr-cons-before { color:#475569; text-align:right; padding-right:4px; }
+.cr-cons-row--before { grid-template-columns:1.6fr 1fr 1fr; }
+.cr-cons-item { font-weight:600; color:#0f172a; word-break:break-all; }
+.cr-cons-input { width:100%; padding:6px 8px; border:1.5px solid #e2e8f0; border-radius:7px; font-size:13px;
+  font-family:inherit; outline:none; }
+.cr-cons-input:focus { border-color:#1e3a5f; }
+.cr-cons-err { margin-top:12px; color:#dc2626; font-size:13px; font-weight:600; }
+.cr-cons-ft { display:flex; gap:10px; padding:12px 20px 20px; }
+.cr-cons-ft .cr-btn { flex:1; }
+</style>

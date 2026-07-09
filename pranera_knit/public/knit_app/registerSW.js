@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/assets/pranera_knit/knit_app/sw.js', { scope: '/assets/pranera_knit/knit_app/' })})}

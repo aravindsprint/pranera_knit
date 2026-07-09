@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Background rounded square - brand green -->
+  <rect width="100" height="100" rx="22" fill="#0f6e56"/>
+
+  <!-- Knitting needles: two diagonal lines crossing -->
+  <line x1="18" y1="20" x2="82" y2="84" stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.35"/>
+  <line x1="82" y1="20" x2="18" y2="84" stroke="white" stroke-width="6" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Left needle - solid, going top-left to bottom-right -->
+  <line x1="20" y1="18" x2="56" y2="54" stroke="white" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- Left needle tip cap -->
+  <circle cx="20" cy="18" r="5" fill="white"/>
+  <!-- Left needle bottom handle end -->
+  <rect x="53" y="51" width="30" height="7" rx="3.5" fill="white" transform="rotate(45 68 54)"/>
+
+  <!-- Right needle - solid, going top-right to bottom-left -->
+  <line x1="80" y1="18" x2="44" y2="54" stroke="white" stroke-width="5.5" stroke-linecap="round"/>
+  <!-- Right needle tip cap -->
+  <circle cx="80" cy="18" r="5" fill="white"/>
+  <!-- Right needle bottom handle end -->
+  <rect x="17" y="51" width="30" height="7" rx="3.5" fill="white" transform="rotate(-45 32 54)"/>
+
+  <!-- Yarn loop / knit stitch in the center -->
+  <path d="M35 60 Q50 44 65 60 Q57 72 50 68 Q43 72 35 60Z"
+        fill="none" stroke="white" stroke-width="3.5" stroke-linejoin="round" opacity="0.9"/>
+
+  <!-- Yarn tail curving out bottom-left -->
+  <path d="M35 60 Q24 68 22 80" fill="none" stroke="white" stroke-width="3.5"
+        stroke-linecap="round" opacity="0.9"/>
+  <!-- Yarn tail curving out bottom-right -->
+  <path d="M65 60 Q76 68 78 80" fill="none" stroke="white" stroke-width="3.5"
+        stroke-linecap="round" opacity="0.9"/>
+</svg>

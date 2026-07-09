@@ -1,0 +1,536 @@
+<template>
+  <div class="qi-page">
+    <AppHeader title="Quality Inspection" active="qi" :username="auth.username" :designation="auth.designation" :show-back="true" />
+    <button class="cr-reset-btn" @click="reloadPage()" title="Reload">↺</button>
+
+    <!-- Loading overlay -->
+    <div v-if="initializing" class="qi-overlay">
+      <div class="qi-overlay__spinner"></div>
+      <div class="qi-overlay__text">Loading inspection data…</div>
+    </div>
+
+    <div class="qi-content">
+
+      <!-- Job Card + Item info card -->
+      <div class="qi-info-card" v-if="qiStore.productData">
+        <div class="qi-info-row">
+          <div class="qi-info-item qi-info-item--half">
+            <span class="qi-info-label">JOB CARD</span>
+            <span class="qi-info-value">{{ qiStore.productData.name }}</span>
+          </div>
+          <div class="qi-info-item qi-info-item--half">
+            <span class="qi-info-label">WORK ORDER</span>
+            <span class="qi-info-value">{{ qiStore.productData.work_order || "—" }}</span>
+          </div>
+        </div>
+        <div class="qi-info-divider"></div>
+        <div class="qi-info-item">
+          <span class="qi-info-label">ITEM CODE</span>
+          <span class="qi-info-value qi-info-value--mono">{{ qiStore.productData.production_item }}</span>
+        </div>
+        <div class="qi-info-item" v-if="itemDetails && itemDetails.item_name" style="margin-top:8px">
+          <span class="qi-info-label">ITEM NAME</span>
+          <span class="qi-info-value qi-info-value--sm">{{ itemDetails.item_name }}</span>
+        </div>
+      </div>
+
+      <!-- Basic Info -->
+      <div class="qi-card">
+        <div class="qi-card__title">Basic Information</div>
+
+        <div class="qi-field">
+          <label class="qi-label">Series</label>
+          <div class="qi-static">MAT-QA-.YYYY.-</div>
+        </div>
+
+        <div class="qi-field">
+          <label class="qi-label">Report Date</label>
+          <input v-model="form.report_date" type="date" class="qi-input" />
+        </div>
+
+        <div class="qi-field">
+          <label class="qi-label">Inspection Type</label>
+          <select v-model="form.inspection_type" class="qi-input">
+            <option value="Incoming">Incoming</option>
+            <option value="In Process">In Process</option>
+            <option value="Final">Final</option>
+          </select>
+        </div>
+
+        <div class="qi-field">
+          <label class="qi-label">Reference Type</label>
+          <select v-model="form.reference_type" class="qi-input">
+            <option value="Job Card">Job Card</option>
+            <option value="Purchase Receipt">Purchase Receipt</option>
+            <option value="Stock Entry">Stock Entry</option>
+          </select>
+        </div>
+
+        <div class="qi-field">
+          <label class="qi-label">Reference Name</label>
+          <div class="qi-static">{{ form.reference_name || '—' }}</div>
+        </div>
+      </div>
+
+      <!-- Item Details -->
+      <div class="qi-card">
+        <div class="qi-card__title">Item Details</div>
+
+        <div class="qi-field">
+          <label class="qi-label">Item Code</label>
+          <div class="qi-static">{{ form.item_code || '—' }}</div>
+        </div>
+
+        <div class="qi-field" v-if="form.batch_no">
+          <label class="qi-label">Batch No</label>
+          <div class="qi-static batch-chip">{{ form.batch_no }}</div>
+        </div>
+
+        <div class="qi-field" v-if="itemDetails?.item_name">
+          <label class="qi-label">Item Name</label>
+          <div class="qi-static">{{ itemDetails.item_name }}</div>
+        </div>
+
+        <div class="qi-field">
+          <label class="qi-label">Sample Size</label>
+          <input v-model.number="form.sample_size" type="number" min="1" class="qi-input" />
+        </div>
+
+        <!-- Roll Number selector -->
+        <div class="qi-field" v-if="rollNumbers.length">
+          <label class="qi-label">Select Roll Number</label>
+          <select v-model="selectedRollNo" class="qi-input" @change="onRollSelect">
+            <option value="">— Select Roll —</option>
+            <option v-for="roll in rollNumbers" :key="roll.idx" :value="roll.id">
+              {{ roll.id }}
+            </option>
+          </select>
+          <div class="qi-hint">{{ rollNumbers.length }} roll(s) found for this job card</div>
+        </div>
+        <div class="qi-field" v-else-if="rollsLoaded">
+          <label class="qi-label">Roll Number</label>
+          <div class="qi-static qi-static--warn">No rolls found for this job card</div>
+        </div>
+      </div>
+
+      <!-- Readings / Parameters -->
+      <div class="qi-card" v-if="readings.length">
+        <div class="qi-card__title">
+          Inspection Readings
+          <span class="qi-badge">{{ readings.length }}</span>
+        </div>
+
+        <div
+          v-for="(reading, idx) in readings"
+          :key="idx"
+          class="qi-reading"
+          :class="{ 'qi-reading--numeric': reading.numeric }"
+        >
+          <div class="qi-reading__header">
+            <div class="qi-reading__num">{{ idx + 1 }}</div>
+            <div class="qi-reading__spec">{{ reading.specification }}</div>
+            <span class="qi-reading__type-badge" :class="reading.numeric ? 'qi-reading__type-badge--num' : 'qi-reading__type-badge--text'">
+              {{ reading.numeric ? 'Numeric' : 'Text' }}
+            </span>
+            <button class="qi-reading__remove" @click="removeReading(idx)">✕</button>
+          </div>
+
+          <div class="qi-reading__body">
+            <!-- Numeric field -->
+            <template v-if="reading.numeric">
+              <div class="qi-field">
+                <label class="qi-label">Reading (numeric)</label>
+                <input v-model="reading.reading_value" type="number" step="0.01" class="qi-input" placeholder="Enter value" />
+              </div>
+
+            </template>
+
+            <!-- Text field -->
+            <template v-else>
+              <div class="qi-field">
+                <label class="qi-label">Reading (text)</label>
+                <input v-model="reading.reading_value" type="text" class="qi-input" :placeholder="reading.value || 'Enter value'" />
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div class="qi-add-param" v-if="availableParams.length">
+          <select v-model="selectedParam" class="qi-input" @change="addSelectedParam">
+            <option value="">+ Add Reading…</option>
+            <option v-for="p in availableParams" :key="p.specification" :value="p.specification">
+              {{ p.specification }} ({{ p.numeric ? 'Numeric' : 'Text' }})
+            </option>
+          </select>
+        </div>
+        <div class="qi-hint" v-else style="text-align:center;padding:8px">All parameters added</div>
+      </div>
+
+      <!-- No parameters loaded yet -->
+      <div class="qi-card" v-else-if="!initializing">
+        <div class="qi-empty">
+          <div style="font-size:32px;opacity:0.4">📋</div>
+          <div>No inspection parameters loaded.</div>
+          <button class="qi-retry-btn" @click="loadItemDetails">Retry</button>
+        </div>
+      </div>
+
+      <!-- Inspection Personnel -->
+      <div class="qi-card">
+        <div class="qi-card__title">Inspection Personnel</div>
+        <div class="qi-field">
+          <label class="qi-label">Remarks</label>
+          <textarea v-model="form.remarks" class="qi-input qi-input--textarea" rows="3" placeholder="Enter remarks…"></textarea>
+        </div>
+        <div class="qi-field">
+          <label class="qi-label">Inspected By</label>
+          <div class="qi-static">{{ auth.username }}</div>
+        </div>
+      </div>
+
+      <!-- Error / Success -->
+      <div v-if="errorMsg" class="qi-alert qi-alert--error">⚠ {{ errorMsg }}</div>
+      <div v-if="successMsg" class="qi-alert qi-alert--success">✓ {{ successMsg }}</div>
+
+      <!-- Save as Draft -->
+      <button
+        class="qi-submit-btn"
+        @click="submitQI"
+        :disabled="submitting || !readings.length"
+      >
+        <span v-if="submitting" class="qi-submit-spinner"></span>
+        {{ submitting ? 'Saving…' : '💾 Save QI (Draft)' }}
+      </button>
+
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useQIStore } from '@/stores/qualityInspection'
+import { useAuthStore } from '@/stores/auth'
+import AppHeader from '@/components/AppHeader.vue'
+import { createDoc, getList, call, ensureCSRF } from '@/api/frappe'
+
+const router  = useRouter()
+const qiStore = useQIStore()
+const auth    = useAuthStore()
+
+// ── State ──────────────────────────────────────────────────────────────────
+const initializing  = ref(true)
+const submitting    = ref(false)
+const errorMsg      = ref('')
+const successMsg    = ref('')
+const itemDetails   = ref(null)
+const rollNumbers   = ref([])
+const rollsLoaded   = ref(false)
+const selectedRollNo = ref('')
+const readings      = ref([])
+const selectedParam = ref('')
+const allParams     = ref([])
+const availableParams = computed(() =>
+  allParams.value.filter(p => !readings.value.find(r => r.specification === p.specification))
+)
+
+const form = ref({
+  naming_series:              'MAT-QA-.YYYY.-',
+  company:                    'Pranera Services and Solutions Pvt. Ltd.,',
+  report_date:                new Date().toISOString().split('T')[0],
+  inspection_type:            'In Process',
+  reference_type:             'Job Card',
+  reference_name:             '',
+  item_code:                  '',
+  batch_no:                   '',
+  sample_size:                1,
+  item_name:                  '',
+  description:                '',
+  quality_inspection_template: '',
+  inspected_by:               '',
+  remarks:                    '',
+  custom_roll:                '',
+  letter_head:                'CUSTOM__PSS JV_LOGO',
+})
+
+// ── Init ───────────────────────────────────────────────────────────────────
+onMounted(async () => {
+  qiStore.loadProductDataFromSession()
+  const pd = qiStore.productData
+  if (!pd) { initializing.value = false; errorMsg.value = 'No product data. Go back and select a job card.'; return }
+
+  form.value.reference_name = pd.name || ''
+  form.value.item_code      = pd.production_item || ''
+  form.value.inspected_by   = auth.frappeUser || auth.username || ''
+  if (pd.work_order) form.value.remarks = `Work Order: ${pd.work_order}`
+
+  const batchId = `${pd.work_order}/${pd.name}`
+  form.value.batch_no = batchId
+
+  await Promise.all([
+    loadItemDetails(),
+    loadRollNumbers(),
+    createBatch(pd.production_item, batchId),
+  ])
+  initializing.value = false
+})
+
+// ── Load item details + inspection parameters ──────────────────────────────
+async function loadItemDetails() {
+  if (!form.value.item_code) return
+  try {
+    const res = await fetch(
+      `/api/resource/Item/${encodeURIComponent(form.value.item_code)}`,
+      { credentials: 'include' }
+    )
+    const data = await res.json()
+    const item = data.data
+    itemDetails.value = item
+    form.value.item_name   = item.item_name || ''
+    form.value.description = item.description || ''
+    form.value.quality_inspection_template = item.quality_inspection_template || ''
+
+    if (item.quality_inspection_template) {
+      const tplRes = await fetch(
+        `/api/resource/Quality%20Inspection%20Template/${encodeURIComponent(item.quality_inspection_template)}`,
+        { credentials: 'include' }
+      )
+      const tplData = await tplRes.json()
+      const params = tplData.data?.item_quality_inspection_parameter || []
+      allParams.value = params.map(p => ({ specification: p.specification, numeric: p.numeric === 1, value: p.value || '', min_value: p.min_value || 0, max_value: p.max_value || 0, parameter_group: p.parameter_group || '', formula_based_criteria: p.formula_based_criteria === 1, acceptance_formula: p.acceptance_formula || '' }))
+      readings.value = params.map(p => ({
+        specification:        p.specification,
+        parameter_group:      p.parameter_group || '',
+        value:                p.value || '',
+        numeric:              p.numeric === 1,
+        min_value:            p.min_value || 0,
+        max_value:            p.max_value || 0,
+        formula_based_criteria: p.formula_based_criteria === 1,
+        acceptance_formula:   p.acceptance_formula || '',
+        reading_value:        '',
+        reading_1: '', reading_2: '', reading_3: '',
+        reading_4: '', reading_5: '', reading_6: '',
+        reading_7: '', reading_8: '', reading_9: '', reading_10: '',
+      }))
+    }
+  } catch (e) {
+    console.error('loadItemDetails error:', e)
+    errorMsg.value = 'Could not load item details.'
+  }
+}
+
+// ── Load roll numbers ──────────────────────────────────────────────────────
+async function loadRollNumbers() {
+  if (!form.value.reference_name) return
+  try {
+    const res = await call('frappe.client.get_list', {
+      doctype: 'Roll',
+      filters: [['Roll', 'job_card', '=', form.value.reference_name]],
+      fields:  ['name', 'idx'],
+      limit_page_length: 50,
+    })
+    const rolls = res.message || []
+    rollNumbers.value = rolls.map(r => ({ id: r.name, idx: r.idx }))
+  } catch (e) {
+    console.warn('getRollNumbers:', e.message)
+  } finally {
+    rollsLoaded.value = true
+  }
+}
+
+// ── Create batch ───────────────────────────────────────────────────────────
+function reloadPage() { window.location.reload() }
+
+async function createBatch(itemCode, batchId) {
+  try {
+    const token = await ensureCSRF()
+    const res = await fetch('/api/resource/Batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Frappe-CSRF-Token': token },
+      credentials: 'include',
+      body: JSON.stringify({ item: itemCode, batch_id: batchId })
+    })
+    const data = await res.json()
+    if (data.data?.name) form.value.batch_no = data.data.name
+  } catch (e) {
+    console.warn('createBatch (may already exist):', e.message)
+  }
+}
+
+function onRollSelect() {
+  form.value.custom_roll = selectedRollNo.value
+}
+
+// ── Add / remove reading ───────────────────────────────────────────────────
+function addSelectedParam() {
+  if (!selectedParam.value) return
+  const p = allParams.value.find(x => x.specification === selectedParam.value)
+  if (!p) return
+  readings.value.push({
+    specification: p.specification, parameter_group: p.parameter_group || '',
+    value: p.value || '', numeric: p.numeric, min_value: p.min_value || 0, max_value: p.max_value || 0,
+    formula_based_criteria: p.formula_based_criteria || false, acceptance_formula: p.acceptance_formula || '',
+    reading_value: '',
+    reading_1:'', reading_2:'', reading_3:'', reading_4:'', reading_5:'',
+    reading_6:'', reading_7:'', reading_8:'', reading_9:'', reading_10:'',
+  })
+  selectedParam.value = ''
+}
+
+function removeReading(idx) {
+  readings.value.splice(idx, 1)
+}
+
+// ── Validate ───────────────────────────────────────────────────────────────
+function validate() {
+  if (!form.value.report_date)      return 'Report Date is required.'
+  if (!form.value.inspection_type)  return 'Inspection Type is required.'
+  if (!form.value.reference_name)   return 'Reference Name is required.'
+  if (!form.value.item_code)        return 'Item Code is required.'
+  if (!form.value.sample_size || form.value.sample_size < 1) return 'Valid Sample Size required.'
+  for (let i = 0; i < readings.value.length; i++) {
+    const r = readings.value[i]
+    if (!r.specification) return `Reading ${i+1}: Specification is required.`
+  }
+  return null
+}
+
+// ── Submit (save as Draft) ─────────────────────────────────────────────────
+async function submitQI() {
+  errorMsg.value   = ''
+  successMsg.value = ''
+
+  const err = validate()
+  if (err) { errorMsg.value = err; return }
+
+  submitting.value = true
+  const user = auth.username || 'system'
+  const s = (v) => (v == null || v === '') ? '' : String(v)
+
+  const doc = {
+    doctype:         'Quality Inspection',
+    naming_series:   form.value.naming_series,
+    company:         form.value.company,
+    report_date:     form.value.report_date,
+    inspection_type: form.value.inspection_type,
+    reference_type:  form.value.reference_type,
+    reference_name:  form.value.reference_name,
+    item_code:       form.value.item_code,
+    batch_no:        form.value.batch_no,
+    sample_size:     Number(form.value.sample_size),
+    item_name:       form.value.item_name,
+    description:     form.value.description,
+    quality_inspection_template: form.value.quality_inspection_template,
+    manual_inspection: 0,
+    inspected_by:    form.value.inspected_by || user,
+    verified_by:     '',
+    remarks:         form.value.remarks,
+    letter_head:     form.value.letter_head,
+    custom_roll:     form.value.custom_roll || selectedRollNo.value || '',
+    readings: readings.value.map((r, i) => ({
+      doctype:            'Quality Inspection Reading',
+      idx:                i + 1,
+      specification:      r.specification,
+      parameter_group:    r.parameter_group || '',
+      value:              s(r.value),
+      numeric:            r.numeric ? 1 : 0,
+      manual_inspection:  0,
+      min_value:          Number(r.min_value) || 0,
+      max_value:          Number(r.max_value) || 0,
+      formula_based_criteria: 0,
+      acceptance_formula: r.acceptance_formula || '',
+      reading_value:      s(r.reading_value),
+      reading_1:  s(r.reading_value),
+      reading_2:  '', reading_3:  '', reading_4:  '', reading_5:  '',
+      reading_6:  '', reading_7:  '', reading_8:  '', reading_9:  '', reading_10: '',
+      parentfield: 'readings', parenttype: 'Quality Inspection',
+    })),
+  }
+
+  try {
+    // Save as draft (docstatus=0) — createDoc uses insert which keeps it as draft
+    const result = await createDoc('Quality Inspection', doc)
+    successMsg.value = `QI ${result.name} saved as Draft!`
+    setTimeout(() => router.push('/knit-app/home'), 2000)
+  } catch (e) {
+    console.error('submitQI error:', e)
+    errorMsg.value = e.message || 'Failed to save QI.'
+  } finally {
+    submitting.value = false
+  }
+}
+</script>
+
+<style scoped>
+.cr-reset-btn { position:fixed; top:14px; right:56px; z-index:300; background:rgba(255,255,255,0.15); border:none; color:white; font-size:18px; width:34px; height:34px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; line-height:1; }
+.cr-reset-btn:active { transform:scale(0.93); }
+.qi-page    { min-height:100vh; display:flex; flex-direction:column; background:#f8fafc; overflow-x:hidden; }
+.qi-content { flex:1; padding:16px 16px 40px; max-width:760px; width:100%; margin:0 auto; box-sizing:border-box; }
+
+/* Loading overlay */
+.qi-overlay { position:fixed; inset:0; background:rgba(255,255,255,0.9); z-index:500; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; }
+.qi-overlay__spinner { width:40px; height:40px; border:4px solid #e2e8f0; border-top-color:var(--app-primary,#0f6e56); border-radius:50%; animation:spin 0.75s linear infinite; }
+.qi-overlay__text { font-size:14px; font-weight:600; color:#64748b; }
+
+/* Info card */
+.qi-info-card { background:linear-gradient(135deg, var(--app-primary,#0f6e56), color-mix(in srgb, var(--app-primary,#0f6e56) 70%, black)); border-radius:14px; padding:16px; margin-bottom:14px; }
+.qi-info-row { display:flex; gap:12px; margin-bottom:12px; }
+.qi-info-divider { height:1px; background:rgba(255,255,255,0.15); margin-bottom:12px; }
+.qi-info-item { display:flex; flex-direction:column; gap:3px; }
+.qi-info-item--half { flex:1; min-width:0; }
+.qi-info-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:rgba(255,255,255,0.65); }
+.qi-info-value { font-size:14px; font-weight:700; color:white; word-break:break-all; }
+.qi-info-value--mono { font-size:13px; font-family:monospace; color:#a7f3d0; word-break:break-all; }
+.qi-info-value--sm { font-size:12px; font-weight:500; color:rgba(255,255,255,0.9); line-height:1.4; }
+
+/* Cards */
+.qi-card { background:white; border-radius:14px; padding:16px; margin-bottom:14px; border:1px solid #e2e8f0; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+.qi-card__title { font-size:13px; font-weight:800; color:#334155; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:14px; display:flex; align-items:center; gap:8px; }
+.qi-badge { background:var(--app-primary,#0f6e56); color:white; font-size:11px; font-weight:700; padding:2px 8px; border-radius:20px; }
+
+/* Fields */
+.qi-field { margin-bottom:12px; }
+.qi-label { display:block; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#94a3b8; margin-bottom:4px; }
+.qi-input { width:100%; padding:10px 12px; border:1.5px solid #e2e8f0; border-radius:8px; font-size:14px; color:#0f172a; background:white; outline:none; box-sizing:border-box; font-family:inherit; transition:border-color 0.15s; }
+.qi-input:focus { border-color:var(--app-primary,#0f6e56); }
+.qi-input--textarea { resize:vertical; min-height:80px; }
+.qi-static { font-size:14px; font-weight:600; color:#0f172a; padding:10px 0 6px; border-bottom:1px solid #f1f5f9; }
+.qi-static--warn { color:#d97706; }
+.qi-hint { font-size:11px; color:#94a3b8; margin-top:4px; }
+.batch-chip { font-family:monospace; font-size:12px; color:var(--app-primary,#0f6e56); background:#f0faf7; padding:6px 10px; border-radius:6px; border-bottom:none; }
+
+/* Readings */
+.qi-reading { border:1px solid #e2e8f0; border-radius:10px; margin-bottom:10px; overflow:hidden; }
+.qi-reading--numeric { border-left:3px solid var(--app-primary,#0f6e56); }
+.qi-reading__header { display:flex; align-items:center; gap:10px; padding:10px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+.qi-reading__num { width:24px; height:24px; border-radius:50%; background:var(--app-primary,#0f6e56); color:white; font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.qi-reading__spec { flex:1; font-size:13px; font-weight:700; color:#0f172a; }
+.qi-reading__type-badge { font-size:10px; font-weight:700; padding:2px 8px; border-radius:20px; }
+.qi-reading__type-badge--num { background:rgba(15,110,86,0.1); color:var(--app-primary,#0f6e56); }
+.qi-reading__type-badge--text { background:#f1f5f9; color:#64748b; }
+.qi-reading__remove { background:none; border:none; color:#94a3b8; cursor:pointer; font-size:16px; padding:0 4px; }
+.qi-reading__remove:hover { color:#dc2626; }
+.qi-reading__body { padding:12px; display:flex; flex-direction:column; gap:8px; }
+.qi-reading__range-info { font-size:11px; color:#64748b; background:#f8fafc; padding:6px 10px; border-radius:6px; }
+
+.qi-add-param { margin-top:10px; }
+.qi-add-btn { width:100%; margin-top:10px; padding:10px; border:1.5px dashed #e2e8f0; border-radius:8px; background:none; color:#64748b; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
+.qi-add-btn:hover { border-color:var(--app-primary,#0f6e56); color:var(--app-primary,#0f6e56); }
+
+/* Alerts */
+.qi-alert { padding:12px 14px; border-radius:10px; font-size:13px; font-weight:600; margin-bottom:12px; }
+.qi-alert--error   { background:#fee2e2; color:#dc2626; }
+.qi-alert--success { background:#d1fae5; color:#047857; }
+
+/* Submit button */
+.qi-submit-btn { width:100%; padding:15px; background:var(--app-primary,#0f6e56); color:white; border:none; border-radius:12px; font-size:16px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:10px; font-family:inherit; transition:opacity 0.15s; margin-top:4px; }
+.qi-submit-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.qi-submit-spinner { width:16px; height:16px; border:2px solid rgba(255,255,255,0.4); border-top-color:white; border-radius:50%; animation:spin 0.7s linear infinite; }
+
+/* Empty state */
+.qi-empty { display:flex; flex-direction:column; align-items:center; gap:10px; padding:24px; color:#94a3b8; text-align:center; }
+.qi-retry-btn { padding:8px 20px; border-radius:8px; border:1.5px solid var(--app-primary,#0f6e56); background:none; color:var(--app-primary,#0f6e56); font-size:13px; font-weight:600; cursor:pointer; }
+
+@media (min-width:768px) { .qi-content { padding:20px 24px 40px; } }
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>

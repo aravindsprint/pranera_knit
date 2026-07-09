@@ -1,0 +1,297 @@
+<template>
+  <div class="wo-page">
+    <AppHeader title="Work Orders" subtitle="" active="work-order" />
+
+    <div v-if="!isOnline" class="wo-offline-banner">🔌 Offline — showing cached work orders</div>
+
+    <div class="wo-body">
+      <!-- Search -->
+      <div class="wo-toolbar">
+        <div class="wo-search">
+          <span class="wo-search__icon">🔍</span>
+          <input v-model="search" class="wo-search__input" placeholder="Search work order, item…" />
+        </div>
+        <button class="wo-refresh" @click="load" :disabled="loading">↻</button>
+      </div>
+
+      <div v-if="loading && !workOrders.length" class="wo-empty">Loading work orders…</div>
+      <div v-else-if="!filtered.length" class="wo-empty">
+        <div class="wo-empty__title">No work orders found</div>
+        <div class="wo-empty__sub" v-if="search">Clear the search</div>
+      </div>
+
+      <div v-else class="wo-grid">
+        <div v-for="wo in filtered" :key="wo.name" class="wo-card">
+          <div class="wo-top">
+            <div class="wo-id">{{ wo.name }}</div>
+            <span class="wo-badge">{{ wo.status }}</span>
+          </div>
+          <div class="wo-details">
+            <div class="wo-detail"><span class="wo-detail__l">Item</span><span class="wo-detail__v">{{ wo.production_item || '—' }}</span></div>
+            <div class="wo-detail"><span class="wo-detail__l">Qty</span><span class="wo-detail__v">{{ fmtQty(wo.qty) }}</span></div>
+            <div class="wo-detail"><span class="wo-detail__l">Job Cards</span><span class="wo-detail__v">{{ wo.job_card_count ?? 0 }}</span></div>
+          </div>
+          <div class="wo-actions">
+            <button class="wo-btn wo-btn--primary" @click="viewJobCards(wo)">View Job Cards</button>
+            <button class="wo-btn wo-btn--outline" @click="openReconcile(wo)">Stock Reconciliation</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stock Reconciliation Modal (reuses knit_get_mtm_data + knit_submit_reconciliation) -->
+    <div class="wo-overlay" v-if="reconcile.open" @click.self="closeReconcile">
+      <div class="wo-modal wo-modal--wide">
+        <div class="wo-modal__hd">
+          <div>
+            <div class="wo-modal__title">Stock Reconciliation</div>
+            <div class="wo-modal__sub">{{ reconcile.wo?.name }}</div>
+          </div>
+          <button class="wo-modal__close" @click="closeReconcile">✕</button>
+        </div>
+
+        <div class="wo-modal__body">
+          <div v-if="reconcile.loading" class="wo-rec-loading">Loading items…</div>
+          <div v-else-if="!reconcile.items.length" class="wo-rec-loading">No reconciliation items for this work order.</div>
+
+          <template v-else>
+            <div v-if="reconcile.validationMsg" class="wo-rec-warn">⚠ {{ reconcile.validationMsg }}</div>
+            <div class="wo-rec-table">
+              <div class="wo-rec-head">
+                <span>#</span><span>Item</span><span>Batch</span><span>ERP Qty</span><span>Physical</span>
+              </div>
+              <div v-for="(item, i) in reconcile.items" :key="i" class="wo-rec-row">
+                <span>{{ i + 1 }}</span>
+                <span class="wo-rec-item">{{ item.item_code }}</span>
+                <select v-model="item.batch_no" class="wo-rec-batch">
+                  <option value="">Select batch</option>
+                  <option v-for="b in item.available_batches" :key="b" :value="b">{{ b }}</option>
+                </select>
+                <span>{{ item.erp_qty }} {{ item.uom }}</span>
+                <input v-model="item.phy_qty" type="number" class="wo-rec-phy"
+                  @input="validatePhysicalQty(item)" placeholder="0" />
+              </div>
+            </div>
+            <div v-if="reconcile.items.length > 1" class="wo-rec-totals">
+              Total physical: {{ physicalTotal }} | Total ERP: {{ erpTotal }}
+              <span v-if="balanced" class="wo-rec-balanced"> ✓ Balanced</span>
+            </div>
+          </template>
+
+          <div v-if="reconcile.msg" class="wo-rec-msg">{{ reconcile.msg }}</div>
+        </div>
+
+        <div class="wo-modal__ft">
+          <button class="wo-btn wo-btn--ghost" @click="closeReconcile">Cancel</button>
+          <button class="wo-btn wo-btn--primary" :disabled="reconcile.saving || !reconcile.items.length" @click="submitReconcile">
+            {{ reconcile.saving ? 'Saving…' : 'Submit Reconcile' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import AppHeader from '@/components/AppHeader.vue'
+import { db } from '@/db'
+import { isOnline, checkReachable } from '@/composables/useSync'
+import { fetchWorkOrders } from '@/api/frappe'
+
+const router = useRouter()
+const workOrders = ref([])
+const loading = ref(false)
+const search = ref('')
+
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return workOrders.value
+  return workOrders.value.filter(w =>
+    (w.name || '').toLowerCase().includes(q) ||
+    (w.production_item || '').toLowerCase().includes(q) ||
+    (w.item_name || '').toLowerCase().includes(q)
+  )
+})
+
+function fmtQty(v) {
+  const n = Number(v || 0)
+  return Number.isInteger(n) ? String(n) : n.toFixed(2)
+}
+
+async function load() {
+  loading.value = true
+  try {
+    // Serve cache first
+    const local = await db.work_orders.toArray()
+    if (local.length) workOrders.value = local
+
+    const reachable = await checkReachable()
+    if (reachable) {
+      const fresh = await fetchWorkOrders()
+      if (Array.isArray(fresh) && fresh.length) {
+        await db.work_orders.clear()
+        await db.work_orders.bulkPut(fresh.map(w => ({ ...w, id: w.name })))
+        workOrders.value = fresh
+      }
+    }
+  } catch (e) {
+    console.warn('load work orders failed:', e.message)
+    if (!workOrders.value.length) {
+      const local = await db.work_orders.toArray().catch(() => [])
+      workOrders.value = local
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+function viewJobCards(wo) {
+  // Navigate to job cards home, pre-filtered by this work order
+  router.push({ path: '/knit-app/home', query: { work_order: wo.name } })
+}
+
+// ── Stock Reconciliation (reuses knit_get_mtm_data + knit_submit_reconciliation) ──
+const reconcile = ref({ open: false, wo: null, items: [], loading: false, saving: false, msg: '', validationMsg: '' })
+
+const physicalTotal = computed(() =>
+  reconcile.value.items.reduce((s, i) => s + (parseFloat(i.phy_qty) || 0), 0).toFixed(3)
+)
+const erpTotal = computed(() =>
+  reconcile.value.items.reduce((s, i) => s + (parseFloat(i.erp_qty) || 0), 0).toFixed(3)
+)
+const balanced = computed(() =>
+  Math.abs(parseFloat(physicalTotal.value) - parseFloat(erpTotal.value)) < 0.001
+)
+
+async function openReconcile(wo) {
+  reconcile.value = { open: true, wo, items: [], loading: true, saving: false, msg: '', validationMsg: '' }
+  if (!isOnline.value) {
+    reconcile.value.loading = false
+    reconcile.value.msg = 'Stock reconciliation requires a connection. Reconnect to load items.'
+    return
+  }
+  try {
+    const { call } = await import('@/api/frappe')
+    const resp = await call('knit_get_mtm_data', { work_order: wo.name })
+    const items = resp?.message || []
+    reconcile.value.items = items.map((item, i) => ({
+      s_no: i + 1,
+      item_code: item.item_code,
+      s_warehouse: item.t_warehouse,
+      batch_no: item.batch_no || '',
+      available_batches: item.available_batches || [],
+      erp_qty: item.qty,
+      phy_qty: '',
+      uom: item.stock_uom || 'Kgs',
+    }))
+  } catch (e) {
+    reconcile.value.msg = 'Failed to fetch MTM data: ' + e.message
+  } finally {
+    reconcile.value.loading = false
+  }
+}
+
+function closeReconcile() { reconcile.value.open = false }
+
+function validatePhysicalQty(item) {
+  const v = parseFloat(item.phy_qty)
+  if (v < 0) item.phy_qty = 0
+  reconcile.value.validationMsg = ''
+}
+
+function isReconcileValid() {
+  if (!reconcile.value.items.length) return false
+  const allValid = reconcile.value.items.every(item => {
+    const v = parseFloat(item.phy_qty)
+    return !isNaN(v) && v >= 0 && item.batch_no
+  })
+  if (!allValid) {
+    reconcile.value.validationMsg = 'Enter physical qty and select a batch for every item.'
+    return false
+  }
+  const physTotal = reconcile.value.items.reduce((s, i) => s + (parseFloat(i.phy_qty) || 0), 0)
+  const erpTot    = reconcile.value.items.reduce((s, i) => s + (parseFloat(i.erp_qty) || 0), 0)
+  if (Math.abs(physTotal - erpTot) > 0.001) {
+    reconcile.value.validationMsg = `Physical total (${physTotal.toFixed(3)}) must equal ERP total (${erpTot.toFixed(3)})`
+    return false
+  }
+  reconcile.value.validationMsg = ''
+  return true
+}
+
+async function submitReconcile() {
+  if (!isReconcileValid()) return
+  reconcile.value.saving = true
+  reconcile.value.msg = ''
+  try {
+    const { call } = await import('@/api/frappe')
+    await call('knit_submit_reconciliation', {
+      work_order: reconcile.value.wo.name,
+      reconcile_items: JSON.stringify(reconcile.value.items)
+    })
+    reconcile.value.msg = 'Reconciliation submitted!'
+    setTimeout(closeReconcile, 1200)
+  } catch (e) {
+    reconcile.value.msg = 'Reconciliation failed: ' + e.message
+  } finally {
+    reconcile.value.saving = false
+  }
+}
+
+onMounted(load)
+</script>
+
+<style scoped>
+.wo-page { min-height:100vh; background:#f1f5f9; padding-bottom:24px; }
+.wo-offline-banner { background:#fef9c3; color:#854d0e; text-align:center; padding:8px; font-size:13px; font-weight:600; }
+.wo-body { padding:16px; max-width:1100px; margin:0 auto; }
+.wo-toolbar { display:flex; gap:10px; margin-bottom:16px; }
+.wo-search { flex:1; display:flex; align-items:center; gap:8px; background:#fff; border:1.5px solid #e2e8f0; border-radius:10px; padding:0 12px; }
+.wo-search__icon { opacity:.5; }
+.wo-search__input { flex:1; border:none; outline:none; padding:11px 0; font-size:14px; font-family:inherit; background:transparent; }
+.wo-refresh { width:44px; border:1.5px solid #e2e8f0; background:#fff; border-radius:10px; font-size:18px; cursor:pointer; }
+.wo-empty { text-align:center; padding:48px 16px; color:#64748b; }
+.wo-empty__title { font-weight:700; font-size:16px; margin-bottom:4px; }
+.wo-empty__sub { font-size:13px; }
+.wo-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:14px; }
+.wo-card { background:#fff; border:1px solid #e2e8f0; border-top:3px solid #1e3a5f; border-radius:12px; padding:16px; }
+.wo-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.wo-id { font-weight:800; font-size:17px; color:#0f172a; }
+.wo-badge { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; background:#eff6ff; color:#1d4ed8; padding:4px 10px; border-radius:20px; }
+.wo-details { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.wo-detail { display:flex; justify-content:space-between; gap:12px; }
+.wo-detail__l { font-size:11px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:#94a3b8; }
+.wo-detail__v { font-size:14px; font-weight:600; color:#0f172a; text-align:right; }
+.wo-actions { display:flex; gap:8px; }
+.wo-btn { flex:1; padding:11px 12px; border-radius:9px; font-size:13px; font-weight:700; cursor:pointer; border:1.5px solid transparent; font-family:inherit; }
+.wo-btn--primary { background:#1e3a5f; color:#fff; }
+.wo-btn--primary:disabled { opacity:.5; cursor:not-allowed; }
+.wo-btn--outline { background:#fff; color:#1e3a5f; border-color:#1e3a5f; }
+.wo-btn--ghost { background:#f1f5f9; color:#334155; }
+/* modal */
+.wo-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:300; padding:16px; }
+.wo-modal { background:#fff; border-radius:16px; width:100%; max-width:440px; overflow:hidden; }
+.wo-modal--wide { max-width:640px; }
+.wo-modal__hd { display:flex; justify-content:space-between; align-items:flex-start; padding:18px 20px 12px; }
+.wo-modal__title { font-weight:800; font-size:18px; }
+.wo-modal__sub { font-size:13px; color:#64748b; margin-top:2px; }
+.wo-modal__close { background:none; border:none; font-size:18px; cursor:pointer; color:#94a3b8; }
+.wo-modal__body { padding:0 20px 8px; max-height:60vh; overflow-y:auto; }
+.wo-rec-loading { text-align:center; padding:24px; color:#64748b; font-size:14px; }
+.wo-rec-warn { color:#dc2626; font-size:12px; font-weight:600; margin-bottom:8px; }
+.wo-rec-table { display:flex; flex-direction:column; }
+.wo-rec-head, .wo-rec-row { display:grid; grid-template-columns:28px 1.4fr 1.6fr 0.9fr 0.9fr; gap:8px; align-items:center; }
+.wo-rec-head { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#94a3b8; padding:8px 0; border-bottom:1px solid #e2e8f0; }
+.wo-rec-row { padding:8px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+.wo-rec-item { font-weight:600; color:#0f172a; word-break:break-all; }
+.wo-rec-batch { padding:6px 8px; border:1.5px solid #e2e8f0; border-radius:7px; font-size:12px; font-family:inherit; outline:none; background:#fff; }
+.wo-rec-batch:focus { border-color:#1e3a5f; }
+.wo-rec-phy { width:100%; padding:6px 8px; border:1.5px solid #e2e8f0; border-radius:7px; font-size:13px; font-family:inherit; outline:none; }
+.wo-rec-phy:focus { border-color:#1e3a5f; }
+.wo-rec-totals { font-size:12px; color:#64748b; margin-top:10px; text-align:right; }
+.wo-rec-balanced { color:#047857; font-weight:700; }
+.wo-rec-msg { margin-top:12px; font-size:13px; color:#166534; font-weight:600; }
+.wo-modal__ft { display:flex; gap:10px; padding:12px 20px 20px; }
+</style>

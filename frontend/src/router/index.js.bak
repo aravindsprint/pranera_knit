@@ -1,0 +1,26 @@
+import { createRouter, createWebHistory } from 'vue-router'
+
+const routes = [
+  { path: '/', redirect: '/knit-app/home' },
+  { path: '/knit-app', redirect: '/knit-app/home' },
+  { path: '/knit-app/home', component: () => import('@/pages/home/HomePage.vue') },
+  { path: '/knit-app/create-roll', component: () => import('@/pages/create-roll/CreateRollPage.vue') },
+  { path: '/knit-app/create-qi', component: () => import('@/pages/create-qi/CreateQIPage.vue') },
+  { path: '/knit-app/dashboard', component: () => import('@/pages/dashboard/DashboardPage.vue') },
+  { path: '/knit-app/collar-cuff-dashboard', component: () => import('@/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue') },
+  { path: '/knit-app/roll-wise-pick-list', component: () => import('@/pages/roll-wise-pick-list/RollWisePickListPage.vue') },
+  { path: '/knit-app/roll-wise-pick-order-execution', component: () => import('@/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue') },
+  { path: '/knit-app/production-roll-summary', component: () => import('@/pages/production-roll-summary/ProductionRollSummaryPage.vue') },
+  { path: '/knit-app/production-report', component: () => import('@/pages/production-report/ProductionReportPage.vue') },
+  { path: '/knit-app/process-loss', component: () => import('@/pages/process-loss/ProcessLossPage.vue') },
+  { path: '/knit-app/rolls', component: () => import('@/pages/rolls/RollsPage.vue') },
+  { path: '/knit-app/stock-entry', component: () => import('@/pages/stock-entry/StockEntryPage.vue') },
+  { path: '/knit-app/no-access', component: () => import('@/pages/NoAccessPage.vue') }
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
+})
+
+export default router

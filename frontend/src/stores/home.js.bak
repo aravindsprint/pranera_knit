@@ -1,0 +1,60 @@
+// src/stores/home.js
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import { db } from '@/db'
+import { fetchJobCards } from '@/api/frappe'
+import { isOnline } from '@/composables/useSync'
+
+export const useHomeStore = defineStore('home', () => {
+  const jobCards = ref([])
+  const loading = ref(false)
+  const error = ref('')
+
+  // Status badge colour — mirrors getStatusColor() in home.page.ts
+  const STATUS_COLOURS = {
+    'Completed': 'success',
+    'Work In Progress': 'warning',
+    'Pending': 'secondary',
+    'Cancelled': 'danger',
+    'Open': 'info',
+    'Draft': 'secondary'
+  }
+
+  function statusColour(status) {
+    return STATUS_COLOURS[status] || 'secondary'
+  }
+
+  // Load from local IndexedDB first, then refresh from ERP if online
+  async function loadJobCards(username, designation, employeeId) {
+    loading.value = true
+    error.value = ''
+
+    try {
+      // Serve local cache immediately
+      const local = await db.job_cards.toArray()
+      if (local.length) {
+        jobCards.value = local
+      }
+
+      if (isOnline.value) {
+        const res = await fetchJobCards(username, designation, employeeId)
+        const fresh = Array.isArray(res) ? res : (res?.data?.data || res?.data || [])
+
+        // Upsert into IndexedDB
+        await db.job_cards.bulkPut(fresh.map(jc => ({ ...jc, id: jc.name })))
+        jobCards.value = fresh
+      } else if (!local.length) {
+        error.value = 'Offline — no cached job cards available'
+      }
+    } catch (err) {
+      console.error('loadJobCards error:', err)
+      if (!jobCards.value.length) {
+        error.value = 'Failed to load job cards. Please try again.'
+      }
+    } finally {
+      loading.value = false
+    }
+  }
+
+  return { jobCards, loading, error, loadJobCards, statusColour }
+})

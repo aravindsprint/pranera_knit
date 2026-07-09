@@ -1,0 +1,15 @@
+[build-system]
+requires = ["flit_core >=3.2.0,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "pranera_knit"
+version = "1.0.0"
+description = "Pranera Knit — Knitting production floor app for ERPNext"
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MIT" }
+dependencies = ["frappe"]
+
+[tool.flit.module]
+name = "pranera_knit"
