@@ -11,7 +11,35 @@ export default defineConfig(({ command }) => ({
   },
 
   server: {
-    port: 3000
+    port: 3000,
+    // Dev-server only — vite build never reads this (production always talks
+    // to erp.pranera.in directly since it's served from that same origin).
+    // Needed so `npm run dev` (localhost:3000) can reach the live backend;
+    // without it every /api/* call 404s against Vite's own dev server and
+    // returns HTML instead of JSON.
+    proxy: command === 'serve' ? {
+      '/api': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+        cookieDomainRewrite: 'localhost',
+        headers: {
+          'Origin': 'https://erp.pranera.in',
+          'Referer': 'https://erp.pranera.in'
+        }
+      },
+      '/assets': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false
+      },
+      '/files': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false
+      }
+    } : undefined
   },
 
   build: {
