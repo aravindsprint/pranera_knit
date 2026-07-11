@@ -19,8 +19,13 @@ export async function ensureCSRF() {
   // 4. Fetch from Server Script (dev proxy)
   try {
     const r = await fetch('/api/method/knit_get_csrf', { credentials: 'include' })
-    const d = await r.json()
-    if (d?.message) { _csrf = d.message; window.csrf_token = d.message }
+    if (r.ok) {
+      const d = await r.json()
+      if (d?.message) { _csrf = d.message; window.csrf_token = d.message }
+      else console.warn('ensureCSRF: knit_get_csrf returned no token (no session/sid cookie?)')
+    } else {
+      console.warn('ensureCSRF: knit_get_csrf HTTP', r.status)
+    }
   } catch(e) {
     console.warn('ensureCSRF: knit_get_csrf failed', e)
   }

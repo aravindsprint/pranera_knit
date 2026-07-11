@@ -11,30 +11,7 @@ export default defineConfig(({ command }) => ({
   },
 
   server: {
-    port: 3000,
-    proxy: {
-      '/api': {
-        target: 'https://erp.pranera.in',
-        changeOrigin: true,
-        secure: false,
-        ws: true,
-        cookieDomainRewrite: 'localhost',
-        headers: {
-          'Origin': 'https://erp.pranera.in',
-          'Referer': 'https://erp.pranera.in'
-        }
-      },
-      '/assets': {
-        target: 'https://erp.pranera.in',
-        changeOrigin: true,
-        secure: false
-      },
-      '/files': {
-        target: 'https://erp.pranera.in',
-        changeOrigin: true,
-        secure: false
-      }
-    }
+    port: 3000
   },
 
   build: {
@@ -64,7 +41,25 @@ export default defineConfig(({ command }) => ({
         // so reloading /knit-app/home works with no network. Exclude /api and
         // /files so those still hit the network (and their own caches below).
         navigateFallback: '/assets/pranera_knit/knit_app/index.html',
-        navigateFallbackDenylist: [/^\/api/, /^\/files/, /^\/app/],
+        // Only the offline-critical pages (home, create-roll, create-qi, rolls,
+        // stock-entry, work-order — see router/index.js "eager" section) should
+        // fall back to the cached shell so operators can reload them with no
+        // network. The report/dashboard pages are online-only by design and
+        // must always hit the server: only the server-rendered /knit-app page
+        // (www/knit-app.py) injects window.csrf_token, and the cached static
+        // index.html never has it — serving these from cache silently breaks
+        // every POST call (call()/ensureCSRF()).
+        navigateFallbackDenylist: [
+          /^\/api/, /^\/files/, /^\/app/,
+          /^\/knit-app\/dashboard/,
+          /^\/knit-app\/collar-cuff-dashboard/,
+          /^\/knit-app\/roll-wise-pick-list/,
+          /^\/knit-app\/roll-wise-pick-order-execution/,
+          /^\/knit-app\/production-roll-summary/,
+          /^\/knit-app\/production-report/,
+          /^\/knit-app\/process-loss/,
+          /^\/knit-app\/no-access/,
+        ],
         runtimeCaching: [
           {
             // Cache read-only GET list/report data so it's available offline.
