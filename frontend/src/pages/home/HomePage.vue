@@ -95,6 +95,13 @@
       📵 Offline — no cached data. Connect to load job cards.
     </div>
 
+    <!-- Employee/profile load error — was previously silent, so failures here
+         were invisible even though they break isSupervisor/isKnittingOperator
+         and everything derived from designation. -->
+    <div class="home-offline-bar home-offline-bar--error" v-if="auth.error">
+      ⚠️ {{ auth.error }} (signed in as {{ auth.frappeUser || 'unknown' }})
+    </div>
+
     <!-- Summary Strip -->
     <div class="home-strips" v-if="homeStore.jobCards.length">
       <div class="s-pill s-pill--wip"><span class="s-num">{{ wipCount }}</span><span class="s-lbl">In Progress</span></div>

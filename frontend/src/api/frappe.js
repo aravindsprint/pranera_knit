@@ -43,7 +43,7 @@ export function resetCSRF() {
 
 export async function initCSRF() {
   window.__FRAPPE_SESSION__ = {
-    user: getCookieValue('user_id') || 'Guest',
+    user: decodeURIComponent(getCookieValue('user_id') || '') || 'Guest',
     base_url: ''
   }
   // Pre-warm the token so first API call doesn't need to fetch it

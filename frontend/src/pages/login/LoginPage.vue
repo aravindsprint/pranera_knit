@@ -2,9 +2,8 @@
   <div class="login-page">
     <div class="login-card">
       <div class="login-logo">
-        <div class="logo-circle">PK</div>
-        <h1>Pranera Knit</h1>
-        <p>Production Floor App</p>
+        <img :src="logoUrl" alt="Knitting" class="logo-img" />
+        <h1>Knitting</h1>
       </div>
 
       <form @submit.prevent="handleLogin">
@@ -30,23 +29,30 @@
             autocomplete="current-password"
             required
           />
-          <button type="button" class="eye-toggle" @click="showPassword = !showPassword">
-            <i :class="showPassword ? 'pi pi-eye-slash' : 'pi pi-eye'"></i>
+          <button type="button" class="eye-toggle" @click="showPassword = !showPassword" :aria-label="showPassword ? 'Hide password' : 'Show password'">
+            <svg v-if="!showPassword" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.66 19.66 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a19.7 19.7 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
           </button>
         </div>
 
         <div v-if="errorMsg" class="error-box">
-          <i class="pi pi-exclamation-triangle"></i> {{ errorMsg }}
+          ⚠️ {{ errorMsg }}
         </div>
 
         <button type="submit" class="btn btn-primary btn-full" :disabled="loading || !isOnline">
-          <i v-if="loading" class="pi pi-spin pi-spinner"></i>
+          <span v-if="loading" class="btn-spinner"></span>
           <span>{{ loading ? loadingMsg : (isOnline ? 'Login' : 'Offline') }}</span>
         </button>
       </form>
 
       <div class="offline-note" v-if="!isOnline">
-        <i class="pi pi-wifi"></i> Offline — login requires network
+        📵 Offline — login requires network
       </div>
     </div>
   </div>
@@ -60,6 +66,11 @@ import { isOnline } from '@/composables/useSync'
 
 const route = useRoute()
 const auth = useAuthStore()
+
+// Served by Frappe at runtime from the app's own public/images/ folder —
+// deliberately a plain string, not a static template src=, so Vite doesn't
+// try to resolve/bundle it as a frontend build asset (it isn't one).
+const logoUrl = '/assets/pranera_knit/images/logo.svg'
 
 const email = ref('')
 const password = ref('')
@@ -110,21 +121,27 @@ async function handleLogin() {
   text-align: center;
   margin-bottom: 28px;
 }
-.logo-circle {
+.logo-img {
   width: 64px;
   height: 64px;
-  border-radius: 50%;
-  background: #0f6e56;
-  color: white;
-  font-size: 22px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  border-radius: 16px;
   margin: 0 auto 12px;
+  display: block;
 }
 .login-logo h1 { font-size: 22px; font-weight: 700; color: #1e293b; }
-.login-logo p  { font-size: 13px; color: #64748b; margin-top: 2px; }
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 
 .eye-toggle {
   position: absolute;
@@ -134,8 +151,11 @@ async function handleLogin() {
   border: none;
   cursor: pointer;
   color: #94a3b8;
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  padding: 2px;
 }
+.eye-toggle:hover { color: #64748b; }
 .error-box {
   background: #fee2e2;
   color: #991b1b;
