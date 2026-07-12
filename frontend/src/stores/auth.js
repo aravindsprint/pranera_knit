@@ -41,19 +41,27 @@ export const useAuthStore = defineStore('auth', () => {
   )
 
   const isSupervisor = computed(() =>
-    designation.value === 'Knitting Supervisor' ||
+    /supervisor/i.test(designation.value || '') ||
     designation.value === 'System Manager' ||
-    designation.value === 'Sr. Software Analyst' ||
-    employeeData.value?.custom_is_knitting_supervisor === 1
+    designation.value === 'Sr. Software Analyst'
   )
 
   const canAccessKnittingApp = computed(() =>
     employeeData.value?.custom_can_access_knitting_app === 1
   )
 
-  // Called once on app boot — loads employee record from ERPNext
+  // Called on app boot (and after login, via the post-login hard reload).
+  // Only trusts the cached employeeData if it actually belongs to the user
+  // who's currently logged in — a stale cache from a *different* previous
+  // user in this same browser (e.g. someone else tested here earlier, or a
+  // prior session wasn't cleanly logged out) must never be silently reused.
   async function loadEmployeeDetails() {
-    if (employeeData.value) return true   // already loaded
+    if (employeeData.value && employeeData.value.user_id === frappeUser.value) {
+      return true   // already loaded, and it's for the right person
+    }
+    if (employeeData.value) {
+      clearCache()   // cached record belongs to someone else — throw it away
+    }
 
     loading.value = true
     error.value = ''
