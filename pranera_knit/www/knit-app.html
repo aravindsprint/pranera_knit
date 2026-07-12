@@ -10,11 +10,15 @@
   <meta name="mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-title" content="Knit App"/>
+  <link rel="manifest" href="/assets/pranera_knit/knit_app/manifest.webmanifest"/>
+  <link rel="icon" href="/assets/pranera_knit/knit_app/icons/icon-192.png"/>
+  <link rel="apple-touch-icon" href="/assets/pranera_knit/knit_app/icons/icon-192.png"/>
   <link rel="stylesheet" href="/assets/pranera_knit/knit_app/index.css"/>
 </head>
 <body>
   <div id="app"></div>
   <script type="module" src="/assets/pranera_knit/knit_app/index.js"></script>
+  <script id="vite-plugin-pwa:register-sw" src="/assets/pranera_knit/knit_app/registerSW.js"></script>
 </body>
 </html>
 {%- endraw -%}

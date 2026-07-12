@@ -112,7 +112,12 @@ export default defineConfig(({ command }) => ({
         orientation: 'portrait',
         start_url: '/knit-app',
         scope: '/knit-app',
-        icons: []
+        icons: [
+          { src: '/assets/pranera_knit/knit_app/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/assets/pranera_knit/knit_app/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: '/assets/pranera_knit/knit_app/icons/icon-192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+          { src: '/assets/pranera_knit/knit_app/icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+        ]
       }
     })
   ]
