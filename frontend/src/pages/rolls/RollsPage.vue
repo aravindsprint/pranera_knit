@@ -481,7 +481,7 @@ async function printSticker(roll) {
   html, body { width:100%; height:100%; }
   body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
          align-items:center; justify-content:center; min-height:100vh; }
-  .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex;
+  .sticker { width:50mm; height:70mm; border:1px solid #000; display:flex;
              flex-direction:column; flex-shrink:0; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
