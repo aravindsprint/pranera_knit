@@ -54,11 +54,10 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { isOnline } from '@/composables/useSync'
 
-const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
@@ -75,13 +74,16 @@ async function handleLogin() {
   loadingMsg.value = 'Logging in...'
 
   try {
-    loadingMsg.value = 'Loading employee details...'
     await auth.login(email.value, password.value)
+    loadingMsg.value = 'Redirecting...'
     const dest = typeof route.query.redirect === 'string' ? route.query.redirect : '/knit-app/home'
-    router.replace(dest)
+    // Full page reload on purpose — re-runs main.js against the fresh
+    // session cookie from scratch, same as a manual browser refresh
+    // (which is the one thing that's proven to reliably pick up a brand
+    // new login). An SPA router.replace() here was the unreliable path.
+    window.location.href = dest
   } catch (err) {
     errorMsg.value = err.message || 'Login failed'
-  } finally {
     loading.value = false
   }
 }

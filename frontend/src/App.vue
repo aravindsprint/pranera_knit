@@ -45,6 +45,7 @@ function applyTheme(t) {
 const auth = useAuthStore()
 onMounted(async () => {
   await initCSRF()
+  auth.refreshSession()
   if (isLoggedIn()) {
     await auth.loadEmployeeDetails()
   }

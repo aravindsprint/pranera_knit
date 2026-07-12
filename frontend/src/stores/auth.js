@@ -3,7 +3,7 @@
 // This store reads the Frappe session and fetches employee details.
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getEmployeeDetails, ensureCSRF, resetCSRF, initCSRF } from '@/api/frappe'
+import { getEmployeeDetails, ensureCSRF, resetCSRF } from '@/api/frappe'
 
 export const useAuthStore = defineStore('auth', () => {
   // Read from Frappe session injected in www/knit-app.html
@@ -15,14 +15,23 @@ export const useAuthStore = defineStore('auth', () => {
   const loading     = ref(false)
   const error       = ref('')
 
-  // Frappe session user (email) — kept live via window.__FRAPPE_SESSION__ so
-  // it reflects the *current* session even after login()/logout() mutate it.
-  const frappeUser  = computed(() => window.__FRAPPE_SESSION__?.user || frappeSession.user || '')
+  // Frappe session user (email). window.__FRAPPE_SESSION__ is a plain global
+  // object, not a Vue-reactive source — a computed() reading it would only
+  // ever re-run if Vue could detect the mutation, which it can't, so it'd
+  // freeze on whatever value it happened to see on its first access. Use a
+  // plain ref instead and update it explicitly at the points the session
+  // actually changes (refreshSession(), login(), logout()).
+  const frappeUser = ref(window.__FRAPPE_SESSION__?.user || frappeSession.user || '')
+  const isLoggedIn = ref(!!frappeUser.value && frappeUser.value !== 'Guest')
 
-  const isLoggedIn = computed(() => {
-    const u = window.__FRAPPE_SESSION__?.user
-    return !!u && u !== 'Guest'
-  })
+  // Re-sync frappeUser/isLoggedIn from window.__FRAPPE_SESSION__. Call this
+  // any time something else (initCSRF, login, logout) has just changed the
+  // session, so the store's reactive state doesn't drift from reality.
+  function refreshSession() {
+    const u = window.__FRAPPE_SESSION__?.user || ''
+    frappeUser.value = u
+    isLoggedIn.value = !!u && u !== 'Guest'
+  }
 
   const employeeId = computed(() => employeeData.value?.name || '')
 
@@ -90,10 +99,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // Explicit email/password login against Frappe's own login endpoint.
-  // On success this establishes a real Frappe session (sid cookie), so we
-  // have to throw away the old (Guest-scoped) CSRF token and fetch a fresh
-  // one before any authenticated call — otherwise the very next request
-  // fails with a silent CSRFTokenError.
+  // Deliberately does NOT try to re-init CSRF / load the employee record in
+  // this same page lifecycle afterwards — that immediate-reuse path proved
+  // unreliable (fails right after login, but the exact same calls succeed
+  // on the very next hard page reload). The caller is expected to do a full
+  // navigation on success, which re-runs main.js from scratch against the
+  // now-valid session cookie — the same sequence a manual browser refresh
+  // does, which is why refreshing "fixes" it.
   async function login(email, password) {
     loading.value = true
     error.value = ''
@@ -114,13 +126,6 @@ export const useAuthStore = defineStore('auth', () => {
         } catch { /* keep default */ }
         throw new Error(msg)
       }
-
-      resetCSRF()
-      await initCSRF()               // re-reads user_id cookie + fetches a fresh CSRF token
-
-      clearCache()                   // drop any stale employee record from a previous user
-      const ok = await loadEmployeeDetails()
-      if (!ok) throw new Error(error.value || 'Login succeeded but access check failed')
       return true
     } catch (err) {
       error.value = err.message || 'Login failed'
@@ -150,12 +155,14 @@ export const useAuthStore = defineStore('auth', () => {
     clearCache()
     resetCSRF()
     if (window.__FRAPPE_SESSION__) window.__FRAPPE_SESSION__.user = 'Guest'
+    frappeUser.value = 'Guest'
+    isLoggedIn.value = false
   }
 
   return {
     frappeUser, username, designation, employeeData, employeeId,
     loading, error, isLoggedIn,
     isKnittingOperator, isSupervisor, canAccessKnittingApp,
-    loadEmployeeDetails, clearCache, login, logout
+    loadEmployeeDetails, clearCache, login, logout, refreshSession
   }
 })

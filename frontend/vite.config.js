@@ -27,6 +27,37 @@ export default defineConfig(({ command }) => ({
         headers: {
           'Origin': 'https://erp.pranera.in',
           'Referer': 'https://erp.pranera.in'
+        },
+        // Frappe marks its session cookie (sid) as Secure because
+        // erp.pranera.in is HTTPS. Vite's dev server itself is plain HTTP
+        // (localhost:3000), and browsers silently refuse to store *any*
+        // Secure cookie over a non-HTTPS connection — no error, no warning,
+        // it just never lands. cookieDomainRewrite only touches the
+        // Domain= attribute, not Secure, so login would appear to succeed
+        // (the login POST itself returns 200) while the session cookie
+        // that request needed to persist for every call after it never
+        // actually got stored. Strip Secure (dev only) so the cookie sticks.
+        configure(proxy) {
+          // node-http-proxy has a long-standing quirk: for POST/PUT requests
+          // with no body (like our logout call — POST, no payload), it can
+          // forward a stray `Expect` header through to the backend. nginx
+          // (which fronts erp.pranera.in) responds to that with a flat
+          // "417 Expectation Failed" instead of actually processing the
+          // request — so frappe.auth.logout never runs server-side even
+          // though the browser gets back what looks like a real HTTP
+          // response. Stripping the header before it's forwarded is the
+          // standard fix.
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.removeHeader('expect')
+          })
+          proxy.on('proxyRes', (proxyRes) => {
+            const setCookie = proxyRes.headers['set-cookie']
+            if (setCookie) {
+              proxyRes.headers['set-cookie'] = setCookie.map(c =>
+                c.replace(/;\s*Secure/gi, '').replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
+              )
+            }
+          })
         }
       },
       '/assets': {
