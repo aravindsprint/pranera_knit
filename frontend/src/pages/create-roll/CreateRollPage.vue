@@ -1758,7 +1758,7 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   @media print {
     .noprint { display:none; }
     html, body { width:60mm; height:80mm; margin:0; padding:0; }
-    @page { size:60mm 80mm; margin:0; }
+    @page { size:60mm 80mm; margin:0 0 0 2cm; }
   }
 </style>
 </head><body>
