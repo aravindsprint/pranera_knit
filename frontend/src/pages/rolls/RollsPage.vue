@@ -485,7 +485,7 @@ async function printSticker(roll) {
              flex-direction:column; flex-shrink:0; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
-  table { width:calc(100% - 2cm); margin-left:2cm; border-collapse:collapse; flex:1; }
+  table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
   td { padding:1.5mm 3mm; border-bottom:0.3px solid #888; font-size:8pt; font-weight:700;
        font-family:Arial,sans-serif; color:#000; line-height:1.2; }
   tr:last-child td { border-bottom:none; }
