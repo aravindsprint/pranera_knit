@@ -3,7 +3,7 @@
 // This store reads the Frappe session and fetches employee details.
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { getEmployeeDetails } from '@/api/frappe'
+import { getEmployeeDetails, ensureCSRF, resetCSRF, initCSRF } from '@/api/frappe'
 
 export const useAuthStore = defineStore('auth', () => {
   // Read from Frappe session injected in www/knit-app.html
@@ -15,8 +15,14 @@ export const useAuthStore = defineStore('auth', () => {
   const loading     = ref(false)
   const error       = ref('')
 
-  // Frappe session user (email)
-  const frappeUser  = frappeSession.user || ''
+  // Frappe session user (email) — kept live via window.__FRAPPE_SESSION__ so
+  // it reflects the *current* session even after login()/logout() mutate it.
+  const frappeUser  = computed(() => window.__FRAPPE_SESSION__?.user || frappeSession.user || '')
+
+  const isLoggedIn = computed(() => {
+    const u = window.__FRAPPE_SESSION__?.user
+    return !!u && u !== 'Guest'
+  })
 
   const employeeId = computed(() => employeeData.value?.name || '')
 
@@ -44,7 +50,7 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = ''
 
     try {
-      const employees = await getEmployeeDetails(frappeUser)
+      const employees = await getEmployeeDetails(frappeUser.value)
 
       if (!employees.length) {
         error.value = 'No employee record found for your account'
@@ -53,7 +59,7 @@ export const useAuthStore = defineStore('auth', () => {
 
       const emp = employees[0]
       employeeData.value = emp
-      username.value     = emp.employee_name || frappeUser
+      username.value     = emp.employee_name || frappeUser.value
       designation.value  = emp.designation   || 'Unknown'
 
       localStorage.setItem('KNIT_USERNAME',   username.value)
@@ -83,10 +89,73 @@ export const useAuthStore = defineStore('auth', () => {
     designation.value  = ''
   }
 
+  // Explicit email/password login against Frappe's own login endpoint.
+  // On success this establishes a real Frappe session (sid cookie), so we
+  // have to throw away the old (Guest-scoped) CSRF token and fetch a fresh
+  // one before any authenticated call — otherwise the very next request
+  // fails with a silent CSRFTokenError.
+  async function login(email, password) {
+    loading.value = true
+    error.value = ''
+    try {
+      const res = await fetch('/api/method/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ usr: email, pwd: password }).toString(),
+        credentials: 'include'
+      })
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok || data.message !== 'Logged In') {
+        let msg = 'Incorrect email or password'
+        try {
+          const msgs = JSON.parse(data._server_messages || '[]')
+          if (msgs.length) msg = JSON.parse(msgs[msgs.length - 1]).message || msg
+        } catch { /* keep default */ }
+        throw new Error(msg)
+      }
+
+      resetCSRF()
+      await initCSRF()               // re-reads user_id cookie + fetches a fresh CSRF token
+
+      clearCache()                   // drop any stale employee record from a previous user
+      const ok = await loadEmployeeDetails()
+      if (!ok) throw new Error(error.value || 'Login succeeded but access check failed')
+      return true
+    } catch (err) {
+      error.value = err.message || 'Login failed'
+      throw err
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // Explicit logout: invalidates the Frappe session server-side, then clears
+  // all local state. Always call this (not a raw fetch) so the CSRF token is
+  // read correctly — window.__FRAPPE_SESSION__.csrf_token was previously
+  // always empty here, which made the logout POST fail silently.
+  async function logout() {
+    try {
+      const token = await ensureCSRF()
+      await fetch('/api/method/frappe.auth.logout', {
+        method: 'POST',
+        headers: { 'X-Frappe-CSRF-Token': token },
+        credentials: 'include'
+      })
+    } catch (_) {
+      // Network failure during logout — still clear local state below so the
+      // app doesn't appear "logged in" on this device even if the server
+      // call didn't land.
+    }
+    clearCache()
+    resetCSRF()
+    if (window.__FRAPPE_SESSION__) window.__FRAPPE_SESSION__.user = 'Guest'
+  }
+
   return {
     frappeUser, username, designation, employeeData, employeeId,
-    loading, error,
+    loading, error, isLoggedIn,
     isKnittingOperator, isSupervisor, canAccessKnittingApp,
-    loadEmployeeDetails, clearCache
+    loadEmployeeDetails, clearCache, login, logout
   }
 })

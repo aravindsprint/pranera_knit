@@ -95,6 +95,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps({
   title:    { type: String, default: '' },
@@ -106,6 +107,7 @@ const props = defineProps({
 })
 
 const router     = useRouter()
+const auth       = useAuthStore()
 const drawerOpen = ref(false)
 const currentTheme = ref(localStorage.getItem('KNIT_THEME') || 'green')
 
@@ -132,15 +134,9 @@ function go(path) { drawerOpen.value = false; router.push(path) }
 const initials = computed(() => (props.username||'').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)||'PK')
 
 async function logout() {
-  localStorage.removeItem('KNIT_USERNAME')
-  localStorage.removeItem('KNIT_DESIGNATION')
-  localStorage.removeItem('KNIT_EMPLOYEE')
-  await fetch('/api/method/frappe.auth.logout', {
-    method: 'POST',
-    headers: { 'X-Frappe-CSRF-Token': window.__FRAPPE_SESSION__?.csrf_token || '' },
-    credentials: 'include'
-  }).catch(() => {})
-  window.location.href = '/login'
+  drawerOpen.value = false
+  await auth.logout()
+  router.push('/knit-app/login')
 }
 </script>
 

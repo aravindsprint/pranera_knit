@@ -12,7 +12,7 @@ function getCookie(name) {
 }
 
 window.__FRAPPE_SESSION__ = {
-  user: decodeURIComponent(getCookie('user_id') || 'Administrator'),
+  user: decodeURIComponent(getCookie('user_id') || 'Guest'),
   csrf_token: getCookie('csrftoken'),
   base_url: ''
 }

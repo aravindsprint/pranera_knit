@@ -25,7 +25,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useSync, isOnline, isSyncing, pendingCount } from '@/composables/useSync'
-import { initCSRF } from '@/api/frappe'
+import { initCSRF, isLoggedIn } from '@/api/frappe'
 useSync()
 
 const THEME_COLORS = {
@@ -45,7 +45,9 @@ function applyTheme(t) {
 const auth = useAuthStore()
 onMounted(async () => {
   await initCSRF()
-  await auth.loadEmployeeDetails()
+  if (isLoggedIn()) {
+    await auth.loadEmployeeDetails()
+  }
   const saved = localStorage.getItem('KNIT_THEME') || 'green'
   applyTheme(saved)
 })

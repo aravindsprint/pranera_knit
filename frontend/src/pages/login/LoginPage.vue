@@ -39,9 +39,9 @@
           <i class="pi pi-exclamation-triangle"></i> {{ errorMsg }}
         </div>
 
-        <button type="submit" class="btn btn-primary btn-full" :disabled="loading">
+        <button type="submit" class="btn btn-primary btn-full" :disabled="loading || !isOnline">
           <i v-if="loading" class="pi pi-spin pi-spinner"></i>
-          <span>{{ loading ? loadingMsg : 'Login' }}</span>
+          <span>{{ loading ? loadingMsg : (isOnline ? 'Login' : 'Offline') }}</span>
         </button>
       </form>
 
@@ -54,11 +54,12 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { isOnline } from '@/composables/useSync'
 
 const router = useRouter()
+const route = useRoute()
 const auth = useAuthStore()
 
 const email = ref('')
@@ -76,7 +77,8 @@ async function handleLogin() {
   try {
     loadingMsg.value = 'Loading employee details...'
     await auth.login(email.value, password.value)
-    router.replace('/home')
+    const dest = typeof route.query.redirect === 'string' ? route.query.redirect : '/knit-app/home'
+    router.replace(dest)
   } catch (err) {
     errorMsg.value = err.message || 'Login failed'
   } finally {

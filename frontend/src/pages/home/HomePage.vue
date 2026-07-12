@@ -486,9 +486,8 @@ async function openCreateRoll(jc) {
 }
 function createQI(jc) { qiStore.setProductData(jc); router.push('/knit-app/create-qi') }
 async function logout() {
-  auth.clearCache?.()
-  await fetch('/api/method/frappe.auth.logout', { method: 'POST', headers: { 'X-Frappe-CSRF-Token': window.__FRAPPE_SESSION__?.csrf_token||'' }, credentials: 'include' }).catch(()=>{})
-  window.location.href = '/login'
+  await auth.logout()
+  router.push('/knit-app/login')
 }
 </script>
 

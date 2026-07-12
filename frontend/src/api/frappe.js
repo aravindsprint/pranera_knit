@@ -32,6 +32,15 @@ export async function ensureCSRF() {
   return _csrf
 }
 
+// Forget the cached CSRF token so the next ensureCSRF() call re-fetches it.
+// Required after login/logout, since both actions issue a brand new session
+// (and therefore a brand new token) — reusing the old one causes silent
+// CSRFTokenError 403s on the very next authenticated request.
+export function resetCSRF() {
+  _csrf = ''
+  window.csrf_token = ''
+}
+
 export async function initCSRF() {
   window.__FRAPPE_SESSION__ = {
     user: getCookieValue('user_id') || 'Guest',
@@ -39,7 +48,18 @@ export async function initCSRF() {
   }
   // Pre-warm the token so first API call doesn't need to fetch it
   await ensureCSRF()
+  // Keep csrf_token on the session object too — logout()/other callers read
+  // it from here, and previously this field was silently dropped because
+  // this function replaces window.__FRAPPE_SESSION__ wholesale.
+  window.__FRAPPE_SESSION__.csrf_token = _csrf
   console.log('Session user:', window.__FRAPPE_SESSION__.user, '| CSRF:', _csrf ? '✓' : '✗')
+}
+
+// True once we've established the browser holds a real (non-Guest) Frappe
+// session. Call initCSRF() first so window.__FRAPPE_SESSION__ is current.
+export function isLoggedIn() {
+  const user = window.__FRAPPE_SESSION__?.user
+  return !!user && user !== 'Guest'
 }
 
 // ── Core fetch helpers ────────────────────────────────────────────────────
