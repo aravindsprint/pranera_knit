@@ -483,7 +483,7 @@ async function printSticker(roll) {
   .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex; flex-direction:column; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
-  table { width:100%; border-collapse:collapse; flex:1; }
+  table { width:calc(100% - 2cm); margin-left:2cm; border-collapse:collapse; flex:1; }
   td { padding:1.5mm 3mm; border-bottom:0.3px solid #888; font-size:8pt; font-weight:700;
        font-family:Arial,sans-serif; color:#000; line-height:1.2; }
   tr:last-child td { border-bottom:none; }
@@ -495,7 +495,7 @@ async function printSticker(roll) {
   @media print {
     .noprint { display:none; }
     html, body { width:60mm; height:80mm; margin:0; padding:0; }
-    @page { size:60mm 80mm; margin:0 0 0 2cm; }
+    @page { size:60mm 80mm; margin:0; }
   }
 </style>
 </head><body>
