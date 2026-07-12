@@ -1741,9 +1741,11 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:60mm; height:80mm; }
-  body { font-family:Arial,sans-serif; }
-  .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex; flex-direction:column; }
+  html, body { width:100%; height:100%; }
+  body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
+         align-items:center; justify-content:center; min-height:100vh; }
+  .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex;
+             flex-direction:column; flex-shrink:0; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
   table { width:calc(100% - 2cm); margin-left:2cm; border-collapse:collapse; flex:1; }
@@ -1757,7 +1759,8 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:60mm; height:80mm; margin:0; padding:0; }
+    html, body { width:100%; height:100%; margin:0; padding:0; }
+    body { display:flex; align-items:center; justify-content:center; }
     @page { size:60mm 80mm; margin:0; }
   }
 </style>
