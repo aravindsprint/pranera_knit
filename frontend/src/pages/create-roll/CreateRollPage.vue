@@ -1737,7 +1737,7 @@ async function printLabel() {
 function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight, batch, qty, qrImg }) {
   const batchRow = batch ? `<tr><td>${batch}</td></tr>` : ''
   const qtyRow   = qty   ? `<tr><td>${qty} pcs</td></tr>` : ''
-  const qrCell   = qrImg ? `<img src="${qrImg}" style="width:26mm;height:26mm" alt="QR"/>` : ''
+  const qrCell   = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -1746,12 +1746,12 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
          align-items:center; justify-content:center; min-height:100vh; }
   .sticker { width:50mm; min-height:70mm; border:1px solid #000; display:flex;
              flex-direction:column; flex-shrink:0; }
-  .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
+  .qr-cell { display:flex; align-items:center; justify-content:center; padding:2mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
   table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
-  td { padding:1.5mm 3mm; border-bottom:0.3px solid #888; font-size:8pt; font-weight:700;
-       font-family:Arial,sans-serif; color:#000; line-height:1.2; }
-  tr:last-child td { border-bottom:none; padding-bottom:3mm; }
+  td { padding:1.2mm 3mm; border-bottom:0.3px solid #888; font-size:7.5pt; font-weight:700;
+       font-family:Arial,sans-serif; color:#000; line-height:1.15; }
+  tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
     cursor:pointer; font-size:12px; font-weight:600; }
