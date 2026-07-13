@@ -467,7 +467,6 @@ async function printSticker(roll) {
   const qty    = roll.stock_uom === 'Pcs' ? (editForm.value?.total_qty ?? roll.total_qty ?? 0) : null
   const qrData = `${roll.item_code}#${roll.work_order}#${roll.name}`
   const batchRow = roll.batch ? `<tr><td>${roll.batch}</td></tr>` : ''
-  const qtyRow   = qty !== null ? `<tr><td>${qty} pcs</td></tr>` : ''
   // Generate QR as a data URL with the bundled package (offline-safe, no CDN)
   let qrImg = ''
   try {
@@ -509,9 +508,8 @@ async function printSticker(roll) {
     <tr><td>${roll.commercial_name || ''}</td></tr>
     <tr><td>${roll.work_order || ''}</td></tr>
     <tr><td>${roll.name}</td></tr>
-    <tr><td>${weight} kg</td></tr>
+    <tr><td>${weight} kg${qty !== null ? ` · ${qty} pcs` : ''}</td></tr>
     ${batchRow}
-    ${qtyRow}
   </table>
 </div>
 <div class="noprint">

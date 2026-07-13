@@ -1736,7 +1736,6 @@ async function printLabel() {
 
 function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight, batch, qty, qrImg }) {
   const batchRow = batch ? `<tr><td>${batch}</td></tr>` : ''
-  const qtyRow   = qty   ? `<tr><td>${qty} pcs</td></tr>` : ''
   const qrCell   = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
@@ -1772,9 +1771,8 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
     <tr><td>${commercialName}</td></tr>
     <tr><td>${workOrder}</td></tr>
     <tr><td>${rollNo}</td></tr>
-    <tr><td>${Number(weight).toFixed(3)} kg</td></tr>
+    <tr><td>${Number(weight).toFixed(3)} kg${qty ? ` · ${qty} pcs` : ''}</td></tr>
     ${batchRow}
-    ${qtyRow}
   </table>
 </div>
 <div class="noprint">
