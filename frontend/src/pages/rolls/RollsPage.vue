@@ -495,8 +495,9 @@ async function printSticker(roll) {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:100%; margin:0; padding:0; }
-    body { display:flex; align-items:center; justify-content:center; }
+    html, body { width:100%; height:auto; margin:0; padding:0; }
+    body { display:block; }
+    .sticker { margin:0 auto; }
     @page { size:60mm 80mm; margin:0; }
   }
 </style>
