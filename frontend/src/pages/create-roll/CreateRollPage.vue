@@ -1744,11 +1744,11 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
          align-items:center; justify-content:center; min-height:100vh; }
   .sticker { width:50mm; min-height:65mm; border:1px solid #000; display:flex;
-             margin:0 auto; flex-direction:column; flex-shrink:0; }
+             margin:2mm auto 0; flex-direction:column; flex-shrink:0; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:2mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
   table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
-  td { padding:1.2mm 3mm; border-bottom:0.3px solid #888; font-size:7.5pt; font-weight:700;
+  td { padding:1.2mm 3mm; border-bottom:1px solid #000; font-size:7.5pt; font-weight:700;
        font-family:Arial,sans-serif; color:#000; line-height:1.15; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
@@ -1760,7 +1760,7 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
     .noprint { display:none; }
     html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
     body { display:block; }
-    .sticker { margin:0 auto; max-height:75mm; overflow:hidden; }
+    .sticker { margin:2mm auto 0; max-height:73mm; overflow:hidden; }
     @page { size:60mm 75mm; margin:0; }
   }
 </style>
