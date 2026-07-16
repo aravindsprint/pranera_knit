@@ -480,8 +480,8 @@ async function printSticker(roll) {
   html, body { width:100%; height:100%; }
   body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
          align-items:center; justify-content:center; min-height:100vh; }
-  .sticker { width:50mm; min-height:70mm; border:1px solid #000; display:flex;
-             flex-direction:column; flex-shrink:0; }
+  .sticker { width:50mm; min-height:65mm; border:1px solid #000; display:flex;
+             margin:0 auto; flex-direction:column; flex-shrink:0; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:2mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
   table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
@@ -495,10 +495,10 @@ async function printSticker(roll) {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:80mm; max-height:80mm; margin:0; padding:0; overflow:hidden; }
+    html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
     body { display:block; }
-    .sticker { margin:0 auto; max-height:80mm; overflow:hidden; }
-    @page { size:60mm 80mm; margin:0; }
+    .sticker { margin:0 auto; max-height:75mm; overflow:hidden; }
+    @page { size:60mm 75mm; margin:0; }
   }
 </style>
 </head><body>
