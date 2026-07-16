@@ -495,15 +495,10 @@ async function printSticker(roll) {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:40mm; max-height:40mm; margin:0; padding:0; overflow:hidden; }
+    html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
     body { display:block; }
-    .sticker { margin:0 auto; max-height:40mm; overflow:hidden; }
-    @page {
-      size:60mm 40mm;
-      width:60mm;
-      height:40mm;
-      margin:0;
-    }
+    .sticker { margin:0 auto; max-height:75mm; overflow:hidden; }
+    @page { size:60mm 75mm; margin:0; }
   }
 </style>
 </head><body>
