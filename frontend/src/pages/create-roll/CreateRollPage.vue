@@ -1758,10 +1758,10 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:65mm; max-height:65mm; margin:0; padding:0; overflow:hidden; }
+    html, body { width:100%; height:55mm; max-height:55mm; margin:0; padding:0; overflow:hidden; }
     body { display:block; }
-    .sticker { margin:0 auto; max-height:65mm; overflow:hidden; }
-    @page { size:60mm 65mm; margin:0; }
+    .sticker { margin:0 auto; max-height:55mm; overflow:hidden; }
+    @page { size:60mm 55mm; margin:0; }
   }
 </style>
 </head><body>
