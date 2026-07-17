@@ -48,6 +48,7 @@ def get_job_cards_for_knit_app(username=None, designation=None):
             "name", "work_order", "production_item", "item_name",
             "commercial_name", "color", "width", "status", "workstation",
             "for_quantity", "produced_qty", "project", "docstatus",
+            "stock_uom",
             "quality_inspection as quality_inspection_erp_name"
         ],
         order_by="modified desc", limit=500
@@ -137,6 +138,7 @@ def save_roll_data(
     roll.total_qty           = float(total_qty or 0)
     roll.mistake_qty         = float(mistake_qty or 0)
     roll.correct_qty         = float(total_qty or 0) - float(mistake_qty or 0)
+    roll.avg_weight_per_pcs  = (float(roll_weight or 0) / float(total_qty)) if total_qty and float(total_qty) > 0 else 0
     roll.stock_uom           = stock_uom or "Kgs"
     roll.project             = project or ""
     roll.knitting_machine_no = knitting_machine_no or ""
