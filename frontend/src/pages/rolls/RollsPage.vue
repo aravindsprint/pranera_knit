@@ -483,6 +483,8 @@ async function printSticker(roll) {
   // get clipped by the sticker's fixed height instead of just wrapping.
   const itemCode = roll.item_code || ''
   const itemFontSize = itemCode.length > 28 ? '6.5pt' : (itemCode.length > 20 ? '7.5pt' : '8.5pt')
+  const weightLine = `${weight} kg${qty !== null ? ` · Qty: ${qty}` : ''}${mistakeQty !== null ? ` · Mistake: ${mistakeQty}` : ''}`
+  const weightFontSize = weightLine.length > 26 ? '6.5pt' : (weightLine.length > 20 ? '7.5pt' : '8.5pt')
   // Generate QR as a data URL with the bundled package (offline-safe, no CDN)
   let qrImg = ''
   try {
@@ -506,6 +508,7 @@ async function printSticker(roll) {
        text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased;
        word-break:break-word; white-space:normal; overflow-wrap:break-word; }
   td.item-code { font-size:${itemFontSize}; }
+  td.weight-line { font-size:${weightFontSize}; white-space:nowrap; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
@@ -528,7 +531,7 @@ async function printSticker(roll) {
     <tr><td>${roll.commercial_name || ''}</td></tr>
     <tr><td>${roll.work_order || ''}</td></tr>
     <tr><td>${roll.name}</td></tr>
-    <tr><td>${weight} kg${qty !== null ? ` · Qty: ${qty}` : ''}${mistakeQty !== null ? ` · Mistake: ${mistakeQty}` : ''}</td></tr>
+    <tr><td class="weight-line">${weightLine}</td></tr>
     ${batchRow}
   </table>
 </div>

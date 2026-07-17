@@ -862,7 +862,9 @@ onUnmounted(() => {
 async function createBatch() {
   const pd = rollStore.productData
   if (!pd) return
-  const batchId = `${pd.work_order}/${pd.name}`
+  // Batch ID format: {project}/{work_order} — project comes from the Work
+  // Order (already present on productData, same source as stock_uom).
+  const batchId = `${pd.project}/${pd.work_order}`
   // Check if batch already exists using frappe.client.get_value (no 404 noise)
   try {
     const exists = await call('frappe.client.get_value', {
@@ -1742,6 +1744,8 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   const qrCell   = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
   const code = itemCode || ''
   const itemFontSize = code.length > 28 ? '6.5pt' : (code.length > 20 ? '7.5pt' : '8.5pt')
+  const weightLine = `${Number(weight).toFixed(3)} kg${qty ? ` · Qty: ${qty}` : ''}${mistakeQty ? ` · Mistake: ${mistakeQty}` : ''}`
+  const weightFontSize = weightLine.length > 26 ? '6.5pt' : (weightLine.length > 20 ? '7.5pt' : '8.5pt')
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -1758,6 +1762,7 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
        text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased;
        word-break:break-word; white-space:normal; overflow-wrap:break-word; }
   td.item-code { font-size:${itemFontSize}; }
+  td.weight-line { font-size:${weightFontSize}; white-space:nowrap; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
@@ -1780,7 +1785,7 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
     <tr><td>${commercialName}</td></tr>
     <tr><td>${workOrder}</td></tr>
     <tr><td>${rollNo}</td></tr>
-    <tr><td>${Number(weight).toFixed(3)} kg${qty ? ` · Qty: ${qty}` : ''}${mistakeQty ? ` · Mistake: ${mistakeQty}` : ''}</td></tr>
+    <tr><td class="weight-line">${weightLine}</td></tr>
     ${batchRow}
   </table>
 </div>
