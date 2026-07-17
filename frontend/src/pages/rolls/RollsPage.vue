@@ -28,6 +28,7 @@
                   <th>Roll No</th>
                   <th>Item</th>
                   <th>Work Order</th>
+                  <th>Job Card</th>
                   <th>Weight</th>
                   <th>Batch</th>
                   <th>Shift</th>
@@ -37,12 +38,13 @@
               </thead>
               <tbody>
                 <tr v-if="listLoading">
-                  <td colspan="8" class="rp-td-center"><span class="rp-spinner"></span> Loading…</td>
+                  <td colspan="9" class="rp-td-center"><span class="rp-spinner"></span> Loading…</td>
                 </tr>
                 <tr v-for="r in rolls" :key="r.name" class="rp-row" @click="openDetail(r.name)">
                   <td class="rp-td-bold">{{ r.name }}</td>
                   <td class="rp-td-sm">{{ r.item_code }}</td>
                   <td class="rp-td-sm">{{ r.work_order || '—' }}</td>
+                  <td class="rp-td-sm">{{ r.job_card || '—' }}</td>
                   <td class="rp-td-num">{{ r.roll_weight ? Number(r.roll_weight).toFixed(3) : '—' }}</td>
                   <td class="rp-td-sm">{{ r.batch || '—' }}</td>
                   <td>{{ r.shift || '—' }}</td>
@@ -370,11 +372,14 @@ async function saveRoll() {
   detailError.value = ''
   saveSuccess.value = false
   try {
+    const totalQty = parseInt(editForm.value.total_qty) || 0
+    const rollWeight = parseFloat(editForm.value.roll_weight) || 0
     const payload = {
-      roll_weight:         parseFloat(editForm.value.roll_weight) || 0,
-      total_qty:           parseInt(editForm.value.total_qty) || 0,
+      roll_weight:         rollWeight,
+      total_qty:           totalQty,
       mistake_qty:         parseInt(editForm.value.mistake_qty) || 0,
-      correct_qty:         (parseInt(editForm.value.total_qty) || 0) - (parseInt(editForm.value.mistake_qty) || 0),
+      correct_qty:         totalQty - (parseInt(editForm.value.mistake_qty) || 0),
+      avg_weight_per_pcs:  totalQty > 0 ? (rollWeight / totalQty) : 0,
       actual_width:        editForm.value.actual_width || '',
       width:               editForm.value.width || '',
       shift:               editForm.value.shift || '',
@@ -467,26 +472,28 @@ async function printSticker(roll) {
   const qty    = roll.stock_uom === 'Pcs' ? (editForm.value?.total_qty ?? roll.total_qty ?? 0) : null
   const qrData = `${roll.item_code}#${roll.work_order}#${roll.name}`
   const batchRow = roll.batch ? `<tr><td>${roll.batch}</td></tr>` : ''
-  const qtyRow   = qty !== null ? `<tr><td>${qty} pcs</td></tr>` : ''
   // Generate QR as a data URL with the bundled package (offline-safe, no CDN)
   let qrImg = ''
   try {
     qrImg = await QRCode.toDataURL(qrData, { width: 200, margin: 1 })
   } catch(e) { console.error('QR generation failed:', e) }
-  const qrCell = qrImg ? `<img src="${qrImg}" style="width:26mm;height:26mm" alt="QR"/>` : ''
+  const qrCell = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
 
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:60mm; height:80mm; }
-  body { font-family:Arial,sans-serif; }
-  .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex; flex-direction:column; }
-  .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
+  html, body { width:100%; height:100%; }
+  body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
+         align-items:center; justify-content:center; min-height:100vh; }
+  .sticker { width:50mm; min-height:65mm; border:1px solid #000; display:flex;
+             margin:2mm auto 0; flex-direction:column; flex-shrink:0; }
+  .qr-cell { display:flex; align-items:center; justify-content:center; padding:2mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
-  table { width:100%; border-collapse:collapse; flex:1; }
-  td { padding:1.5mm 3mm; border-bottom:0.3px solid #888; font-size:8pt; font-weight:700;
-       font-family:Arial,sans-serif; color:#000; line-height:1.2; }
-  tr:last-child td { border-bottom:none; }
+  table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
+  td { padding:1.1mm 3mm; border-bottom:1px solid #000; font-size:8.5pt; font-weight:800;
+       font-family:Arial,Helvetica,sans-serif; color:#000; line-height:1.15;
+       text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; }
+  tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
     cursor:pointer; font-size:12px; font-weight:600; }
@@ -494,8 +501,10 @@ async function printSticker(roll) {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:60mm; height:80mm; margin:0; padding:0; }
-    @page { size:60mm 80mm; margin:0; }
+    html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
+    body { display:block; }
+    .sticker { margin:2mm auto 0; max-height:73mm; overflow:hidden; }
+    @page { size:60mm 75mm; margin:0; }
   }
 </style>
 </head><body>
@@ -506,9 +515,8 @@ async function printSticker(roll) {
     <tr><td>${roll.commercial_name || ''}</td></tr>
     <tr><td>${roll.work_order || ''}</td></tr>
     <tr><td>${roll.name}</td></tr>
-    <tr><td>${weight} kg</td></tr>
+    <tr><td>${weight} kg${qty !== null ? ` · ${qty} pcs` : ''}</td></tr>
     ${batchRow}
-    ${qtyRow}
   </table>
 </div>
 <div class="noprint">
