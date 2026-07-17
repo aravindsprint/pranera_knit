@@ -469,9 +469,20 @@ async function printSticker(roll) {
   if (!w) { alert('Allow pop-ups to print.'); return }
 
   const weight = Number(editForm.value?.roll_weight ?? roll.roll_weight ?? 0).toFixed(3)
-  const qty    = roll.stock_uom === 'Pcs' ? (editForm.value?.total_qty ?? roll.total_qty ?? 0) : null
+  // Don't gate on roll.stock_uom === 'Pcs' -- that field is often blank on
+  // the Roll record even when the item itself is Pcs. Show qty/mistake
+  // whenever there's an actual value, regardless of stock_uom.
+  const totalQtyRaw   = editForm.value?.total_qty ?? roll.total_qty
+  const mistakeQtyRaw = editForm.value?.mistake_qty ?? roll.mistake_qty
+  const totalQty   = (totalQtyRaw !== null && totalQtyRaw !== undefined && Number(totalQtyRaw) > 0) ? Number(totalQtyRaw) : null
+  const mistakeQty = (mistakeQtyRaw !== null && mistakeQtyRaw !== undefined && Number(mistakeQtyRaw) > 0) ? Number(mistakeQtyRaw) : null
+  const qty = totalQty
   const qrData = `${roll.item_code}#${roll.work_order}#${roll.name}`
   const batchRow = roll.batch ? `<tr><td>${roll.batch}</td></tr>` : ''
+  // Shrink + wrap the item code row when it's long, so long codes never
+  // get clipped by the sticker's fixed height instead of just wrapping.
+  const itemCode = roll.item_code || ''
+  const itemFontSize = itemCode.length > 28 ? '6.5pt' : (itemCode.length > 20 ? '7.5pt' : '8.5pt')
   // Generate QR as a data URL with the bundled package (offline-safe, no CDN)
   let qrImg = ''
   try {
@@ -492,7 +503,9 @@ async function printSticker(roll) {
   table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
   td { padding:1.1mm 3mm; border-bottom:1px solid #000; font-size:8.5pt; font-weight:800;
        font-family:Arial,Helvetica,sans-serif; color:#000; line-height:1.15;
-       text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; }
+       text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased;
+       word-break:break-word; white-space:normal; overflow-wrap:break-word; }
+  td.item-code { font-size:${itemFontSize}; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
@@ -511,11 +524,11 @@ async function printSticker(roll) {
 <div class="sticker">
   <div class="qr-cell">${qrCell}</div>
   <table>
-    <tr><td>${roll.item_code || ''}</td></tr>
+    <tr><td class="item-code">${itemCode}</td></tr>
     <tr><td>${roll.commercial_name || ''}</td></tr>
     <tr><td>${roll.work_order || ''}</td></tr>
     <tr><td>${roll.name}</td></tr>
-    <tr><td>${weight} kg${qty !== null ? ` · ${qty} pcs` : ''}</td></tr>
+    <tr><td>${weight} kg${qty !== null ? ` · Qty: ${qty}` : ''}${mistakeQty !== null ? ` · Mistake: ${mistakeQty}` : ''}</td></tr>
     ${batchRow}
   </table>
 </div>
