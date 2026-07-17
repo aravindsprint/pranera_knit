@@ -190,7 +190,7 @@ export const fetchJobCards = (username, designation, employeeId) => {
       'commercial_name', 'color', 'width',
       'status', 'workstation', 'for_quantity',
       'total_completed_qty as produced_qty',
-      'project', 'docstatus', 'quality_inspection'
+      'project', 'docstatus', 'quality_inspection', 'stock_uom'
     ],
     limit: 500,
     orderBy: 'modified desc'
