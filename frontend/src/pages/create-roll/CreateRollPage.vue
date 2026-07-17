@@ -349,7 +349,8 @@
           <div class="cr-qr-label__row"><span>Work Order</span><strong>{{ printData.workOrder }}</strong></div>
           <div class="cr-qr-label__row"><span>Batch</span><strong>{{ printData.batchNo }}</strong></div>
           <div class="cr-qr-label__row"><span>Weight</span><strong>{{ printData.weight }} kg</strong></div>
-          <div class="cr-qr-label__row" v-if="isPcsUOM"><span>Qty</span><strong>{{ printData.totalQty }}</strong></div>
+          <div class="cr-qr-label__row" v-if="printData.totalQty"><span>Qty</span><strong>{{ printData.totalQty }}</strong></div>
+          <div class="cr-qr-label__row" v-if="printData.mistakeQty"><span>Mistake</span><strong>{{ printData.mistakeQty }}</strong></div>
           <div class="cr-qr-label__row"><span>Date</span><strong>{{ printData.date }}</strong></div>
         </div>
         <canvas ref="qrCanvas" style="margin:12px auto;display:block;border-radius:8px"></canvas>
@@ -1698,6 +1699,7 @@ async function generatePrintLabel() {
     batchNo:   d.batch_no,
     weight:    parseFloat(d.roll_weight || 0).toFixed(3),
     totalQty:  d.total_qty,
+    mistakeQty: d.mistake_qty,
     date:      moment().format('DD-MM-YYYY'),
   }
   showQRModal.value = true
@@ -1728,15 +1730,18 @@ async function printLabel() {
     weight:         d.weight,
     batch:          d.batchNo,
     qty:            d.totalQty,
+    mistakeQty:     d.mistakeQty,
     qrImg,
   }))
   w.document.close()
   showQRModal.value = false
 }
 
-function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight, batch, qty, qrImg }) {
+function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight, batch, qty, mistakeQty, qrImg }) {
   const batchRow = batch ? `<tr><td>${batch}</td></tr>` : ''
   const qrCell   = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
+  const code = itemCode || ''
+  const itemFontSize = code.length > 28 ? '6.5pt' : (code.length > 20 ? '7.5pt' : '8.5pt')
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -1750,7 +1755,9 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
   table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
   td { padding:1.1mm 3mm; border-bottom:1px solid #000; font-size:8.5pt; font-weight:800;
        font-family:Arial,Helvetica,sans-serif; color:#000; line-height:1.15;
-       text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; }
+       text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased;
+       word-break:break-word; white-space:normal; overflow-wrap:break-word; }
+  td.item-code { font-size:${itemFontSize}; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
@@ -1769,11 +1776,11 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
 <div class="sticker">
   <div class="qr-cell">${qrCell}</div>
   <table>
-    <tr><td>${itemCode}</td></tr>
+    <tr><td class="item-code">${code}</td></tr>
     <tr><td>${commercialName}</td></tr>
     <tr><td>${workOrder}</td></tr>
     <tr><td>${rollNo}</td></tr>
-    <tr><td>${Number(weight).toFixed(3)} kg${qty ? ` · ${qty} pcs` : ''}</td></tr>
+    <tr><td>${Number(weight).toFixed(3)} kg${qty ? ` · Qty: ${qty}` : ''}${mistakeQty ? ` · Mistake: ${mistakeQty}` : ''}</td></tr>
     ${batchRow}
   </table>
 </div>
