@@ -467,28 +467,26 @@ async function printSticker(roll) {
   const qty    = roll.stock_uom === 'Pcs' ? (editForm.value?.total_qty ?? roll.total_qty ?? 0) : null
   const qrData = `${roll.item_code}#${roll.work_order}#${roll.name}`
   const batchRow = roll.batch ? `<tr><td>${roll.batch}</td></tr>` : ''
+  const qtyRow   = qty !== null ? `<tr><td>${qty} pcs</td></tr>` : ''
   // Generate QR as a data URL with the bundled package (offline-safe, no CDN)
   let qrImg = ''
   try {
     qrImg = await QRCode.toDataURL(qrData, { width: 200, margin: 1 })
   } catch(e) { console.error('QR generation failed:', e) }
-  const qrCell = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
+  const qrCell = qrImg ? `<img src="${qrImg}" style="width:26mm;height:26mm" alt="QR"/>` : ''
 
   w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; }
-  body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
-         align-items:center; justify-content:center; min-height:100vh; }
-  .sticker { width:50mm; min-height:65mm; border:1px solid #000; display:flex;
-             margin:2mm auto 0; flex-direction:column; flex-shrink:0; }
-  .qr-cell { display:flex; align-items:center; justify-content:center; padding:2mm;
+  html, body { width:60mm; height:80mm; }
+  body { font-family:Arial,sans-serif; }
+  .sticker { width:60mm; height:80mm; border:1px solid #000; display:flex; flex-direction:column; }
+  .qr-cell { display:flex; align-items:center; justify-content:center; padding:3mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
-  table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
-  td { padding:1.1mm 3mm; border-bottom:1px solid #000; font-size:8.5pt; font-weight:800;
-       font-family:Arial,Helvetica,sans-serif; color:#000; line-height:1.15;
-       text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased; }
-  tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
+  table { width:100%; border-collapse:collapse; flex:1; }
+  td { padding:1.5mm 3mm; border-bottom:0.3px solid #888; font-size:8pt; font-weight:700;
+       font-family:Arial,sans-serif; color:#000; line-height:1.2; }
+  tr:last-child td { border-bottom:none; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
     cursor:pointer; font-size:12px; font-weight:600; }
@@ -496,10 +494,8 @@ async function printSticker(roll) {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
-    body { display:block; }
-    .sticker { margin:2mm auto 0; max-height:73mm; overflow:hidden; }
-    @page { size:60mm 75mm; margin:0; }
+    html, body { width:60mm; height:80mm; margin:0; padding:0; }
+    @page { size:60mm 80mm; margin:0; }
   }
 </style>
 </head><body>
@@ -510,8 +506,9 @@ async function printSticker(roll) {
     <tr><td>${roll.commercial_name || ''}</td></tr>
     <tr><td>${roll.work_order || ''}</td></tr>
     <tr><td>${roll.name}</td></tr>
-    <tr><td>${weight} kg${qty !== null ? ` · ${qty} pcs` : ''}</td></tr>
+    <tr><td>${weight} kg</td></tr>
     ${batchRow}
+    ${qtyRow}
   </table>
 </div>
 <div class="noprint">
