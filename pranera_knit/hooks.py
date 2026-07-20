@@ -35,6 +35,18 @@ doc_events = {
     }
 }
 
+# ── Job Card visibility restriction ───────────────────────────────────────────
+# Users with the "Job Card Operator" role only see Job Cards assigned to them
+# (via standard Frappe "Assign To"). System Manager, Knitting Supervisor and
+# Administrator bypass this restriction. See job_card_permissions.py.
+permission_query_conditions = {
+    "Job Card": "pranera_knit.job_card_permissions.get_permission_query_conditions",
+}
+
+has_permission = {
+    "Job Card": "pranera_knit.job_card_permissions.has_permission",
+}
+
 fixtures = [
     {"doctype": "Page",      "filters": [["module", "in", ["Knit Module"]]]},
     {"doctype": "Workspace", "filters": [["module", "in", ["Knit Module"]]]},
