@@ -542,7 +542,7 @@ let nextRollStartTime   = null
 
 // ── End roll cooldown ─────────────────────────────────────────────────────
 //const ENDROLL_COOLDOWN    = 1 * 10 * 1000
-const ENDROLL_COOLDOWN    = 3 * 60 * 1000
+const ENDROLL_COOLDOWN    = 5 * 60 * 1000
 const canClickEndRoll     = ref(true)
 const endRollCooldownTime = ref('')
 let cooldownInterval = null
