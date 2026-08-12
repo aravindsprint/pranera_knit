@@ -11,7 +11,7 @@ app_version     = "1.0.0"
 add_to_apps_screen = [
     {
         "name": "pranera_knit",
-        "logo": "data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%20100%20100%22%3E%3Crect%20width=%22100%22%20height=%22100%22%20rx=%2222%22%20fill=%22%230f6e56%22/%3E%3Cline%20x1=%2220%22%20y1=%2218%22%20x2=%2256%22%20y2=%2254%22%20stroke=%22white%22%20stroke-width=%225.5%22%20stroke-linecap=%22round%22/%3E%3Ccircle%20cx=%2220%22%20cy=%2218%22%20r=%225%22%20fill=%22white%22/%3E%3Crect%20x=%2253%22%20y=%2251%22%20width=%2230%22%20height=%227%22%20rx=%223.5%22%20fill=%22white%22%20transform=%22rotate(45%2068%2054)%22/%3E%3Cline%20x1=%2280%22%20y1=%2218%22%20x2=%2244%22%20y2=%2254%22%20stroke=%22white%22%20stroke-width=%225.5%22%20stroke-linecap=%22round%22/%3E%3Ccircle%20cx=%2280%22%20cy=%2218%22%20r=%225%22%20fill=%22white%22/%3E%3Crect%20x=%2217%22%20y=%2251%22%20width=%2230%22%20height=%227%22%20rx=%223.5%22%20fill=%22white%22%20transform=%22rotate(-45%2032%2054)%22/%3E%3Cpath%20d=%22M35%2060%20Q50%2044%2065%2060%20Q57%2072%2050%2068%20Q43%2072%2035%2060Z%22%20fill=%22none%22%20stroke=%22white%22%20stroke-width=%223.5%22%20stroke-linejoin=%22round%22%20opacity=%220.9%22/%3E%3Cpath%20d=%22M35%2060%20Q24%2068%2022%2080%22%20fill=%22none%22%20stroke=%22white%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20opacity=%220.9%22/%3E%3Cpath%20d=%22M65%2060%20Q76%2068%2078%2080%22%20fill=%22none%22%20stroke=%22white%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20opacity=%220.9%22/%3E%3C/svg%3E",
+        "logo": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%230f6e56'/%3E%3Ccircle cx='30' cy='50' r='12' fill='white'/%3E%3Ccircle cx='70' cy='50' r='12' fill='white'/%3E%3Cpath d='M30 50 Q50 20 70 50 Q50 80 30 50' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E",
         "title": "Knit App",
         "route": "/knit-app",
     }
@@ -60,6 +60,13 @@ fixtures = [
                 "custom_actual_consumed_qty",
             ]],
         ],
+    },
+    {
+        "doctype": "Server Script",
+        "filters": [["name", "in", [
+            "knit_submit_roll_packing_list_v2",
+            "knit-save-roll-data",
+        ]]],
     },
 ]
 
