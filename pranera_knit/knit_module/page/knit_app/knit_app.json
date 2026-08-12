@@ -1,8 +1,9 @@
 {
- "doctype": "Page",
- "module": "Knit Module",
- "name": "knit-app",
- "page_name": "knit-app",
- "roles": [{"role": "System Manager"}, {"role": "Manufacturing User"}],
- "title": "Knit App"
+"doctype": "Page",
+"module": "Knit Module",
+"name": "knit-app",
+"page_name": "knit-app",
+"roles": [{"role": "System Manager"}, {"role": "Manufacturing User"}],
+"standard": "Yes",
+"title": "Knit App"
 }
