@@ -95,6 +95,7 @@ import AutoComplete from '@/components/AutoComplete.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePickListStore, PICK_TYPES } from '@/stores/pickList'
+import { isOnline, syncLookupTables } from '@/composables/useSync'
 import moment from 'moment'
 const auth = useAuthStore()
 
@@ -108,7 +109,17 @@ const targetWarehouse = ref('')
 const submitting = ref(false)
 const successMsg = ref('')
 
-onMounted(() => store.loadDropdowns())
+onMounted(async () => {
+  // Load whatever's cached immediately so the page isn't blank...
+  await store.loadDropdowns()
+  // ...then pull a fresh sync if we're online, so newly created/edited
+  // documents (work orders, POs, etc.) show up without waiting for the
+  // background 10s sync timer. Reload dropdowns again once it lands.
+  if (isOnline.value) {
+    await syncLookupTables()
+    await store.loadDropdowns()
+  }
+})
 
 const docLabel = computed(() => {
   const t = store.selectedPickType

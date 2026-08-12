@@ -251,10 +251,11 @@ export const syncWorkOrders = () =>
   getList('Work Order', {
     filters: [['Work Order', 'docstatus', '!=', 2]],
     fields: ['name', 'production_item', 'item_name', 'status', 'qty', 'produced_qty', 'modified'],
-    limit: 1000
+    limit: 1000,
+    orderBy: 'modified desc'
   })
 
-export const syncBatches    = () => getList('Batch',     { fields: ['name', 'item', 'expiry_date', 'modified'], limit: 1000 })
+export const syncBatches    = () => getList('Batch',     { fields: ['name', 'item', 'expiry_date', 'modified'], limit: 1000, orderBy: 'modified desc' })
 export const syncWarehouses = () => getList('Warehouse', { fields: ['name', 'warehouse_name', 'modified'],      limit: 500  })
 
 // Stock Entries (parent doctype — listable via /api/resource)
@@ -262,7 +263,27 @@ export const syncStockEntries = () =>
   getList('Stock Entry', {
     filters: [['Stock Entry', 'docstatus', '=', 1]],
     fields: ['name', 'purpose', 'stock_entry_type', 'work_order', 'posting_date', 'modified'],
-    limit: 500
+    limit: 500,
+    orderBy: 'modified desc'
+  })
+
+// Purchase Orders / Subcontracting Orders — used by the Roll-wise Pick List's
+// "From Purchase Order" / "To|From Subcontracting Order" pick types. These were
+// missing entirely before, so those pick types always showed "No matches".
+export const syncPurchaseOrders = () =>
+  getList('Purchase Order', {
+    filters: [['Purchase Order', 'docstatus', '!=', 2]],
+    fields: ['name', 'supplier', 'status', 'transaction_date', 'modified'],
+    limit: 1000,
+    orderBy: 'modified desc'
+  })
+
+export const syncSubcontractingOrders = () =>
+  getList('Subcontracting Order', {
+    filters: [['Subcontracting Order', 'docstatus', '!=', 2]],
+    fields: ['name', 'supplier', 'status', 'transaction_date', 'modified'],
+    limit: 1000,
+    orderBy: 'modified desc'
   })
 
 // Time Logs: Job Card Time Log is a CHILD table (not listable via /api/resource),

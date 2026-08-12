@@ -224,15 +224,20 @@ export async function syncLookupTables() {
 
   const {
     syncItems, syncWorkOrders, syncTimeLogs,
-    syncStockEntries, syncQIParameters, syncEmployees
+    syncStockEntries, syncQIParameters, syncEmployees,
+    syncBatches, syncWarehouses, syncPurchaseOrders, syncSubcontractingOrders
   } = await import('@/api/frappe')
 
   const tasks = [
-    { name: 'Items',          fn: syncItems,        table: 'items',         key: 'name' },
-    { name: 'Work Orders',    fn: syncWorkOrders,   table: 'work_orders',   key: 'name' },
-    { name: 'Time Logs',      fn: syncTimeLogs,     table: 'time_logs',     key: 'name' },
-    { name: 'Stock Entries',  fn: syncStockEntries, table: 'stock_entries', key: 'name' },
-    { name: 'QI Parameters',  fn: syncQIParameters, table: 'quality_inspection_parameters', key: 'name' },
+    { name: 'Items',                   fn: syncItems,                 table: 'items',                  key: 'name' },
+    { name: 'Work Orders',             fn: syncWorkOrders,            table: 'work_orders',             key: 'name' },
+    { name: 'Time Logs',               fn: syncTimeLogs,              table: 'time_logs',               key: 'name' },
+    { name: 'Stock Entries',           fn: syncStockEntries,          table: 'stock_entries',           key: 'name' },
+    { name: 'QI Parameters',           fn: syncQIParameters,          table: 'quality_inspection_parameters', key: 'name' },
+    { name: 'Batches',                 fn: syncBatches,                table: 'batches',                key: 'name' },
+    { name: 'Warehouses',              fn: syncWarehouses,             table: 'warehouses',             key: 'name' },
+    { name: 'Purchase Orders',         fn: syncPurchaseOrders,         table: 'purchase_orders',        key: 'name' },
+    { name: 'Subcontracting Orders',   fn: syncSubcontractingOrders,   table: 'subcontracting_orders',  key: 'name' },
   ]
 
   for (const task of tasks) {
