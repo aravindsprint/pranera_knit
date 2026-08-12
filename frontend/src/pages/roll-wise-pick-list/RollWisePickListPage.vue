@@ -6,25 +6,23 @@
       <!-- Pick Type selector -->
       <div class="card">
         <label class="form-label">Pick Type</label>
-        <select v-model="store.selectedPickType" class="form-input" @change="onPickTypeChange">
-          <option value="">Select pick type</option>
-          <option v-for="pt in PICK_TYPES" :key="pt" :value="pt">{{ pt }}</option>
-        </select>
+        <AutoComplete
+          v-model="store.selectedPickType"
+          :options="PICK_TYPES"
+          placeholder="Select pick type"
+          @change="onPickTypeChange"
+        />
       </div>
 
       <!-- Document selector based on pick type -->
       <div class="card" v-if="store.selectedPickType">
         <label class="form-label">{{ docLabel }}</label>
-        <input
+        <AutoComplete
           v-model="store.selectedDocumentName"
-          list="doc-list"
-          class="form-input"
+          :options="currentDocOptions"
           :placeholder="`Search ${docLabel}...`"
           @change="onDocumentSelect"
         />
-        <datalist id="doc-list">
-          <option v-for="opt in currentDocOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-        </datalist>
       </div>
 
       <!-- Barcode scanner (text input fallback for PWA) -->
@@ -70,17 +68,11 @@
       <div class="card" v-if="store.selectedDocumentName">
         <div class="form-group">
           <label class="form-label">Source Warehouse</label>
-          <input v-model="sourceWarehouse" list="wh-list" class="form-input" placeholder="Search warehouse..." />
-          <datalist id="wh-list">
-            <option v-for="wh in store.warehouses" :key="wh.value" :value="wh.value" />
-          </datalist>
+          <AutoComplete v-model="sourceWarehouse" :options="store.warehouses" placeholder="Search warehouse..." />
         </div>
         <div class="form-group">
           <label class="form-label">Target Warehouse</label>
-          <input v-model="targetWarehouse" list="wh-list2" class="form-input" placeholder="Search warehouse..." />
-          <datalist id="wh-list2">
-            <option v-for="wh in store.warehouses" :key="wh.value" :value="wh.value" />
-          </datalist>
+          <AutoComplete v-model="targetWarehouse" :options="store.warehouses" placeholder="Search warehouse..." />
         </div>
 
         <button class="btn btn-primary btn-full" @click="submit" :disabled="submitting">
@@ -99,6 +91,7 @@
 <script setup>
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
+import AutoComplete from '@/components/AutoComplete.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePickListStore, PICK_TYPES } from '@/stores/pickList'
