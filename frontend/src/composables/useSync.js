@@ -68,10 +68,20 @@ async function refreshPendingCount() {
 
 // ── Queue any mutation for deferred sync ─────────────────────────────────────
 export async function enqueue(endpoint, method = 'POST', payload = {}) {
+  // Defensively strip Vue reactivity (Proxies, refs, etc.) before handing the
+  // payload to IndexedDB. Structured-clone (what IndexedDB uses under the
+  // hood) can't serialize a reactive Proxy — it throws DataCloneError, which
+  // then masks whatever the *real* underlying error was for any caller that
+  // falls back to enqueue() after a failed online call, and breaks genuine
+  // offline submissions outright. A JSON round-trip is a cheap, robust way
+  // to guarantee a plain, clonable object regardless of what a call site
+  // passes in — every value in these payloads is already plain
+  // strings/numbers/arrays, so nothing is lost.
+  const plainPayload = JSON.parse(JSON.stringify(payload))
   await db.syncQueue.add({
     endpoint,
     method,
-    payload,
+    payload: plainPayload,
     _status: 'pending',
     _retries: 0,
     _createdAt: new Date().toISOString()

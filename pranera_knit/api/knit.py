@@ -325,29 +325,207 @@ def submit_roll_packing_list(jobcard, work_order):
 
 
 @frappe.whitelist()
-def create_roll_picking_entry(pick_type, document_name, source_warehouse,
-                               target_warehouse, items=None, scanned_roll=None, date=None):
-    """Creates a Stock Entry for roll picking (Material Transfer)."""
+def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
+                               source_warehouse=None, target_warehouse=None,
+                               posting_date=None, date=None, project=None,
+                               batch_no=None, from_work_order=None,
+                               from_subcontracting=None, rolls=None, items=None,
+                               required_items=None, scanned_roll=None):
+    """
+    Creates a Roll Wise Pick List + Stock Entry (Material Transfer) for the
+    picked rolls/batches. Exact port of Node's POST /api/createRollPickingEntry
+    (knit_app.js), adapted to call ERPNext directly via frappe.get_doc instead
+    of proxying HTTP requests:
+
+      STEP 1 — create + submit a "Roll Wise Pick List":
+        * batch_wise_pick_item is always populated (one row per item+batch).
+        * roll_wise_pick_item is populated only for genuine roll-level picks —
+          a "batch transfer" (every roll's roll_no == its batch_no, i.e. the
+          GKF "pick the whole batch" flow) skips this child table.
+
+      STEP 2 — create + submit a Stock Entry (Material Transfer):
+        * naming_series is "BM/26/" for pick_type == "To Work Order" (Material
+          Transfer for Manufacture), otherwise "MT/26/".
+        * items are grouped by (item_code, batch_no) so multiple rolls of the
+          same item/batch collapse into a single Stock Entry Detail row.
+        * custom_batch_wise_packing_summary carries the batch/qty/roll-count
+          breakdown for reporting.
+        * work_order / purchase_order / subcontracting_order /
+          custom_reference_stock_entry / custom_reference_batch is set based
+          on pick_type + document, and project / custom_from_work_order /
+          custom_from_subcontracting are set when supplied.
+
+    Accepts both the old simplified payload shape (document_name, items,
+    scanned_roll, date) and the full Ionic-app payload shape (document,
+    posting_date, rolls, required_items, batch_no, from_work_order,
+    from_subcontracting) so either caller works unchanged.
+    """
     frappe.has_permission("Stock Entry", throw=True)
-    se = frappe.new_doc("Stock Entry")
-    se.stock_entry_type = "Material Transfer"
-    se.company      = frappe.defaults.get_user_default("Company")
-    se.posting_date = date or today()
-    se.custom_pick_type = pick_type
-    se.custom_reference_document = document_name
-    if items:
-        if isinstance(items, str):
-            items = json.loads(items)
-        for item in items:
-            se.append("items", {
-                "item_code":   item.get("item_code"),
-                "qty":         item.get("qty") or item.get("required_qty") or 1,
+
+    # ── Normalize inputs (accept either payload shape / JSON strings) ──────
+    document_name = document or document_name
+    posting_date  = posting_date or date or today()
+    rolls = rolls if rolls is not None else items
+    if isinstance(rolls, str):
+        rolls = json.loads(rolls)
+    if isinstance(required_items, str):
+        required_items = json.loads(required_items)
+    rolls = rolls or []
+
+    if not posting_date:
+        frappe.throw(_("Posting date is required"))
+    if not target_warehouse:
+        frappe.throw(_("Target warehouse is required"))
+    if not source_warehouse:
+        frappe.throw(_("Source warehouse is required"))
+    if not rolls:
+        frappe.throw(_("At least one roll is required"))
+
+    try:
+        # ── STEP 1: Roll Wise Pick List ─────────────────────────────────────
+        batch_wise = {}
+        for roll in rolls:
+            key = (roll.get("batch_no"), roll.get("item_code"))
+            b = batch_wise.setdefault(key, {
+                "item_code": roll.get("item_code"),
+                "warehouse": source_warehouse,
+                "batch":     roll.get("batch_no"),
+                "qty":       0.0,
+                "uom":       roll.get("uom"),
+            })
+            b["qty"] += float(roll.get("qty") or 0)
+
+        is_batch_transfer = all(
+            r.get("roll_no") == r.get("batch_no") for r in rolls
+        )
+        primary_batch = batch_no or rolls[0].get("batch_no")
+
+        pick_list = frappe.new_doc("Roll Wise Pick List")
+        pick_list.posting_date = posting_date
+        pick_list.warehouse    = source_warehouse
+        pick_list.batch        = primary_batch
+
+        for b in batch_wise.values():
+            pick_list.append("batch_wise_pick_item", {
+                "item_code": b["item_code"],
+                "warehouse": b["warehouse"],
+                "batch":     b["batch"],
+                "qty":       b["qty"],
+                "uom":       b["uom"],
+            })
+
+        if not is_batch_transfer:
+            for r in rolls:
+                pick_list.append("roll_wise_pick_item", {
+                    "item_code": r.get("item_code"),
+                    "warehouse": source_warehouse,
+                    "batch":     r.get("batch_no"),
+                    "roll_no":   r.get("roll_no"),
+                    "qty":       float(r.get("qty") or 0),
+                    "uom":       r.get("uom"),
+                })
+
+        pick_list.insert(ignore_permissions=True)
+        pick_list.submit()
+
+        # ── STEP 2: Stock Entry ──────────────────────────────────────────────
+        stock_entry_items = {}
+        for r in rolls:
+            key = (r.get("item_code"), r.get("batch_no"))
+            se_item = stock_entry_items.setdefault(key, {
+                "item_code":   r.get("item_code"),
                 "s_warehouse": source_warehouse,
                 "t_warehouse": target_warehouse,
-                "batch_no":    item.get("batch_no")
+                "batch_no":    r.get("batch_no"),
+                "qty":         0.0,
+                "uom":         r.get("uom"),
             })
-    se.save()
-    return {"name": se.name, "status": "Saved"}
+            se_item["qty"] += float(r.get("qty") or 0)
+
+        naming_series = "BM/26/" if pick_type == "To Work Order" else "MT/26/"
+
+        se = frappe.new_doc("Stock Entry")
+        se.naming_series         = naming_series
+        se.stock_entry_type      = "Material Transfer"
+        se.purpose               = "Material Transfer"
+        se.company               = frappe.defaults.get_user_default("Company")
+        se.posting_date          = posting_date
+        se.custom_roll_wise_pick_list = pick_list.name
+
+        for item in stock_entry_items.values():
+            se.append("items", {
+                "s_warehouse":  item["s_warehouse"],
+                "t_warehouse":  item["t_warehouse"],
+                "item_code":    item["item_code"],
+                "qty":          item["qty"],
+                "transfer_qty": item["qty"],
+                "uom":          item["uom"],
+                "stock_uom":    item["uom"],
+                "conversion_factor": 1,
+                "batch_no":     item["batch_no"],
+                "use_serial_batch_fields": 1,
+                "allow_zero_valuation_rate": 0,
+            })
+
+        for b in batch_wise.values():
+            rolls_in_batch = [r for r in rolls if r.get("batch_no") == b["batch"]]
+            se.append("custom_batch_wise_packing_summary", {
+                "batch": b["batch"],
+                "qty":   b["qty"],
+                "no_of_rolls": 0 if is_batch_transfer else len(rolls_in_batch),
+            })
+
+        if pick_type and pick_type != "Manual Roll Pick" and document_name:
+            if pick_type in ("From Work Order", "To Work Order"):
+                se.work_order = document_name
+            elif pick_type == "From Purchase Order":
+                se.purchase_order = document_name
+            elif pick_type in ("To Subcontracting Order", "From Subcontracting Order"):
+                se.subcontracting_order = document_name
+            elif pick_type == "From Stock Entry":
+                se.custom_reference_stock_entry = document_name
+            elif pick_type == "From Batch":
+                se.custom_reference_batch = document_name
+
+        if project:
+            se.project = project
+        if from_work_order:
+            se.custom_from_work_order = from_work_order
+        if from_subcontracting:
+            se.custom_from_subcontracting = from_subcontracting
+
+        se.insert(ignore_permissions=True)
+        se.submit()
+        frappe.db.commit()
+
+        total_qty = sum(float(r.get("qty") or 0) for r in rolls)
+
+        return {
+            "success": True,
+            "message": "Roll Wise Pick List and Stock Entry created successfully",
+            "pick_list": pick_list.name,
+            "stock_entry": se.name,
+            "transfer_type": "batch" if is_batch_transfer else "roll",
+            "entry_type": "Material Transfer",
+            "data": {
+                "posting_date": posting_date,
+                "pick_type": pick_type,
+                "document": document_name,
+                "project": project,
+                "target_warehouse": target_warehouse,
+                "source_warehouse": source_warehouse,
+                "batch_no": primary_batch,
+                "rolls_count": 0 if is_batch_transfer else len(rolls),
+                "total_weight": round(total_qty, 2),
+                "batches": len(batch_wise),
+                "items": len(stock_entry_items),
+            }
+        }
+
+    except Exception as e:
+        frappe.db.rollback()
+        frappe.log_error(frappe.get_traceback(), "create_roll_picking_entry")
+        frappe.throw(str(e))
 
 
 # ── Item + QI parameters ──────────────────────────────────────────────────────

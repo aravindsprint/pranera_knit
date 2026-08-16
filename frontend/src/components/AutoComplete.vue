@@ -79,21 +79,27 @@ function labelForValue(val) {
   return match ? match.label : (val || '')
 }
 
-// Keep the visible text in sync with the selected value from outside
+// Keep the visible text in sync with the selected value from outside —
+// but ONLY while the user isn't actively typing (open.value === false).
+// The previous version also re-synced on every keystroke, because
+// onInput() clears modelValue whenever the typed text doesn't match the
+// current selection (true on almost every keystroke while searching) —
+// that emitted change flowed back into this watcher, which then reset
+// query.value to '' mid-type, fighting with what the user had just typed
+// and, since the dropdown re-renders on every reactive change, briefly
+// showing both the old filtered list and the new "No matches" empty state
+// stacked on top of each other. Guarding on `!open.value` means this only
+// fires for genuinely external changes (e.g. store.reset(), a value set
+// programmatically) — internal edits are handled solely by onInput/choose.
 watch(
   () => props.modelValue,
   (val) => {
-    if (val !== selectedValueOfQuery()) {
+    if (!open.value) {
       query.value = val ? labelForValue(val) : ''
     }
   },
   { immediate: true }
 )
-
-// Track whether the current query text corresponds to the current modelValue
-function selectedValueOfQuery() {
-  return query.value === labelForValue(props.modelValue) ? props.modelValue : undefined
-}
 
 function onFocus() {
   if (disabledCheck()) return
