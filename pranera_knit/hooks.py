@@ -48,7 +48,16 @@ has_permission = {
 }
 
 fixtures = [
-    {"doctype": "Page",      "filters": [["module", "in", ["Knit Module"]]]},
+    # "Page" intentionally excluded: the "knit-app" desk Page already exists
+    # in production (created once, back when developer_mode was on). Frappe
+    # blocks ANY insert/update of a standard=Yes Page outside developer
+    # mode — even a no-op re-sync of an already-identical record — which
+    # made `bench migrate` fail on production with "Not in Developer Mode".
+    # Since this Page never needs to be created again, simply not fixture-
+    # syncing it avoids the check entirely with no functional change; the
+    # record itself is untouched and the app keeps working exactly as
+    # before. If the Page ever needs to change, edit it directly via the
+    # UI with developer_mode on temporarily, rather than through fixtures.
     {"doctype": "Workspace", "filters": [["module", "in", ["Knit Module"]]]},
     {
         "doctype": "Custom Field",
