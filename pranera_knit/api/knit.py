@@ -1,11 +1,37 @@
 """
 pranera_knit/api/knit.py
 Server-side whitelisted methods called from the Vue PWA.
+
+----------------------------------------------------------------------------
+FIX LOG (bug analysis + patch, applied 2026-08-17)
+----------------------------------------------------------------------------
+submit_roll_packing_list() previously left raw-material row population to
+ERPNext's default Stock Entry get_items(), which FIFO-picks batches
+across the WHOLE source warehouse — not scoped to the batch that was
+actually transferred in for this specific work order.
+
+Confirmed on MF/26/23243 (WO/26/10352): it consumed 49.96 kg of
+YRFPP090/GREIGE, blended across THREE batches, even though only
+26PTIN1635/PO-18527/BH-GLD99 was ever moved into WIP for that WO via
+Material Transfer for Manufacture. ~10.5 kg came from batches never
+issued against this work order at all. Scale: 48 of 5,494 GKF
+raw-material consumption rows since 1 May 2026 span more than one
+batch in their bundle.
+
+Fixed: raw-material rows are now built explicitly from the BOM, with
+each item's batch resolved via yarn_consumption._transferred_batch_for_item()
+(the same logic already used correctly elsewhere in this app) instead
+of letting ERPNext auto-pick. If no transferred batch can be found for
+an item, the function now throws instead of silently letting ERPNext
+blend batches.
+----------------------------------------------------------------------------
 """
 import frappe
 import json
 from frappe import _
 from frappe.utils import now_datetime, today, get_datetime
+
+from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
 
 
 # ── App access ────────────────────────────────────────────────────────────────
@@ -308,18 +334,65 @@ def submit_reconciliation(work_order, reconcile_items=None):
 
 @frappe.whitelist()
 def submit_roll_packing_list(jobcard, work_order):
-    """Creates a Stock Entry (Manufacture) in ERPNext."""
+    """Creates a Stock Entry (Manufacture) in ERPNext, with raw-material
+    rows explicitly scoped to the batch actually transferred in for this
+    work order — not ERPNext's default FIFO-across-warehouse pick.
+
+    FIX: previously this just set se.bom_no and called se.save(), leaving
+    ERPNext's default get_items() to FIFO-pick raw-material batches across
+    the whole source warehouse. Confirmed on MF/26/23243 (WO/26/10352):
+    it blended in ~10.5 kg from batches never transferred against that
+    work order at all. Now the raw-material rows are built explicitly
+    from the BOM, with each item's batch resolved via
+    yarn_consumption._transferred_batch_for_item() — the same batch
+    resolution already used correctly elsewhere in this app. If no
+    transferred batch can be found, this throws instead of silently
+    letting ERPNext blend batches.
+    """
     frappe.has_permission("Stock Entry", throw=True)
+
     se = frappe.new_doc("Stock Entry")
     se.stock_entry_type = "Manufacture"
-    se.work_order   = work_order
-    se.job_card     = jobcard
-    se.company      = frappe.defaults.get_user_default("Company")
+    se.work_order = work_order
+    se.job_card = jobcard
+    se.company = frappe.defaults.get_user_default("Company")
     se.posting_date = today()
-    bom = frappe.get_value("Work Order", work_order, "bom_no")
-    if bom:
+
+    bom_no = frappe.get_value("Work Order", work_order, "bom_no")
+    if bom_no:
         se.from_bom = 1
-        se.bom_no   = bom
+        se.bom_no = bom_no
+
+        bom = frappe.get_doc("BOM", bom_no)
+        wip_warehouse = frappe.get_value("Work Order", work_order, "wip_warehouse")
+
+        for bom_item in bom.items:
+            batch_no = _transferred_batch_for_item(work_order, bom_item.item_code)
+            row = {
+                "item_code": bom_item.item_code,
+                "s_warehouse": wip_warehouse,
+                "qty": bom_item.qty,  # ERPNext scales this from fg_completed_qty on save
+                "uom": bom_item.uom,
+                "stock_uom": bom_item.stock_uom,
+                "conversion_factor": bom_item.conversion_factor or 1,
+            }
+            if batch_no:
+                row["batch_no"] = batch_no
+                row["use_serial_batch_fields"] = 1
+            else:
+                # No transferred batch found for this item/WO — don't
+                # silently let ERPNext auto-pick a wrong one; surface it
+                # so the operator/planner fixes the Material Transfer
+                # step instead of masking a data problem.
+                frappe.throw(
+                    f"No Material Transfer for Manufacture batch found for "
+                    f"{bom_item.item_code} against {work_order}. Cannot "
+                    f"determine which batch to consume — check the "
+                    f"transfer entries for this work order before "
+                    f"submitting this job card."
+                )
+            se.append("items", row)
+
     se.save()
     return {"name": se.name, "status": "Draft"}
 

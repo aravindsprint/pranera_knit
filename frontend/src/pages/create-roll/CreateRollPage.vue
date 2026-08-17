@@ -1497,6 +1497,7 @@ async function submitWithActuals() {
   try {
     await call('knit_apply_actual_bom', {
       work_order: rollStore.productData.work_order,
+      job_card:   rollStore.productData.name,
       actual_consumption: JSON.stringify(actuals),
     })
   } catch (e) {

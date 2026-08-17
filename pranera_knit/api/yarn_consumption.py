@@ -25,6 +25,63 @@ Whitelisted aliases used by the Vue PWA:
   knit_get_yarn_consumption      -> get_yarn_consumption
   knit_apply_actual_bom          -> apply_actual_bom
 (see registration note at the bottom)
+
+----------------------------------------------------------------------------
+FIX LOG (bug analysis + patch, applied 2026-08-17)
+----------------------------------------------------------------------------
+1. apply_actual_bom() was setting bom.quantity = wo.qty (the WHOLE work
+   order's target output, e.g. 3492 kg) while the BOM's raw-material row
+   held the actual yarn consumed for only the FIRST job card (e.g. 227.36
+   kg). That produced a wildly wrong RM:FG ratio (227.36/3492 = 6.5%
+   instead of ~100%), which every later Manufacture Stock Entry against
+   that Work Order then inherited — confirmed against 80 real Stock
+   Entries since 1 May 2026 across 9 auto-generated BOMs (ratios up to
+   70x). Fixed: bom.quantity is now the qty actually produced by the SAME
+   job card whose actual_consumption is being recorded.
+
+   Verified against live data: SUM(Roll.roll_weight) for job card
+   PO-JOB18960 (the first job card of WO/26/10351) = 227.36 — exactly
+   the figure that should have been used as bom.quantity instead of
+   3492. Cross-checked on 4 more job cards (176.90, 176.70, 176.84,
+   177.04) — exact match every time against the independently-tracked
+   Roll Packing List total as well.
+
+2. Queried from Roll (SUM(Roll.roll_weight) WHERE job_card=...), not
+   Roll Packing List: Roll records are created live on the shop floor as
+   each roll comes off the machine, well BEFORE the job card is
+   submitted. Roll Packing List, by contrast, is created 1.5-3.5 hours
+   AFTER the BOM in every case checked (9 work orders), so a lookup
+   against it at BOM-build time would find nothing. Roll is always
+   available at the point apply_actual_bom() runs — no frontend change
+   needed to pass a produced_qty parameter, only job_card.
+
+3. custom_source_work_order did not exist on this site's BOM doctype
+   (confirmed: `Unknown column 'custom_source_work_order'` on direct
+   SQL query), so the "idempotent per work order" reuse logic silently
+   never fired — every actuals run minted a brand new BOM
+   (...-381, -383, -384, -387...) instead of reusing/replacing one.
+   Run create_custom_fields_PATCH.py once to add the missing field
+   before deploying this file.
+
+FRONTEND CHANGE REQUIRED
+-------------------------
+apply_actual_bom() now takes job_card as an explicit, required argument
+(it's always called in the context of one specific job card — the first
+job card of the WO — but the old signature didn't declare it). The Vue
+"Submit Job Card" call to knit_apply_actual_bom needs to include it —
+it already sends job_card to the sibling endpoint get_yarn_consumption,
+so this is a small, consistent addition:
+
+    POST knit_apply_actual_bom
+    {
+      "work_order": "...",
+      "job_card": "...",           # <-- NOW REQUIRED
+      "actual_consumption": [...]
+    }
+
+No produced_qty needs to be sent — the backend derives it itself from
+Roll records for that job_card.
+----------------------------------------------------------------------------
 """
 
 import frappe
@@ -63,7 +120,16 @@ def is_first_job_card(work_order, job_card):
 
 
 def _transferred_batch_for_item(work_order, item_code):
-    """The single batch transferred for this item into WIP for the work order."""
+    """The single batch transferred for this item into WIP for the work order.
+
+    FIX (2026-08-17): ORDER BY qty DESC on the raw signed transfer quantity
+    picks the LEAST-negative (smallest magnitude) batch, not the largest
+    transfer, because outgoing transfer quantities are stored negative.
+    Confirmed against WO/26/9475: a batch with -456 kg transferred was
+    picked over one with -2036.8 kg, because -456 > -2036.8 numerically.
+    Must compare by ABS(qty) to find the batch that actually received the
+    bulk of the transfer.
+    """
     row = frappe.db.sql(
         """
         SELECT COALESCE(sbe.batch_no, sed.batch_no) AS batch_no,
@@ -78,7 +144,7 @@ def _transferred_batch_for_item(work_order, item_code):
           AND se.stock_entry_type = 'Material Transfer for Manufacture'
           AND sed.item_code = %(item)s
         GROUP BY COALESCE(sbe.batch_no, sed.batch_no)
-        ORDER BY qty DESC
+        ORDER BY ABS(qty) DESC
         LIMIT 1
         """,
         {"wo": work_order, "item": item_code},
@@ -95,6 +161,29 @@ def _iter_required_yarns(wo):
             continue
         batch_no = _transferred_batch_for_item(wo.name, row.item_code)
         yield row, batch_no, transferred
+
+
+def _get_produced_qty_for_job_card(job_card):
+    """
+    Resolve the production quantity that the actual_consumption figures
+    for this job card correspond to, by summing the individual Roll
+    records logged against it on the shop floor.
+
+    This is deliberately queried from `Roll` rather than
+    `Roll Packing List.total_roll_weight`: Roll records are created
+    live as each roll comes off the machine, so they're already
+    complete well before the job card is submitted (verified: 1.5-3.5
+    hours ahead of BOM/RPL creation across all 9 affected work orders).
+    Roll Packing List is created AFTER the BOM in the current flow, so
+    querying it here would find nothing yet.
+    """
+    total = frappe.db.sql(
+        """
+        SELECT SUM(roll_weight) FROM `tabRoll` WHERE job_card = %s
+        """,
+        (job_card,),
+    )
+    return flt(total[0][0]) if total and total[0][0] else None
 
 
 # ---------------------------------------------------------------------------
@@ -191,28 +280,43 @@ def get_yarn_consumption(work_order, job_card):
 # 3. Build (or reuse) a BOM from actuals; link WO + its other job cards
 # ---------------------------------------------------------------------------
 @frappe.whitelist()
-def apply_actual_bom(work_order, actual_consumption):
+def apply_actual_bom(work_order, job_card, actual_consumption):
     """
+    job_card: the job card whose actual_consumption is being recorded
+        (the first job card of the work order). Required so the BOM's
+        basis quantity can be derived from that SAME job card's Roll
+        records — not the Work Order's overall target qty.
     actual_consumption: JSON list of {item_code, qty, before_qty, after_qty}.
 
-    Persists the operator's Before/After cone weights onto the Work Order Item
-    rows, then builds the actuals BOM. Idempotent per work order via
-    BOM.custom_source_work_order:
-      - if an active BOM already tagged with this WO exists, cancel it and
-        rebuild from the latest actuals;
+    Persists the operator's Before/After cone weights onto the Work
+    Order Item rows, then builds the actuals BOM. Idempotent per work
+    order via BOM.custom_source_work_order:
+      - if an active BOM already tagged with this WO exists, cancel it
+        and rebuild from the latest actuals;
       - otherwise create a new active BOM.
 
-    Then re-point Work Order.bom_no and every draft Job Card of the WO to it.
+    Then re-point Work Order.bom_no and every draft Job Card of the WO
+    to it.
     Returns {"success": True, "bom_no": <bom>, "reused": bool}.
     """
     if isinstance(actual_consumption, str):
         actual_consumption = json.loads(actual_consumption)
     if not actual_consumption:
         frappe.throw("No actual consumption provided.")
+    if not job_card:
+        frappe.throw("job_card is required to determine the BOM's basis quantity.")
 
     wo = frappe.get_doc("Work Order", work_order)
     produced_item = wo.production_item
-    qty = flt(wo.qty) or 1.0
+
+    qty = _get_produced_qty_for_job_card(job_card)
+    if not qty:
+        frappe.throw(
+            f"Could not determine the production quantity for job card "
+            f"{job_card} — no Roll records found against it yet. Make "
+            f"sure rolls are logged (create_knit_roll / save_roll_data) "
+            f"before Submit Job Card triggers the actuals BOM build."
+        )
 
     # Persist operator-entered Before/After cone weights onto the WO Item rows
     woi_meta = frappe.get_meta("Work Order Item")
@@ -236,19 +340,24 @@ def apply_actual_bom(work_order, actual_consumption):
         frappe.db.commit()
 
     has_tag = frappe.get_meta("BOM").has_field("custom_source_work_order")
-
-    existing = None
-    if has_tag:
-        existing = frappe.db.get_value(
-            "BOM",
-            {
-                "custom_source_work_order": work_order,
-                "item": produced_item,
-                "docstatus": 1,
-                "is_active": 1,
-            },
-            "name",
+    if not has_tag:
+        frappe.throw(
+            "BOM is missing the custom_source_work_order field. Run the "
+            "create_custom_fields patch before using apply_actual_bom — "
+            "without it, actuals BOMs cannot be reused/replaced per work "
+            "order and a new BOM will be minted on every call."
         )
+
+    existing = frappe.db.get_value(
+        "BOM",
+        {
+            "custom_source_work_order": work_order,
+            "item": produced_item,
+            "docstatus": 1,
+            "is_active": 1,
+        },
+        "name",
+    )
 
     rows = []
     for r in actual_consumption:
@@ -272,13 +381,12 @@ def apply_actual_bom(work_order, actual_consumption):
 
     bom = frappe.new_doc("BOM")
     bom.item = produced_item
-    bom.quantity = qty
+    bom.quantity = qty  # FIX: this job card's own production (from Roll), not wo.qty
     bom.company = wo.company
     bom.is_active = 1
     bom.is_default = 0
     bom.rm_cost_as_per = "Valuation Rate"
-    if has_tag:
-        bom.custom_source_work_order = work_order
+    bom.custom_source_work_order = work_order
     for row in rows:
         bom.append("items", row)
 
@@ -296,7 +404,7 @@ def apply_actual_bom(work_order, actual_consumption):
             frappe.db.set_value("Job Card", jc, "bom_no", bom.name)
 
     frappe.db.commit()
-    return {"success": True, "bom_no": bom.name, "reused": reused}
+    return {"success": True, "bom_no": bom.name, "reused": reused, "basis_qty": qty}
 
 
 # ---------------------------------------------------------------------------
