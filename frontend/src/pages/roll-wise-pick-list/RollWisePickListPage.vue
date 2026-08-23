@@ -61,7 +61,7 @@
         />
         <div v-if="store.selectedJobCardName" class="job-card-badge">
           <i class="pi pi-filter"></i>
-          Rolls filtered by: <strong>{{ store.selectedJobCardName }}</strong>
+          <span class="job-card-badge__text">Rolls filtered by: <strong>{{ store.selectedJobCardName }}</strong></span>
           <button class="badge-clear" @click="onJobCardClear">
             <i class="pi pi-times-circle"></i>
           </button>
@@ -138,7 +138,8 @@
           <i class="pi pi-exclamation-triangle"></i> No batches found for job card: {{ store.selectedJobCardName }}
         </div>
         <div v-else-if="store.selectedJobCardName && store.jobCardBatches.length" class="hint-text">
-          <i class="pi pi-filter"></i> Showing {{ store.jobCardBatches.length }} batch(es) for job card: <strong>{{ store.selectedJobCardName }}</strong>
+          <i class="pi pi-filter"></i>
+          <span>Showing {{ store.jobCardBatches.length }} batch(es) for job card: <strong>{{ store.selectedJobCardName }}</strong></span>
         </div>
         <AutoComplete
           v-model="store.selectedBatchName"
@@ -148,7 +149,7 @@
         />
       </div>
 
-      <!-- Roll No / Barcode -->
+      <!-- Roll No / Barcode — scan-only entry, no manual "Type or Select" option -->
       <div class="card" v-if="store.showField('rollNo')">
         <label class="form-label">
           {{ store.isGKFProduction && store.selectedPickType === 'To Work Order' ? 'Batch' : 'Roll No' }}
@@ -159,50 +160,55 @@
           <i class="pi pi-info-circle"></i> Please select a batch first
         </div>
         <div v-else-if="store.selectedBatchName && store.rollNos.length && store.selectedJobCardName" class="hint-text ok">
-          <i class="pi pi-check-circle"></i> {{ store.rollNos.length }} roll(s) — filtered by Job Card: <strong>{{ store.selectedJobCardName }}</strong> / Batch: <strong>{{ store.selectedBatchName }}</strong>
+          <i class="pi pi-check-circle"></i>
+          <span>{{ store.rollNos.length }} roll(s) — filtered by Job Card: <strong>{{ store.selectedJobCardName }}</strong> / Batch: <strong>{{ store.selectedBatchName }}</strong></span>
         </div>
         <div v-else-if="store.selectedBatchName && store.rollNos.length" class="hint-text ok">
-          <i class="pi pi-check-circle"></i> {{ store.rollNos.length }} roll(s) available for batch: {{ store.selectedBatchName }}
+          <i class="pi pi-check-circle"></i>
+          <span>{{ store.rollNos.length }} roll(s) available for batch: <strong>{{ store.selectedBatchName }}</strong></span>
         </div>
         <div v-else-if="store.selectedBatchName && !store.rollNos.length" class="hint-text warn">
           <i class="pi pi-exclamation-triangle"></i> No rolls found for this selection
         </div>
 
-        <AutoComplete
-          v-model="rollNoInput"
-          :options="store.rollNos"
-          :placeholder="store.isGKFProduction && store.selectedPickType === 'To Work Order' ? 'Select Batch' : 'Type or Select Roll No'"
-          :disabled="(store.selectedPickType === 'From Work Order' || store.selectedPickType === 'To Work Order') && !store.selectedBatchName"
-          @change="onRollNoChange"
-        />
-
-        <!-- Barcode scanner fallback — a keyboard-wedge scanner (or manual
-             typing) types "item_code#batch#roll_no" here and hits Enter;
-             mirrors the Ionic app's camera-scan QR format. -->
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <input
-            v-model="barcodeInput"
-            type="text"
-            class="form-input"
-            placeholder="Scan or type roll no / barcode"
-            :disabled="(store.selectedPickType === 'From Work Order' || store.selectedPickType === 'To Work Order') && !store.selectedBatchName"
-            @keyup.enter="onBarcodeInput"
-          />
+        <!-- Camera scan only — no manual typing, no hardware-wedge text field.
+             The Scan button opens the device camera to read the roll's QR/barcode. -->
+        <div class="scan-row">
           <button
-            class="btn btn-outline"
-            @click="onBarcodeInput"
+            class="btn btn-primary btn-scan btn-full"
+            @click="openCameraScanner"
             :disabled="(store.selectedPickType === 'From Work Order' || store.selectedPickType === 'To Work Order') && !store.selectedBatchName"
           >
-            <i class="pi pi-qrcode"></i>
+            <i class="pi pi-camera"></i>
+            <span>Scan</span>
           </button>
+        </div>
+        <div class="hint-text">
+          <i class="pi pi-info-circle"></i>
+          <span>Tap <strong>Scan</strong> to open your camera and scan the roll's barcode</span>
         </div>
       </div>
 
-      <!-- Roll Wise Report table -->
+      <!-- Camera scanner pop-up -->
+      <transition name="modal-fade">
+        <div v-if="showScannerModal" class="modal-overlay" @click.self="closeCameraScanner">
+          <div class="modal-box scanner-box">
+            <h3 class="modal-title">Scan Roll Barcode</h3>
+            <div id="camera-scan-region" class="camera-region"></div>
+            <div v-if="scannerError" class="error-banner" style="margin-top:12px">
+              <i class="pi pi-exclamation-triangle"></i> {{ scannerError }}
+            </div>
+            <button class="btn btn-outline btn-full" style="margin-top:14px" @click="closeCameraScanner">Cancel</button>
+          </div>
+        </div>
+      </transition>
+
+      <!-- Roll Wise Report table — becomes a stacked card list on phones so
+           nothing gets squeezed into an unreadable, horizontally-scrolled row -->
       <div class="card" v-if="store.rollWiseReportTable.length">
         <h2 class="section-title">Roll Wise Report</h2>
         <div class="table-wrap">
-          <table class="data-table">
+          <table class="data-table responsive-table">
             <thead>
               <tr>
                 <th>{{ store.isGKFProduction && store.selectedPickType === 'To Work Order' ? 'Batch' : 'Roll No' }}</th>
@@ -215,14 +221,15 @@
             </thead>
             <tbody>
               <tr v-for="(roll, i) in store.rollWiseReportTable" :key="roll.roll_no">
-                <td>{{ roll.roll_no }}</td>
-                <td>{{ roll.item_code }}</td>
-                <td>{{ roll.warehouse }}</td>
-                <td>{{ roll.batch_no }}</td>
-                <td>{{ fmt(roll.qty) }}</td>
-                <td>
+                <td :data-label="store.isGKFProduction && store.selectedPickType === 'To Work Order' ? 'Batch' : 'Roll No'">{{ roll.roll_no }}</td>
+                <td data-label="Item Code">{{ roll.item_code }}</td>
+                <td data-label="Warehouse">{{ roll.warehouse }}</td>
+                <td data-label="Batch No">{{ roll.batch_no }}</td>
+                <td data-label="Qty">{{ fmt(roll.qty) }}</td>
+                <td class="cell-action">
                   <button class="row-remove" @click="store.removeRoll(i)">
                     <i class="pi pi-trash"></i>
+                    <span class="row-remove-label">Remove</span>
                   </button>
                 </td>
               </tr>
@@ -250,14 +257,24 @@
           {{ store.submitting ? 'Submitting...' : 'Create Pick Entry' }}
         </button>
 
-        <div v-if="successMsg" class="success-banner" style="margin-top:12px">
-          <i class="pi pi-check-circle"></i> {{ successMsg }}
-        </div>
         <div v-if="errorMsg" class="error-banner" style="margin-top:12px">
           <i class="pi pi-exclamation-triangle"></i> {{ errorMsg }}
         </div>
       </div>
     </div>
+
+    <!-- Submission success pop-up -->
+    <transition name="modal-fade">
+      <div v-if="showSuccessModal" class="modal-overlay" @click.self="closeSuccessModal">
+        <div class="modal-box">
+          <i class="pi pi-check-circle modal-icon"></i>
+          <h3 class="modal-title">Pick Entry Submitted</h3>
+          <p class="modal-msg">{{ successMsg }}</p>
+          <div v-if="submittedDocNo" class="modal-docno">{{ submittedDocNo }}</div>
+          <button class="btn btn-primary btn-full" @click="closeSuccessModal">OK</button>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -265,19 +282,26 @@
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
-import { ref, onMounted } from 'vue'
+import { ref, nextTick, onBeforeUnmount } from 'vue'
+import { onMounted } from 'vue'
 import { usePickListStore } from '@/stores/pickList'
 import { isOnline, syncLookupTables } from '@/composables/useSync'
+import { Html5Qrcode } from 'html5-qrcode'
 import moment from 'moment'
 
 const auth = useAuthStore()
 const store = usePickListStore()
 
-const rollNoInput = ref('')
-const barcodeInput = ref('')
 const postingDate = ref(moment().format('YYYY-MM-DD'))
 const successMsg = ref('')
 const errorMsg = ref('')
+const showSuccessModal = ref(false)
+const submittedDocNo = ref('')
+
+// ── Camera barcode/QR scanner ────────────────────────────────────────────
+const showScannerModal = ref(false)
+const scannerError = ref('')
+let html5QrCode = null
 
 onMounted(async () => {
   // Load whatever's cached immediately so the page isn't blank...
@@ -298,8 +322,6 @@ function fmt(v) {
 
 function onPickTypeChange() {
   store.onPickTypeChange()
-  rollNoInput.value = ''
-  barcodeInput.value = ''
   successMsg.value = ''
   errorMsg.value = ''
 }
@@ -336,47 +358,77 @@ async function onBatchChange() {
   }
 }
 
-async function onRollNoChange() {
-  errorMsg.value = ''
-  const rollNo = rollNoInput.value
-  if (!rollNo) return
+// ── Camera scanner ────────────────────────────────────────────────────────
+async function openCameraScanner() {
+  scannerError.value = ''
+  showScannerModal.value = true
+  await nextTick()
   try {
-    await store.onRollNoSelect(rollNo)
+    html5QrCode = new Html5Qrcode('camera-scan-region')
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 },
+      onCameraScanSuccess,
+      () => {} // per-frame decode misses are expected — ignore them
+    )
   } catch (err) {
-    errorMsg.value = err.message
-  } finally {
-    rollNoInput.value = ''
+    scannerError.value = 'Could not access the camera: ' + (err?.message || err)
   }
 }
 
-async function onBarcodeInput() {
-  const value = barcodeInput.value
-  if (!value) return
+async function stopCameraScanner() {
+  if (!html5QrCode) return
+  try {
+    if (html5QrCode.isScanning) await html5QrCode.stop()
+    html5QrCode.clear()
+  } catch (err) {
+    console.warn('Failed to stop camera scanner:', err)
+  }
+  html5QrCode = null
+}
+
+async function closeCameraScanner() {
+  await stopCameraScanner()
+  showScannerModal.value = false
+  scannerError.value = ''
+}
+
+async function onCameraScanSuccess(decodedText) {
+  await stopCameraScanner()
+  showScannerModal.value = false
   errorMsg.value = ''
   try {
-    await store.handleBarcodeInput(value)
+    await store.handleBarcodeInput(decodedText)
   } catch (err) {
     errorMsg.value = err.message
-  } finally {
-    barcodeInput.value = ''
   }
 }
+
+onBeforeUnmount(() => {
+  stopCameraScanner()
+})
 
 async function submit() {
   successMsg.value = ''
   errorMsg.value = ''
   try {
     const result = await store.submitPickEntry(postingDate.value)
+    submittedDocNo.value = result?.stock_entry || ''
     successMsg.value = result?.queued
-      ? 'Saved offline — will sync when online'
-      : `Pick entry created successfully${result?.stock_entry ? ` (Stock Entry: ${result.stock_entry})` : ''}`
+      ? 'Saved offline — will sync when online.'
+      : 'Pick entry created successfully.'
+    showSuccessModal.value = true
     store.reset()
-    rollNoInput.value = ''
-    barcodeInput.value = ''
     postingDate.value = moment().format('YYYY-MM-DD')
   } catch (err) {
     errorMsg.value = 'Error: ' + err.message
   }
+}
+
+function closeSuccessModal() {
+  showSuccessModal.value = false
+  successMsg.value = ''
+  submittedDocNo.value = ''
 }
 </script>
 
@@ -393,17 +445,21 @@ async function submit() {
   border-radius: 8px; font-size: 12px; display: flex; align-items: center; gap: 6px;
 }
 .hint-text {
-  font-size: 12px; color: #64748b; margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: #64748b; margin-bottom: 8px; display: flex; align-items: flex-start; gap: 6px;
 }
+.hint-text i { margin-top: 1px; flex-shrink: 0; }
+.hint-text span { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
 .hint-text.warn { color: #b45309; }
 .hint-text.ok { color: #0f6e56; }
 .job-card-badge {
   margin-top: 8px; background: #f0fdf4; color: #166534; padding: 6px 10px;
-  border-radius: 8px; font-size: 12px; display: flex; align-items: center; gap: 6px;
+  border-radius: 8px; font-size: 12px; display: flex; align-items: flex-start; gap: 6px;
 }
+.job-card-badge > i { margin-top: 1px; flex-shrink: 0; }
+.job-card-badge__text { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
 .badge-clear {
   margin-left: auto; background: none; border: none; color: #166534; cursor: pointer;
-  display: flex; align-items: center;
+  display: flex; align-items: center; align-self: center; flex-shrink: 0;
 }
 .table-wrap { overflow-x: auto; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -411,13 +467,89 @@ async function submit() {
 .data-table thead th { color: #64748b; font-weight: 600; font-size: 11px; text-transform: uppercase; }
 .data-table tfoot td { border-top: 1.5px solid #e2e8f0; border-bottom: none; }
 .data-table td.highlight { color: #0f6e56; font-weight: 700; }
-.row-remove { background: none; border: none; color: #dc2626; cursor: pointer; display: flex; align-items: center; }
-.success-banner {
-  background: #dcfce7; color: #166534; padding: 10px; border-radius: 8px; text-align: center;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-}
+.row-remove { background: none; border: none; color: #dc2626; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.row-remove-label { display: none; }
 .error-banner {
   background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 8px; text-align: center;
   display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+
+/* Scan button — full-width, generous touch target */
+.scan-row { display: flex; }
+.btn-scan {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  white-space: nowrap; padding: 0 18px; font-weight: 700; min-height: 48px; font-size: 15px;
+}
+
+/* ── Mobile cleanup (phones) ─────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .btn-scan { min-height: 46px; font-size: 16px; }
+
+  /* Roll Wise Report: turn the table into a stacked card list instead of a
+     horizontally-scrolled table so nothing gets cut off or squeezed */
+  .responsive-table thead { display: none; }
+  .responsive-table, .responsive-table tbody, .responsive-table tr, .responsive-table td {
+    display: block; width: 100%;
+  }
+  .responsive-table tbody tr {
+    border: 1px solid var(--slate-200, #e2e8f0);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    padding: 6px 12px;
+  }
+  .responsive-table td {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; padding: 7px 0; border-bottom: 1px solid #f1f5f9; white-space: normal; text-align: right;
+  }
+  .responsive-table td:last-child { border-bottom: none; }
+  .responsive-table td::before {
+    content: attr(data-label); font-weight: 600; color: #64748b;
+    font-size: 11px; text-transform: uppercase; text-align: left; flex-shrink: 0;
+  }
+  .responsive-table td.cell-action { justify-content: flex-end; }
+  .responsive-table td.cell-action::before { content: none; }
+  .responsive-table .row-remove {
+    padding: 6px 10px; min-height: 36px; border: 1px solid #fecaca; border-radius: 8px;
+  }
+  .row-remove-label { display: inline; font-size: 12px; font-weight: 600; }
+  .responsive-table tfoot { display: block; }
+  .responsive-table tfoot tr { display: flex; justify-content: space-between; padding: 10px 4px 2px; }
+  .responsive-table tfoot td { display: none; }
+  .responsive-table tfoot td:nth-child(1),
+  .responsive-table tfoot td:nth-child(2) { display: block; border: none; padding: 0; }
+}
+
+/* Submission success pop-up */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 500; padding: 20px;
+}
+.modal-box {
+  background: #fff; border-radius: 14px; padding: 28px 24px; width: 100%; max-width: 360px;
+  text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
+.modal-icon { font-size: 40px; color: #16a34a; margin-bottom: 10px; display: block; }
+.modal-title { font-size: 17px; font-weight: 700; margin: 0 0 8px; color: #0f172a; }
+.modal-msg { font-size: 13px; color: #475569; margin: 0 0 14px; }
+.modal-docno {
+  font-size: 15px; font-weight: 700; color: #0f6e56; background: #f0fdf4;
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; word-break: break-all;
+}
+.modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.2s; }
+.modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
+
+/* Camera scanner pop-up */
+.scanner-box { max-width: 420px; }
+.camera-region {
+  width: 100%; aspect-ratio: 1 / 1; border-radius: 10px; overflow: hidden;
+  background: #0f172a; position: relative;
+}
+/* html5-qrcode sets its own inline width/height/object-fit on the <video> —
+   !important is needed so the box actually gets filled edge-to-edge instead
+   of leaving background showing through as a letterbox bar. */
+.camera-region :deep(video) {
+  width: 100% !important; height: 100% !important; object-fit: cover !important;
+  border-radius: 10px;
 }
 </style>
