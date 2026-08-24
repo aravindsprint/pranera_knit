@@ -403,7 +403,8 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                posting_date=None, date=None, project=None,
                                batch_no=None, from_work_order=None,
                                from_subcontracting=None, rolls=None, items=None,
-                               required_items=None, scanned_roll=None):
+                               required_items=None, scanned_roll=None,
+                               roll_pick_assignment=None):
     """
     Creates a Roll Wise Pick List + Stock Entry (Material Transfer) for the
     picked rolls/batches. Exact port of Node's POST /api/createRollPickingEntry
@@ -432,6 +433,13 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
     scanned_roll, date) and the full Ionic-app payload shape (document,
     posting_date, rolls, required_items, batch_no, from_work_order,
     from_subcontracting) so either caller works unchanged.
+
+    roll_pick_assignment: optional — when a fulfillment comes from the
+    Pick Order flow (a supervisor-assigned task, see api/pick_order.py),
+    pass the Roll Pick Assignment name here. On success this stamps that
+    reference onto the created Roll Wise Pick List (for traceability) and
+    marks the Order's status "Completed". Ordinary manual picks (no Pick
+    Order behind them) omit this and nothing changes.
     """
     frappe.has_permission("Stock Entry", throw=True)
 
@@ -453,6 +461,38 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         frappe.throw(_("Source warehouse is required"))
     if not rolls:
         frappe.throw(_("At least one roll is required"))
+
+    # When fulfilling a Pick Order, the target qty (pick_qty, set by the
+    # supervisor) is the authoritative check — validated here rather than
+    # only client-side, since this is the one place a Pick Order's
+    # fulfillment actually becomes a real Stock Entry. Accounts for
+    # whatever was already submitted against this Order in a prior
+    # session too, so partial-then-resume fulfillment is checked against
+    # the true cumulative total, not just this call's rolls.
+    if roll_pick_assignment:
+        pick_qty = frappe.db.get_value("Roll Pick Assignment", roll_pick_assignment, "pick_qty")
+        pick_qty = float(pick_qty or 0)
+        if pick_qty:
+            prior_lists = frappe.get_all(
+                "Roll Wise Pick List",
+                filters={"roll_pick_assignment": roll_pick_assignment, "docstatus": 1},
+                pluck="name",
+            )
+            prior_qty = 0.0
+            if prior_lists:
+                prior_qty = frappe.db.sql("""
+                    select coalesce(sum(qty), 0) from `tabRoll Wise Pick Item`
+                    where parenttype = 'Roll Wise Pick List' and parent in %(lists)s
+                """, {"lists": prior_lists})[0][0] or 0.0
+
+            this_qty = sum(float(r.get("qty") or 0) for r in rolls)
+            total_picked = float(prior_qty) + this_qty
+            tolerance = pick_qty * 0.03
+            if not (pick_qty - tolerance <= total_picked <= pick_qty + tolerance):
+                frappe.throw(_(
+                    "Picked quantity {0} is outside the allowed \u00b13% tolerance for the "
+                    "target {1} (Pick Order {2})"
+                ).format(round(total_picked, 3), pick_qty, roll_pick_assignment))
 
     try:
         # ── STEP 1: Roll Wise Pick List ─────────────────────────────────────
@@ -569,6 +609,15 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
 
         se.insert(ignore_permissions=True)
         se.submit()
+
+        # Trace this Stock Entry back to the Pick Order it fulfilled (if any)
+        # and close the Order out. Reuses the same Stock Entry, same rules,
+        # same warehouse-sync hook — this is not a separate code path, just
+        # an extra reference stamped on afterward.
+        if roll_pick_assignment:
+            pick_list.db_set("roll_pick_assignment", roll_pick_assignment, update_modified=False)
+            frappe.db.set_value("Roll Pick Assignment", roll_pick_assignment, "status", "Completed")
+
         frappe.db.commit()
 
         total_qty = sum(float(r.get("qty") or 0) for r in rolls)
@@ -599,6 +648,39 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         frappe.db.rollback()
         frappe.log_error(frappe.get_traceback(), "create_roll_picking_entry")
         frappe.throw(str(e))
+
+
+# ── Cancel Pick + Stock Entry together ─────────────────────────────────────────
+# Roll Wise Pick List and its Stock Entry link each other (Roll Wise Pick
+# List.stock_entry <-> Stock Entry.custom_roll_wise_pick_list), so Frappe's
+# standard "cannot cancel, still linked" guard blocks whichever one you try
+# to cancel first — each is still a submitted document referencing the
+# other. This cancels both together in the correct order (Stock Entry
+# first, so the stock ledger reversal and the Roll.warehouse revert in
+# roll_wise_pick_list_events.py both fire correctly; the Pick List second,
+# closing out the record once the real stock effect is already undone),
+# bypassing the mutual-link check for exactly this pair.
+@frappe.whitelist()
+def force_cancel_roll_pick_stock_entry(roll_wise_pick_list):
+    frappe.only_for(["System Manager", "Knitting Supervisor"])
+
+    pick_list = frappe.get_doc("Roll Wise Pick List", roll_wise_pick_list)
+
+    se_name = pick_list.get("stock_entry")
+    if se_name and frappe.db.get_value("Stock Entry", se_name, "docstatus") == 1:
+        se = frappe.get_doc("Stock Entry", se_name)
+        se.flags.ignore_links = True
+        se.cancel()
+        frappe.db.commit()  # persist the Stock Entry cancel now, so a retry
+                             # after a failure below doesn't re-attempt it
+
+    pick_list.reload()
+    if pick_list.docstatus == 1:
+        pick_list.flags.ignore_links = True
+        pick_list.cancel()
+
+    frappe.db.commit()
+    return {"success": True}
 
 
 # ── Item + QI parameters ──────────────────────────────────────────────────────

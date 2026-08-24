@@ -21,6 +21,13 @@ website_route_rules = [
     {"from_route": "/knit-app/<path:app_path>", "to_route": "knit-app"},
 ]
 
+# Injects a form script into the "Roll Wise Pick List" doctype, which
+# belongs to a different app — doctype_js works regardless of which app
+# owns the doctype. Adds the "Cancel Pick + Stock Entry" button.
+doctype_js = {
+    "Roll Wise Pick List": "public/js/roll_wise_pick_list.js",
+}
+
 # ── Document event hooks ──────────────────────────────────────────────────────
 # These replace the three DB Server Scripts:
 #   knit-jobcard-qi-cancel   (Before Cancel) — auto-cancel QI + rejected guard
@@ -32,7 +39,14 @@ doc_events = {
         "before_cancel": "pranera_knit.job_card_events.on_before_cancel",
         "after_cancel":  "pranera_knit.job_card_events.on_after_cancel",
         "after_insert":  "pranera_knit.job_card_events.on_after_insert",
-    }
+    },
+    # Keeps each Roll's `warehouse` field in sync with where it actually
+    # is after a Roll Wise Pick List transfer — scoped to only the Stock
+    # Entries that app creates (see roll_wise_pick_list_events.py).
+    "Stock Entry": {
+        "on_submit": "pranera_knit.roll_wise_pick_list_events.on_stock_entry_submit",
+        "on_cancel": "pranera_knit.roll_wise_pick_list_events.on_stock_entry_cancel",
+    },
 }
 
 # ── Job Card visibility restriction ───────────────────────────────────────────
@@ -62,12 +76,13 @@ fixtures = [
     {
         "doctype": "Custom Field",
         "filters": [
-            ["dt", "=", "Work Order Item"],
-            ["fieldname", "in", [
-                "custom_before_qty",
-                "custom_after_qty",
-                "custom_actual_consumed_qty",
-            ]],
+            [
+                "name", "in", [
+                    "Work Order Item-custom_before_qty",
+                    "Work Order Item-custom_after_qty",
+                    "Work Order Item-custom_actual_consumed_qty",
+                ],
+            ],
         ],
     },
     {
@@ -77,6 +92,14 @@ fixtures = [
             "knit-save-roll-data",
         ]]],
     },
+    # Generic worker role for the Roll Pick Assignment flow — deliberately
+    # not "Knitting X" named, since the same pick/scan/tolerance procedure
+    # is meant to be reused for Dyeing, Stentering, and any other
+    # operation that needs the same "supervisor sets a target weight,
+    # worker scans until within tolerance" pattern. One shared role means
+    # a worker moving between departments doesn't need a different role
+    # per department just to use this feature.
+    {"doctype": "Role", "filters": [["name", "in", ["Roll Picker"]]]},
 ]
 
 override_whitelisted_methods = {

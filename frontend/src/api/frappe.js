@@ -431,7 +431,7 @@ export const getJobCardsForWorkOrder = (workOrderName) =>
 export const findRollByRollNo = (rollNo) =>
   getList('Roll', {
     filters: [['Roll', 'roll_no', '=', rollNo]],
-    fields: ['name', 'roll_no', 'item_code', 'batch', 'roll_weight', 'total_qty', 'stock_uom'],
+    fields: ['name', 'roll_no', 'item_code', 'batch', 'roll_weight', 'total_qty', 'stock_uom', 'warehouse'],
     limit: 1
   }).then(rows => rows[0] || null)
 
@@ -489,3 +489,24 @@ export function isCachedRollNoStale() {
   const ts = parseInt(localStorage.getItem(ROLL_SEQ_TS) || '0', 10)
   return Date.now() - ts > SEQ_TTL_MS
 }
+
+// ── Pick Order (supervisor-assigned pick tasks) ──────────────────────────────
+export const getMyPickOrders = () =>
+  call('pranera_knit.api.pick_order.get_my_pick_orders').then(r => r.message || [])
+
+export const getPickOrderDetail = (name) =>
+  call('pranera_knit.api.pick_order.get_pick_order_detail', { name }).then(r => r.message)
+
+export const scanPickOrderRoll = (pickOrder, rollNo, sourceWarehouse) =>
+  call('pranera_knit.api.pick_order.scan_pick_order_roll', {
+    pick_order: pickOrder, roll_no: rollNo, source_warehouse: sourceWarehouse
+  }).then(r => r.message)
+
+export const searchWorkOrdersForPickOrder = (txt) =>
+  call('pranera_knit.api.pick_order.search_work_orders', { txt }).then(r => r.message || [])
+
+export const searchAssignableUsers = (txt) =>
+  call('pranera_knit.api.pick_order.search_assignable_users', { txt }).then(r => r.message || [])
+
+export const createPickOrder = (payload) =>
+  call('pranera_knit.api.pick_order.create_pick_order', payload).then(r => r.message)
