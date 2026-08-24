@@ -216,7 +216,7 @@
                 <th>Warehouse</th>
                 <th>Batch No</th>
                 <th>Qty</th>
-                <th></th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -226,7 +226,7 @@
                 <td data-label="Warehouse">{{ roll.warehouse }}</td>
                 <td data-label="Batch No">{{ roll.batch_no }}</td>
                 <td data-label="Qty">{{ fmt(roll.qty) }}</td>
-                <td class="cell-action">
+                <td class="cell-action" data-label="Action">
                   <button class="row-remove" @click="store.removeRoll(i)">
                     <i class="pi pi-trash"></i>
                     <span class="row-remove-label">Remove</span>
@@ -467,8 +467,13 @@ function closeSuccessModal() {
 .data-table thead th { color: #64748b; font-weight: 600; font-size: 11px; text-transform: uppercase; }
 .data-table tfoot td { border-top: 1.5px solid #e2e8f0; border-bottom: none; }
 .data-table td.highlight { color: #0f6e56; font-weight: 700; }
-.row-remove { background: none; border: none; color: #dc2626; cursor: pointer; display: flex; align-items: center; gap: 4px; }
-.row-remove-label { display: none; }
+.row-remove {
+  background: none; border: 1px solid #fecaca; color: #dc2626; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.row-remove:hover { background: #fef2f2; }
+.row-remove-label { display: inline; }
 .error-banner {
   background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 8px; text-align: center;
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -508,10 +513,7 @@ function closeSuccessModal() {
   }
   .responsive-table td.cell-action { justify-content: flex-end; }
   .responsive-table td.cell-action::before { content: none; }
-  .responsive-table .row-remove {
-    padding: 6px 10px; min-height: 36px; border: 1px solid #fecaca; border-radius: 8px;
-  }
-  .row-remove-label { display: inline; font-size: 12px; font-weight: 600; }
+  .responsive-table .row-remove { min-height: 36px; }
   .responsive-table tfoot { display: block; }
   .responsive-table tfoot tr { display: flex; justify-content: space-between; padding: 10px 4px 2px; }
   .responsive-table tfoot td { display: none; }
