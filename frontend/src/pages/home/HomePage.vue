@@ -29,6 +29,9 @@
           <button class="drawer-link" @click="navigate('/knit-app/roll-wise-pick-list')">
             <span class="drawer-link__icon">📦</span><span>Roll-wise Pick List</span>
           </button>
+          <button class="drawer-link" @click="navigate('/knit-app/my-pick-orders')">
+            <span class="drawer-link__icon">✅</span><span>My Pick Orders</span>
+          </button>
 
 
           <div class="drawer-section-label" style="margin-top:8px">PRODUCTION DATA</div>

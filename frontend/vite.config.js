@@ -153,3 +153,155 @@ export default defineConfig(({ command }) => ({
     })
   ]
 }))
+
+
+
+// import { defineConfig } from 'vite'
+// import vue from '@vitejs/plugin-vue'
+// import { VitePWA } from 'vite-plugin-pwa'
+// import path from 'path'
+
+// export default defineConfig(({ command }) => ({
+//   base: command === 'serve' ? '/' : '/assets/pranera_knit/knit_app/',
+
+//   resolve: {
+//     alias: { '@': path.resolve(__dirname, 'src') }
+//   },
+
+//   server: {
+//     port: 3000,
+//     // Dev-server only — vite build never reads this (production always talks
+//     // to erp.pranera.in directly since it's served from that same origin).
+//     // Needed so `npm run dev` (localhost:3000) can reach a real backend;
+//     // without it every /api/* call 404s against Vite's own dev server and
+//     // returns HTML instead of JSON.
+//     //
+//     // ⚠️ TEMPORARILY pointed at the local bench (127.0.0.1:8001, i.e.
+//     // `bench --site pranera.com serve --port=8001`) instead of
+//     // erp.pranera.in, so newly-added backend endpoints (e.g.
+//     // pranera_knit.api.pick_order) that only exist locally can actually be
+//     // reached from localhost:3000. REVERT the target back to
+//     // 'https://erp.pranera.in' before committing/pushing — this must never
+//     // ship pointed at localhost.
+//     proxy: command === 'serve' ? {
+//       '/api': {
+//         target: 'http://127.0.0.1:8001',
+//         changeOrigin: true,
+//         secure: false,
+//         ws: true,
+//         cookieDomainRewrite: 'localhost',
+//         headers: {
+//           'Origin': 'http://127.0.0.1:8001',
+//           'Referer': 'http://127.0.0.1:8001'
+//         },
+//         // Frappe marks its session cookie (sid) as Secure when fronted by
+//         // HTTPS (erp.pranera.in). The local bench serves plain HTTP, so
+//         // this stripping is a no-op there but harmless to leave in place —
+//         // keeps this block identical in shape whichever target is active.
+//         configure(proxy) {
+//           proxy.on('proxyReq', (proxyReq) => {
+//             proxyReq.removeHeader('expect')
+//           })
+//           proxy.on('proxyRes', (proxyRes) => {
+//             const setCookie = proxyRes.headers['set-cookie']
+//             if (setCookie) {
+//               proxyRes.headers['set-cookie'] = setCookie.map(c =>
+//                 c.replace(/;\s*Secure/gi, '').replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
+//               )
+//             }
+//           })
+//         }
+//       },
+//       '/assets': {
+//         target: 'http://127.0.0.1:8001',
+//         changeOrigin: true,
+//         secure: false
+//       },
+//       '/files': {
+//         target: 'http://127.0.0.1:8001',
+//         changeOrigin: true,
+//         secure: false
+//       }
+//     } : undefined
+//   },
+
+//   build: {
+//     outDir: path.resolve(__dirname, '../pranera_knit/public/knit_app'),
+//     emptyOutDir: true,
+//     rollupOptions: {
+//       input: path.resolve(__dirname, 'index.html'),
+//       output: {
+//         entryFileNames: 'index.js',
+//         chunkFileNames: 'chunks/[name]-[hash].js',
+//         assetFileNames: (info) => {
+//           if (info.name?.endsWith('.css')) return 'index.css'
+//           return 'assets/[name]-[hash][extname]'
+//         }
+//       }
+//     }
+//   },
+
+//   plugins: [
+//     vue(),
+//     VitePWA({
+//       base: '/assets/pranera_knit/knit_app/',
+//       registerType: 'autoUpdate',
+//       workbox: {
+//         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+//         // Serve the cached SPA shell for in-app navigations when offline,
+//         // so reloading /knit-app/home works with no network. Exclude /api and
+//         // /files so those still hit the network (and their own caches below).
+//         navigateFallback: '/assets/pranera_knit/knit_app/index.html',
+//         // Only the offline-critical pages (home, create-roll, create-qi, rolls,
+//         // stock-entry, work-order — see router/index.js "eager" section) should
+//         // fall back to the cached shell so operators can reload them with no
+//         // network. The report/dashboard pages are online-only by design and
+//         // must always hit the server: only the server-rendered /knit-app page
+//         // (www/knit-app.py) injects window.csrf_token, and the cached static
+//         // index.html never has it — serving these from cache silently breaks
+//         // every POST call (call()/ensureCSRF()).
+//         navigateFallbackDenylist: [
+//           /^\/api/, /^\/files/, /^\/app/,
+//           /^\/knit-app\/dashboard/,
+//           /^\/knit-app\/collar-cuff-dashboard/,
+//           /^\/knit-app\/roll-wise-pick-list/,
+//           /^\/knit-app\/roll-wise-pick-order-execution/,
+//           /^\/knit-app\/production-roll-summary/,
+//           /^\/knit-app\/production-report/,
+//           /^\/knit-app\/process-loss/,
+//           /^\/knit-app\/no-access/,
+//         ],
+//         runtimeCaching: [
+//           {
+//             // Cache read-only GET list/report data so it's available offline.
+//             urlPattern: ({ url, request }) =>
+//               request.method === 'GET' && url.pathname.startsWith('/api/'),
+//             handler: 'NetworkFirst',
+//             options: {
+//               cacheName: 'knit-api-get',
+//               networkTimeoutSeconds: 5,
+//               expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
+//               cacheableResponse: { statuses: [0, 200] },
+//             },
+//           },
+//         ],
+//       },
+//       manifest: {
+//         name: 'Pranera Knit App',
+//         short_name: 'KnitApp',
+//         theme_color: '#0f6e56',
+//         background_color: '#ffffff',
+//         display: 'standalone',
+//         orientation: 'portrait',
+//         start_url: '/knit-app',
+//         scope: '/knit-app',
+//         icons: [
+//           { src: '/assets/pranera_knit/knit_app/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+//           { src: '/assets/pranera_knit/knit_app/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+//           { src: '/assets/pranera_knit/knit_app/icons/icon-192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+//           { src: '/assets/pranera_knit/knit_app/icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+//         ]
+//       }
+//     })
+//   ]
+// }))

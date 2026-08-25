@@ -399,11 +399,20 @@ export const usePickListStore = defineStore('pickList', () => {
     const roll = await findRollByRollNo(rollNo)
     if (!roll) throw new Error(`Roll not found: ${rollNo}`)
 
+    // Guard against picking a roll that isn't actually sitting in the
+    // selected Source Warehouse — Roll.warehouse is kept current by the
+    // backend (updated whenever a roll-wise pick's Stock Entry is
+    // submitted/cancelled), so this catches the operator having the
+    // wrong warehouse selected before scanning.
+    if (roll.warehouse && selectedSourceWarehouse.value && roll.warehouse !== selectedSourceWarehouse.value) {
+      throw new Error(`Roll ${rollNo} is currently in ${roll.warehouse}, not ${selectedSourceWarehouse.value}`)
+    }
+
     const qty = (roll.stock_uom || '').toLowerCase() === 'pcs' ? (roll.total_qty || 0) : (roll.roll_weight || 0)
     const rollData = {
       roll_no: roll.roll_no || rollNo,
       item_code: roll.item_code,
-      warehouse: selectedSourceWarehouse.value || '',
+      warehouse: roll.warehouse || selectedSourceWarehouse.value || '',
       batch_no: roll.batch,
       qty,
       uom: roll.stock_uom || 'Kgs'
