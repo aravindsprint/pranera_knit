@@ -15,11 +15,21 @@
         <!-- Order summary -->
         <div class="card">
           <div class="order-title">{{ store.order.name }}</div>
-          <div class="order-sub">{{ store.order.pick_type }}<span v-if="store.order.document_name"> · {{ store.order.document_name }}</span></div>
+          <div class="order-sub">
+            {{ store.order.pick_type }}<span v-if="store.order.document_name"> · {{ store.order.document_name }}</span><span v-if="store.order.sales_order"> · {{ store.order.sales_order }}</span>
+          </div>
+          <div v-if="store.order.manufactured_qty" class="hint-text" style="margin-top:6px">
+            <i class="pi pi-box"></i>
+            <span>Manufactured Qty: {{ fmt(store.order.manufactured_qty) }} kg</span>
+          </div>
           <div class="wh-row">
-            <span>{{ store.order.source_warehouse }}</span>
+            <span>{{ store.sourceWarehouse || store.order.source_warehouse }}</span>
             <i class="pi pi-arrow-right"></i>
-            <span>{{ store.order.target_warehouse }}</span>
+            <span>{{ store.targetWarehouse || store.order.target_warehouse }}</span>
+          </div>
+          <div v-if="store.order.batch_items && store.order.batch_items.length" class="hint-text">
+            <i class="pi pi-list"></i>
+            <span>Planned: {{ store.order.batch_items.map(b => `${b.batch} (${fmt(b.qty)} kg)`).join(', ') }}</span>
           </div>
           <div v-if="store.order.remarks" class="hint-text">
             <i class="pi pi-comment"></i>
@@ -27,22 +37,77 @@
           </div>
         </div>
 
+        <!-- Target / progress -->
+        <div class="card">
+          <label class="form-label">Target Pick Qty</label>
+          <div class="progress-row">
+            <span class="progress-qty" :class="{ over: store.overTolerance, ok: store.withinTolerance }">
+              {{ fmt(store.totalPickedQty) }}
+            </span>
+            <span class="progress-target">/ {{ fmt(store.order.pick_qty) }} kg</span>
+          </div>
+          <div class="hint-text">
+            <i class="pi pi-info-circle"></i>
+            <span>Tolerance band: {{ fmt(store.order.tolerance_min) }} – {{ fmt(store.order.tolerance_max) }} kg</span>
+          </div>
+          <div v-if="store.order.already_picked_qty" class="hint-text">
+            <i class="pi pi-history"></i>
+            <span>{{ fmt(store.order.already_picked_qty) }} kg already picked in prior sessions</span>
+          </div>
+          <div v-if="store.overTolerance" class="error-banner" style="margin-top:8px">
+            <i class="pi pi-exclamation-triangle"></i> Over tolerance — remove a roll before submitting
+          </div>
+        </div>
+
+        <!-- Source warehouse -->
+        <div class="card">
+          <label class="form-label">Source Warehouse <span class="req">*</span></label>
+          <AutoComplete
+            :model-value="store.sourceWarehouse"
+            :options="store.warehouses"
+            placeholder="Search warehouse..."
+            @change="onSourceWarehouseChange"
+          />
+          <div class="hint-text">
+            <i class="pi pi-info-circle"></i>
+            <span>Defaults to the assignment's warehouse — change it if the rolls are actually sitting somewhere else. Saved automatically.</span>
+          </div>
+          <div v-if="warehouseSaveError" class="error-banner" style="margin-top:8px">
+            <i class="pi pi-exclamation-triangle"></i> {{ warehouseSaveError }}
+          </div>
+        </div>
+
+        <!-- Target warehouse -->
+        <div class="card">
+          <label class="form-label">Target Warehouse <span class="req">*</span></label>
+          <AutoComplete
+            :model-value="store.targetWarehouse"
+            :options="store.warehouses"
+            placeholder="Search warehouse..."
+            @change="onTargetWarehouseChange"
+          />
+          <div class="hint-text">
+            <i class="pi pi-info-circle"></i>
+            <span>Defaults to the assignment's target — change it if the material needs to land somewhere else. Saved automatically.</span>
+          </div>
+        </div>
+
         <!-- Scan -->
         <div class="card">
           <label class="form-label">
-            Scan Assigned Rolls
+            Scan Rolls
             <span class="req">*</span>
           </label>
           <div class="hint-text ok">
             <i class="pi pi-check-circle"></i>
-            <span>{{ store.fulfilledRolls.length }} of {{ store.order.rolls.length }} roll(s) picked</span>
+            <span>{{ store.scannedRolls.length }} roll(s) scanned this session</span>
           </div>
 
           <div class="scan-row">
             <button
               class="btn btn-primary btn-scan btn-full"
               @click="openCameraScanner"
-              :disabled="store.allFulfilled"
+              :disabled="!store.sourceWarehouse"
             >
               <i class="pi pi-camera"></i>
               <span>Scan</span>
@@ -50,22 +115,36 @@
           </div>
           <div class="hint-text">
             <i class="pi pi-info-circle"></i>
-            <span>Only the rolls assigned to this Pick Order will be accepted — scanning any other roll is rejected.</span>
+            <span>Scan freely until the total lands within the tolerance band above — each roll is validated as you scan it.</span>
           </div>
           <div v-if="scanError" class="error-banner" style="margin-top:10px">
             <i class="pi pi-exclamation-triangle"></i> {{ scanError }}
           </div>
         </div>
 
-        <!-- Checklist -->
-        <div class="card">
-          <h2 class="section-title">Rolls</h2>
+        <!-- Scanned this session -->
+        <div class="card" v-if="store.scannedRolls.length">
+          <h2 class="section-title">Scanned This Session</h2>
           <div class="roll-checklist">
-            <div
-              v-for="r in store.order.rolls" :key="r.roll_no"
-              class="roll-row" :class="{ 'roll-row--done': r.fulfilled }"
-            >
-              <i :class="r.fulfilled ? 'pi pi-check-circle' : 'pi pi-circle'"></i>
+            <div v-for="r in store.scannedRolls" :key="r.roll_no" class="roll-row roll-row--done">
+              <i class="pi pi-check-circle"></i>
+              <div class="roll-row__body">
+                <div class="roll-row__no">Roll {{ r.roll_no }}</div>
+                <div class="roll-row__meta">{{ r.item_code }} · {{ r.batch_no }} · {{ fmt(r.qty) }} {{ r.uom }}</div>
+              </div>
+              <button class="btn-remove" @click="onRemoveRoll(r.roll_no)" title="Remove">
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Already picked in prior sessions -->
+        <div class="card" v-if="store.order.already_picked_rolls && store.order.already_picked_rolls.length">
+          <h2 class="section-title">Already Picked (Prior Sessions)</h2>
+          <div class="roll-checklist">
+            <div v-for="r in store.order.already_picked_rolls" :key="r.roll_no" class="roll-row roll-row--done">
+              <i class="pi pi-check-circle"></i>
               <div class="roll-row__body">
                 <div class="roll-row__no">Roll {{ r.roll_no }}</div>
                 <div class="roll-row__meta">{{ r.item_code }} · {{ r.batch }} · {{ fmt(r.qty) }} {{ r.uom }}</div>
@@ -82,7 +161,7 @@
           <button
             class="btn btn-primary btn-full" style="margin-top:14px"
             @click="submit"
-            :disabled="!store.allFulfilled || store.submitting"
+            :disabled="!store.withinTolerance || !store.scannedRolls.length || store.submitting"
           >
             <i v-if="store.submitting" class="pi pi-spin pi-spinner"></i>
             {{ store.submitting ? 'Submitting...' : 'Create Pick Entry' }}
@@ -130,6 +209,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { usePickOrderStore } from '@/stores/pickOrder'
 import AppHeader from '@/components/AppHeader.vue'
+import AutoComplete from '@/components/AutoComplete.vue'
 import { Html5Qrcode } from 'html5-qrcode'
 import moment from 'moment'
 
@@ -141,11 +221,39 @@ const router = useRouter()
 const postingDate = ref(moment().format('YYYY-MM-DD'))
 const scanError = ref('')
 const submitError = ref('')
+const warehouseSaveError = ref('')
 const showSuccessModal = ref(false)
 const submittedDocNo = ref('')
 
 function fmt(n) {
   return (Number(n) || 0).toFixed(2)
+}
+
+async function onSourceWarehouseChange(value) {
+  warehouseSaveError.value = ''
+  try {
+    await store.setSourceWarehouse(value)
+  } catch (err) {
+    warehouseSaveError.value = 'Could not save Source Warehouse: ' + err.message
+  }
+}
+
+async function onTargetWarehouseChange(value) {
+  warehouseSaveError.value = ''
+  try {
+    await store.setTargetWarehouse(value)
+  } catch (err) {
+    warehouseSaveError.value = 'Could not save Target Warehouse: ' + err.message
+  }
+}
+
+async function onRemoveRoll(rollNo) {
+  scanError.value = ''
+  try {
+    await store.removeScannedRoll(rollNo)
+  } catch (err) {
+    scanError.value = err.message
+  }
 }
 
 async function loadFromRoute() {
@@ -157,7 +265,10 @@ async function loadFromRoute() {
   await store.loadOrder(name)
 }
 
-onMounted(loadFromRoute)
+onMounted(() => {
+  loadFromRoute()
+  store.loadWarehouses()
+})
 watch(() => route.query.order, loadFromRoute)
 onBeforeUnmount(() => { store.reset(); stopCameraScanner() })
 
@@ -273,12 +384,23 @@ function closeSuccessModal() {
   display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px;
 }
 
+.progress-row { display: flex; align-items: baseline; gap: 6px; }
+.progress-qty { font-size: 24px; font-weight: 800; color: #0f172a; }
+.progress-qty.ok { color: #16a34a; }
+.progress-qty.over { color: #dc2626; }
+.progress-target { font-size: 14px; color: #64748b; }
+
 .section-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 10px; }
 .roll-checklist { display: flex; flex-direction: column; gap: 8px; }
 .roll-row {
   display: flex; align-items: center; gap: 10px; padding: 10px 12px;
   border: 1px solid #e2e8f0; border-radius: 10px; color: #94a3b8;
 }
+.btn-remove {
+  background: none; border: none; color: #94a3b8; cursor: pointer;
+  padding: 4px 6px; flex-shrink: 0; font-size: 14px;
+}
+.btn-remove:hover { color: #dc2626; }
 .roll-row i { font-size: 18px; flex-shrink: 0; }
 .roll-row--done { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
 .roll-row--done i { color: #16a34a; }

@@ -502,8 +502,39 @@ export const scanPickOrderRoll = (pickOrder, rollNo, sourceWarehouse) =>
     pick_order: pickOrder, roll_no: rollNo, source_warehouse: sourceWarehouse
   }).then(r => r.message)
 
+// Add these 4 exports to frontend/src/api/frappe.js, right after the
+// existing scanPickOrderRoll export (in the "Pick Order" section).
+// Do NOT overwrite the whole file with this — it's a snippet to insert.
+
+export const removeScannedRoll = (pickOrder, rollNo) =>
+  call('pranera_knit.api.pick_order.remove_scanned_roll', {
+    pick_order: pickOrder, roll_no: rollNo
+  }).then(r => r.message)
+
+// Persists the worker's Source/Target Warehouse choice for this execution
+// session, independent of scanning — so a resumed session (refresh, next
+// shift, different device) shows the same choice instead of snapping back
+// to the Assignment's original warehouses. Pass only the one(s) that changed.
+export const updatePickOrderExecution = (pickOrder, { sourceWarehouse, targetWarehouse } = {}) =>
+  call('pranera_knit.api.pick_order.update_pick_order_execution', {
+    pick_order: pickOrder,
+    source_warehouse: sourceWarehouse,
+    target_warehouse: targetWarehouse,
+  }).then(r => r.message)
+
+export const submitPickOrder = (pickOrder, postingDate) =>
+  call('pranera_knit.api.pick_order.submit_pick_order', {
+    pick_order: pickOrder, posting_date: postingDate
+  }).then(r => r.message)
+
 export const searchWorkOrdersForPickOrder = (txt) =>
   call('pranera_knit.api.pick_order.search_work_orders', { txt }).then(r => r.message || [])
+
+export const searchSalesOrdersForPickOrder = (txt) =>
+  call('pranera_knit.api.pick_order.search_sales_orders', { txt }).then(r => r.message || [])
+
+export const searchBatchesForPickOrder = (txt) =>
+  call('pranera_knit.api.pick_order.search_batches', { txt }).then(r => r.message || [])
 
 export const searchAssignableUsers = (txt) =>
   call('pranera_knit.api.pick_order.search_assignable_users', { txt }).then(r => r.message || [])

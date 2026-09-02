@@ -24,15 +24,17 @@
             <span class="order-card__name">{{ o.name }}</span>
             <span class="status-badge" :class="statusClass(o.status)">{{ o.status }}</span>
           </div>
-          <div class="order-card__doc">{{ o.pick_type }}<span v-if="o.document_name"> · {{ o.document_name }}</span></div>
+          <div class="order-card__doc">
+            {{ o.pick_type }}<span v-if="o.work_order"> · {{ o.work_order }}</span><span v-if="o.sales_order"> · {{ o.sales_order }}</span>
+          </div>
           <div class="order-card__wh">
             <span>{{ o.source_warehouse }}</span>
             <i class="pi pi-arrow-right"></i>
             <span>{{ o.target_warehouse }}</span>
           </div>
           <div class="order-card__meta">
-            <span>{{ o.total_rolls || 0 }} roll(s)</span>
-            <span>{{ fmt(o.total_qty) }} kg</span>
+            <span>{{ o.picked_rolls || 0 }} roll(s)</span>
+            <span>{{ fmt(o.picked_qty) }} / {{ fmt(o.pick_qty) }} kg</span>
             <span>{{ o.posting_date }}</span>
           </div>
         </button>

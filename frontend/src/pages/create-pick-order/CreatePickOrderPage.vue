@@ -11,6 +11,7 @@
           <option value="To Work Order">To Work Order</option>
           <option value="From Batch">From Batch</option>
           <option value="Manual Roll Pick">Manual Roll Pick</option>
+          <option value="To Sales Order">To Sales Order</option>
         </select>
 
         <template v-if="store.needsDocument">
@@ -26,6 +27,17 @@
             <i class="pi pi-info-circle"></i>
             <span>Rolls scanned for this Order must belong to the same Project as this Work Order.</span>
           </div>
+        </template>
+
+        <template v-if="store.needsSalesOrder">
+          <label class="form-label" style="margin-top:14px">Sales Order <span class="req">*</span></label>
+          <input
+            v-model="store.salesOrder" list="so-list" class="form-input"
+            placeholder="Search sales order..." @input="onSalesOrderSearch"
+          />
+          <datalist id="so-list">
+            <option v-for="so in store.salesOrders" :key="so.name" :value="so.name">{{ so.customer }}</option>
+          </datalist>
         </template>
       </div>
 
@@ -47,7 +59,31 @@
         </select>
       </div>
 
-      <div class="card">
+      <div class="card" v-if="store.needsBatchItems">
+        <label class="form-label">Batch Items <span class="req">*</span></label>
+        <div v-for="(row, i) in store.batchItems" :key="i" class="batch-row">
+          <input
+            v-model="row.batch" list="batch-list" class="form-input"
+            placeholder="Search batch..." @input="onBatchSearch"
+          />
+          <input v-model.number="row.qty" type="number" min="0" step="0.01" class="form-input batch-row__qty" placeholder="Qty" />
+          <button class="btn-remove" @click="store.removeBatchItemRow(i)" title="Remove row">
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
+        <datalist id="batch-list">
+          <option v-for="b in store.batches" :key="b.name" :value="b.name">{{ b.item }}</option>
+        </datalist>
+        <button class="btn btn-outline btn-full" style="margin-top:6px" @click="store.addBatchItemRow()">
+          <i class="pi pi-plus"></i> Add Row
+        </button>
+        <div class="hint-text" style="margin-top:10px">
+          <i class="pi pi-info-circle"></i>
+          <span>Pick Qty is set automatically from the total below: <strong>{{ fmt(store.batchItemsTotal) }} kg</strong> (±3% tolerance: {{ toleranceRange }}).</span>
+        </div>
+      </div>
+
+      <div class="card" v-else>
         <label class="form-label">Pick Qty (kg) <span class="req">*</span></label>
         <input v-model.number="store.pickQty" type="number" min="0" step="0.01" class="form-input" placeholder="e.g. 100" />
         <div class="hint-text">
@@ -116,6 +152,7 @@ onBeforeUnmount(() => store.reset())
 
 function onPickTypeChange() {
   store.documentName = ''
+  store.salesOrder = ''
 }
 
 function onUserSearch() {
@@ -124,11 +161,23 @@ function onUserSearch() {
   store.searchUsers(assignedToLabel.value)
 }
 
+function onSalesOrderSearch(e) {
+  store.searchSalesOrders(e.target.value)
+}
+
+function onBatchSearch(e) {
+  store.searchBatches(e.target.value)
+}
+
 const toleranceRange = computed(() => {
   const qty = Number(store.pickQty) || 0
   if (!qty) return '—'
   return `${(qty * 0.97).toFixed(2)} – ${(qty * 1.03).toFixed(2)} kg`
 })
+
+function fmt(n) {
+  return (Number(n) || 0).toFixed(2)
+}
 
 async function submit() {
   const result = await store.submit()
@@ -157,6 +206,15 @@ function closeSuccessModal() {
 }
 textarea.form-input { resize: vertical; }
 
+.batch-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.batch-row .form-input { flex: 1; min-width: 0; }
+.batch-row__qty { flex: 0 0 90px; }
+.btn-remove {
+  background: none; border: none; color: #94a3b8; cursor: pointer;
+  padding: 4px 6px; flex-shrink: 0; font-size: 14px;
+}
+.btn-remove:hover { color: #dc2626; }
+
 .hint-text {
   font-size: 12px; color: #64748b; margin-top: 8px; display: flex; align-items: flex-start; gap: 6px;
 }
@@ -166,6 +224,7 @@ textarea.form-input { resize: vertical; }
 .btn { border: none; border-radius: 10px; cursor: pointer; font-size: 14px; }
 .btn-primary { background: #0f6e56; color: #fff; }
 .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+.btn-outline { background: #fff; border: 1.5px solid #0f6e56; color: #0f6e56; padding: 10px; }
 .btn-full { width: 100%; padding: 12px; }
 
 .error-banner {
