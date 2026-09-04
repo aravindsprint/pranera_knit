@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
-  getMyPickOrders, getPickOrderDetail, scanPickOrderRoll, callMethod
+  getMyPickOrders, getPickOrderDetail, scanPickOrderRoll, removeScannedRoll as apiRemoveScannedRoll,
+  updatePickOrderExecution, submitPickOrder,
 } from '@/api/frappe'
+import { db } from '@/db'
 
 export const usePickOrderStore = defineStore('pickOrder', () => {
   // ── "My Pick Orders" list ────────────────────────────────────────────────
@@ -28,14 +30,44 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
   const orderError = ref('')
   const submitting = ref(false)
 
-  // Source Warehouse is chosen dynamically at execution time — defaults to
-  // whatever the supervisor set on the Order, but the worker can change it
-  // if the rolls are actually sitting somewhere else. Every scan is
-  // validated against whichever value is currently selected here.
+  // Source/Target Warehouse are chosen dynamically at execution time —
+  // default to whatever's persisted on the Assignment (execution_* fields,
+  // themselves defaulting to the supervisor's original source_warehouse /
+  // target_warehouse), but the worker can change either if the rolls are
+  // actually sitting somewhere else or need to land somewhere else. Every
+  // scan is validated against whichever Source Warehouse is currently
+  // selected. Changes are persisted server-side (see setSourceWarehouse /
+  // setTargetWarehouse below) so a resumed session — different device,
+  // next shift, after a refresh — shows the same choice.
   const sourceWarehouse = ref('')
+  const targetWarehouse = ref('')
 
-  // Rolls scanned THIS session — not written to the DB until final submit
-  // (same pattern as the ordinary Roll Wise Pick List flow).
+  // Full Warehouse list for the Source/Target AutoComplete dropdowns — read
+  // from the same offline-synced Dexie table (@/db, populated by useSync)
+  // that Roll-wise Pick List's warehouse AutoComplete already uses, so this
+  // page matches that one exactly (same list, same offline availability)
+  // instead of a separate live API call.
+  const warehouses = ref([])
+  const warehousesLoading = ref(false)
+
+  async function loadWarehouses() {
+    if (warehouses.value.length) return
+    warehousesLoading.value = true
+    try {
+      warehouses.value = (await db.warehouses.toArray()).map(w => ({ label: w.id, value: w.id }))
+    } catch (err) {
+      // Non-fatal — the dropdown just falls back to showing only the
+      // currently-selected value as an option.
+      console.warn('Failed to load warehouses:', err)
+    } finally {
+      warehousesLoading.value = false
+    }
+  }
+
+  // Rolls scanned against this Assignment and not yet submitted. Persisted
+  // server-side as soon as each one is scanned (see scan_pick_order_roll) —
+  // this is loaded straight from the server on loadOrder, not held only in
+  // this browser tab, so closing the app mid-session loses nothing.
   const scannedRolls = ref([])
 
   const sessionQty = computed(() => scannedRolls.value.reduce((sum, r) => sum + (Number(r.qty) || 0), 0))
@@ -53,7 +85,9 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     scannedRolls.value = []
     try {
       order.value = await getPickOrderDetail(name)
-      sourceWarehouse.value = order.value.source_warehouse || ''
+      sourceWarehouse.value = order.value.execution_source_warehouse || order.value.source_warehouse || ''
+      targetWarehouse.value = order.value.execution_target_warehouse || order.value.target_warehouse || ''
+      scannedRolls.value = order.value.scanned_rolls || []
     } catch (err) {
       orderError.value = err.message
     } finally {
@@ -61,13 +95,29 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     }
   }
 
+  // Persist a changed Source/Target Warehouse choice. Fire-and-forget from
+  // the UI's perspective (the input already shows the new value locally),
+  // but awaited here so callers can surface a save error if it happens.
+  async function setSourceWarehouse(value) {
+    sourceWarehouse.value = value
+    if (!order.value) return
+    await updatePickOrderExecution(order.value.name, { sourceWarehouse: value })
+  }
+
+  async function setTargetWarehouse(value) {
+    targetWarehouse.value = value
+    if (!order.value) return
+    await updatePickOrderExecution(order.value.name, { targetWarehouse: value })
+  }
+
   // Scans one roll: accepts the same composite barcode format used
   // elsewhere in the app ("item_code#batch#roll_no", falling back to the
   // raw value if it isn't in that shape), extracts the roll number, then
-  // validates it server-side (warehouse match against the currently
-  // selected sourceWarehouse, project match for "To Work Order" picks,
-  // and dedupe against prior sessions). Also blocks an obvious duplicate
-  // within this same session before even calling the server.
+  // validates + persists it server-side (warehouse match against the
+  // currently selected sourceWarehouse, project match for "To Work Order"
+  // picks, and dedupe against both prior submitted sessions and this
+  // in-progress one). Also blocks an obvious duplicate within this local
+  // list before even calling the server.
   async function scanRoll(scannedValue) {
     if (!order.value) throw new Error('No Pick Order loaded')
     if (!sourceWarehouse.value) throw new Error('Select a Source Warehouse first')
@@ -84,13 +134,14 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     return result
   }
 
-  function removeScannedRoll(rollNo) {
+  async function removeScannedRoll(rollNo) {
+    if (!order.value) return
+    await apiRemoveScannedRoll(order.value.name, rollNo)
     scannedRolls.value = scannedRolls.value.filter(r => r.roll_no !== rollNo)
   }
 
   async function submitOrder(postingDate) {
     if (!order.value) throw new Error('No Pick Order loaded')
-    if (!sourceWarehouse.value) throw new Error('Select a Source Warehouse first')
     if (!scannedRolls.value.length) throw new Error('Scan at least one roll before submitting')
     if (!withinTolerance.value) {
       throw new Error(
@@ -101,25 +152,14 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
 
     submitting.value = true
     try {
-      const payload = {
-        pick_type: order.value.pick_type,
-        document: order.value.document_name,
-        project: order.value.project,
-        target_warehouse: order.value.target_warehouse,
-        source_warehouse: sourceWarehouse.value,
-        posting_date: postingDate,
-        roll_pick_assignment: order.value.name,
-        rolls: scannedRolls.value.map(r => ({
-          roll_no: r.roll_no,
-          item_code: r.item_code,
-          warehouse: r.warehouse,
-          batch_no: r.batch_no,
-          qty: r.qty,
-          uom: r.uom,
-        })),
-      }
-      const res = await callMethod('pranera_knit.api.knit.create_roll_picking_entry', payload)
-      return res.message
+      // Rolls, Source Warehouse and Target Warehouse are NOT sent from
+      // here — the server builds the pick entry from whatever's already
+      // persisted against this Assignment (scanned_rolls,
+      // execution_source_warehouse, execution_target_warehouse), so the
+      // source of truth is always the saved scan session, not this tab's
+      // in-memory state.
+      const res = await submitPickOrder(order.value.name, postingDate)
+      return res
     } finally {
       submitting.value = false
     }
@@ -130,13 +170,16 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     orderError.value = ''
     scannedRolls.value = []
     sourceWarehouse.value = ''
+    targetWarehouse.value = ''
   }
 
   return {
     myOrders, listLoading, listError, loadMyOrders,
     order, orderLoading, orderError, submitting,
-    sourceWarehouse, scannedRolls,
+    sourceWarehouse, targetWarehouse, warehouses, warehousesLoading, loadWarehouses,
+    scannedRolls,
     sessionQty, totalPickedQty, withinTolerance, overTolerance,
-    loadOrder, scanRoll, removeScannedRoll, submitOrder, reset,
+    loadOrder, setSourceWarehouse, setTargetWarehouse,
+    scanRoll, removeScannedRoll, submitOrder, reset,
   }
 })

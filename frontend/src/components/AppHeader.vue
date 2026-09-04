@@ -28,6 +28,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'pick-list' }" @click="go('/knit-app/roll-wise-pick-list')">
             <span class="ah-link__icon">📦</span><span>Roll-wise Pick List</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'my-pick-orders' || active === 'pick-execution' }" @click="go('/knit-app/my-pick-orders')">
+            <span class="ah-link__icon">✅</span><span>My Pick Orders</span>
+          </button>
           
           
 
