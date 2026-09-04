@@ -1,6 +1,6 @@
 <template>
   <div class="wo-page">
-    <AppHeader title="Work Orders" subtitle="" active="work-order" />
+    <AppHeader title="Work Orders" subtitle="" active="work-order" :username="auth.username" :designation="auth.designation" />
 
     <div v-if="!isOnline" class="wo-offline-banner">🔌 Offline — showing cached work orders</div>
 
@@ -102,9 +102,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import AppHeader from '@/components/AppHeader.vue'
+import { useAuthStore } from '@/stores/auth'
 import { db } from '@/db'
 import { isOnline, checkReachable } from '@/composables/useSync'
 import { fetchWorkOrders } from '@/api/frappe'
+
+const auth = useAuthStore()
 
 const router = useRouter()
 const workOrders = ref([])
