@@ -97,6 +97,7 @@ def _add_execution_fields():
                 "fieldtype": "Table",
                 "options": "Roll Pick Assignment Scan",
                 "insert_after": "pick_qty",
+                "allow_on_submit": 1,
                 "description": (
                     "Rolls scanned so far for this Assignment but not yet submitted as a "
                     "Stock Entry. Persisted server-side so a worker can close the app and "
@@ -110,6 +111,7 @@ def _add_execution_fields():
                 "fieldtype": "Link",
                 "options": "Warehouse",
                 "insert_after": "scanned_rolls",
+                "allow_on_submit": 1,
                 "description": (
                     "Worker's current Source Warehouse selection during execution — defaults "
                     "to Source Warehouse but can be changed on the scan screen if the rolls "
@@ -123,6 +125,7 @@ def _add_execution_fields():
                 "fieldtype": "Link",
                 "options": "Warehouse",
                 "insert_after": "execution_source_warehouse",
+                "allow_on_submit": 1,
                 "description": (
                     "Worker's current Target Warehouse selection during execution — defaults "
                     "to Target Warehouse but can be changed on the scan screen. Persisted so "
