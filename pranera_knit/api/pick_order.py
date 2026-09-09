@@ -14,7 +14,7 @@ cumulative picked weight falls within a +/-3% tolerance of that target.
 Roll weights vary in the real world, so hitting an exact target
 roll-by-roll isn't practical — a tolerance band is.
 
-Two validations run on every scan:
+Validations that run on every scan:
   1. Warehouse match — the roll's actual current location (Roll.warehouse)
      must match whichever Source Warehouse the worker currently has
      selected (chosen dynamically in the execution page, not locked to
@@ -23,6 +23,13 @@ Two validations run on every scan:
   2. Project match (pick_type == "To Work Order" only) — the roll's
      Project must match the target Work Order's Project, so material
      doesn't get misrouted into an unrelated project's job.
+  3. Batch match (whenever the Assignment is tied to a Work Order) — the
+     roll's batch must be one this Work Order actually produced, per the
+     is_finished_item rows of its own submitted Stock Entry (Manufacture)
+     — not just any batch of the same item code sitting in the warehouse.
+  4. No duplicate scan — a roll can't be scanned twice, either within
+     this in-progress session or against a prior submitted session for
+     this same Assignment.
 
 The +/-3% tolerance itself is enforced authoritatively server-side, in
 knit.create_roll_picking_entry (not here) — that's the single point where
@@ -56,6 +63,33 @@ TOLERANCE_PCT = 0.03
 def _assert_assigned_to_me(doc):
     if doc.assigned_to != frappe.session.user:
         frappe.throw(_("This Pick Order is not assigned to you"), frappe.PermissionError)
+
+
+def _valid_batches_for_work_order(work_order):
+    """Batches of the finished good actually produced against this Work
+    Order — read from its submitted Stock Entry (Manufacture) rows where
+    is_finished_item=1, NOT from Roll.work_order. Roll.work_order is set
+    once at roll-creation time and can drift; the Stock Entry (Manufacture)
+    is the authoritative record of which batches this Work Order actually
+    output (same is_finished_item convention already relied on for batch
+    naming — see the dyeing/finishing batch tracing work)."""
+    se_names = frappe.get_all(
+        "Stock Entry",
+        filters={"work_order": work_order, "stock_entry_type": "Manufacture", "docstatus": 1},
+        pluck="name",
+    )
+    if not se_names:
+        return set()
+    batches = frappe.get_all(
+        "Stock Entry Detail",
+        filters={
+            "parenttype": "Stock Entry",
+            "parent": ["in", se_names],
+            "is_finished_item": 1,
+        },
+        pluck="batch_no",
+    )
+    return {b for b in batches if b}
 
 
 def _already_picked_qty(assignment_name):
@@ -231,6 +265,23 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
                 "Roll {0} belongs to Project {1}, but Work Order {2} belongs to Project {3} — "
                 "rolls must match the target Work Order's project"
             ).format(roll_no, roll.project, doc.work_order, wo_project))
+
+    # Batch match — the roll's batch must be one this Work Order actually
+    # produced (per its submitted Stock Entry (Manufacture) finished-item
+    # rows), not just any batch of the same item code. Applies to any
+    # pick_type tied to a Work Order (From/To Work Order).
+    if doc.work_order:
+        valid_batches = _valid_batches_for_work_order(doc.work_order)
+        if not valid_batches:
+            frappe.throw(_(
+                "No submitted Stock Entry (Manufacture) finished-goods batches found for "
+                "Work Order {0} — cannot verify roll batches against it"
+            ).format(doc.work_order))
+        if not roll.batch or roll.batch not in valid_batches:
+            frappe.throw(_(
+                "Roll {0}'s batch {1} does not belong to Work Order {2}'s manufactured "
+                "finished goods"
+            ).format(roll_no, roll.batch or _("(no batch)"), doc.work_order))
 
     # Dedupe against rolls already submitted for this Assignment in a
     # prior completed session...
