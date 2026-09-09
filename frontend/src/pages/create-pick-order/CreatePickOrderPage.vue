@@ -27,6 +27,14 @@
             <i class="pi pi-info-circle"></i>
             <span>Rolls scanned for this Order must belong to the same Project as this Work Order.</span>
           </div>
+          <label v-if="store.offersBatchRestriction" class="checkbox-row" style="margin-top:10px">
+            <input type="checkbox" v-model="store.restrictToBatches" />
+            <span>Restrict this pick to specific batch(es)</span>
+          </label>
+          <div v-if="store.offersBatchRestriction && !store.restrictToBatches" class="hint-text">
+            <i class="pi pi-info-circle"></i>
+            <span>Off by default — the worker can scan any batch this Work Order actually produced. Turn this on to name the exact batch(es) allowed instead.</span>
+          </div>
         </template>
 
         <template v-if="store.needsSalesOrder">
@@ -153,6 +161,7 @@ onBeforeUnmount(() => store.reset())
 function onPickTypeChange() {
   store.documentName = ''
   store.salesOrder = ''
+  store.restrictToBatches = false
 }
 
 function onUserSearch() {
@@ -220,6 +229,11 @@ textarea.form-input { resize: vertical; }
 }
 .hint-text i { margin-top: 1px; flex-shrink: 0; }
 .hint-text span { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+
+.checkbox-row {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; color: #334155; cursor: pointer;
+}
+.checkbox-row input { width: 16px; height: 16px; flex-shrink: 0; }
 
 .btn { border: none; border-radius: 10px; cursor: pointer; font-size: 14px; }
 .btn-primary { background: #0f6e56; color: #fff; }

@@ -23,8 +23,10 @@ Validations that run on every scan:
   2. Project match (pick_type == "To Work Order" only) — the roll's
      Project must match the target Work Order's Project, so material
      doesn't get misrouted into an unrelated project's job.
-  3. Batch match (whenever the Assignment is tied to a Work Order) — the
-     roll's batch must be one this Work Order actually produced, per the
+  3. Batch match (whenever the Assignment is tied to a Work Order) — if
+     the supervisor named specific batches (batch_items rows — optional
+     for "To Work Order"), the roll's batch must be one of those. Other-
+     wise it must be one this Work Order actually produced, per the
      is_finished_item rows of its own submitted Stock Entry (Manufacture)
      — not just any batch of the same item code sitting in the warehouse.
   4. No duplicate scan — a roll can't be scanned twice, either within
@@ -266,22 +268,34 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
                 "rolls must match the target Work Order's project"
             ).format(roll_no, roll.project, doc.work_order, wo_project))
 
-    # Batch match — the roll's batch must be one this Work Order actually
-    # produced (per its submitted Stock Entry (Manufacture) finished-item
-    # rows), not just any batch of the same item code. Applies to any
-    # pick_type tied to a Work Order (From/To Work Order).
+    # Batch match. If this Assignment has explicit batch_items rows (a
+    # supervisor restricted a "To Work Order" pick to specific batches),
+    # the roll's batch must be one of those named batches — a tighter
+    # constraint than "any batch this Work Order produced". Otherwise,
+    # fall back to the broader check: the roll's batch must be one this
+    # Work Order actually produced, per its submitted Stock Entry
+    # (Manufacture) finished-item rows — not just any batch of the same
+    # item code sitting in the warehouse.
     if doc.work_order:
-        valid_batches = _valid_batches_for_work_order(doc.work_order)
-        if not valid_batches:
-            frappe.throw(_(
-                "No submitted Stock Entry (Manufacture) finished-goods batches found for "
-                "Work Order {0} — cannot verify roll batches against it"
-            ).format(doc.work_order))
-        if not roll.batch or roll.batch not in valid_batches:
-            frappe.throw(_(
-                "Roll {0}'s batch {1} does not belong to Work Order {2}'s manufactured "
-                "finished goods"
-            ).format(roll_no, roll.batch or _("(no batch)"), doc.work_order))
+        if doc.batch_items:
+            allowed_batches = {r.batch for r in doc.batch_items if r.batch}
+            if not roll.batch or roll.batch not in allowed_batches:
+                frappe.throw(_(
+                    "Roll {0}'s batch {1} is not one of the batches specified for this "
+                    "Pick Order ({2})"
+                ).format(roll_no, roll.batch or _("(no batch)"), ", ".join(sorted(allowed_batches))))
+        else:
+            valid_batches = _valid_batches_for_work_order(doc.work_order)
+            if not valid_batches:
+                frappe.throw(_(
+                    "No submitted Stock Entry (Manufacture) finished-goods batches found for "
+                    "Work Order {0} — cannot verify roll batches against it"
+                ).format(doc.work_order))
+            if not roll.batch or roll.batch not in valid_batches:
+                frappe.throw(_(
+                    "Roll {0}'s batch {1} does not belong to Work Order {2}'s manufactured "
+                    "finished goods"
+                ).format(roll_no, roll.batch or _("(no batch)"), doc.work_order))
 
     # Dedupe against rolls already submitted for this Assignment in a
     # prior completed session...
@@ -466,23 +480,38 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
                        batch_items=None):
     """Creates + submits a Roll Pick Assignment.
 
-    For "From Work Order" / "To Work Order" / "Manual Roll Pick", pick_qty
-    is the supervisor-entered target weight, as before.
+    For "From Work Order" / "Manual Roll Pick", pick_qty is the
+    supervisor-entered target weight, as before.
 
     For "From Batch" / "To Sales Order", pick_qty is NOT taken from the
     caller — it's derived from the batch_items rows (sum of qty), mirroring
     Roll Pick Assignment.set_pick_qty_from_batch_items() which recomputes
     the same total server-side on save. "To Sales Order" additionally
     requires a Sales Order to link.
+
+    "To Work Order" is a middle case: batch_items is OPTIONAL. Leave it
+    empty and this behaves exactly like "From Work Order" — supervisor
+    sets a free-scan target weight, worker can scan any roll belonging to
+    the Work Order's own manufactured finished goods. Add one or more
+    Batch/Qty rows and the pick gets restricted to exactly those
+    batches — pick_qty is then derived from their sum (same as "From
+    Batch"), and scan_pick_order_roll() enforces the roll's batch is one
+    of the named ones instead of just "any batch this Work Order
+    produced". One row covers the single-batch case; multiple rows cover
+    the multi-batch case — same child table either way.
     """
     if not assigned_to:
         frappe.throw(_("Assigned To is required"))
 
     batch_items = frappe.parse_json(batch_items) if isinstance(batch_items, str) else (batch_items or [])
-    uses_batch_items = pick_type in ("From Batch", "To Sales Order")
+    mandatory_batch_items_types = ("From Batch", "To Sales Order")
+    optional_batch_items_types = ("To Work Order",)
+    uses_batch_items = pick_type in mandatory_batch_items_types or (
+        pick_type in optional_batch_items_types and bool(batch_items)
+    )
 
     if uses_batch_items:
-        if not batch_items:
+        if pick_type in mandatory_batch_items_types and not batch_items:
             frappe.throw(_("Add at least one Batch / Qty row"))
         for row in batch_items:
             if not row.get("batch") or float(row.get("qty") or 0) <= 0:

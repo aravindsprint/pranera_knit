@@ -15,8 +15,14 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   const assignedTo = ref('')
   const remarks = ref('')
 
-  // "From Batch" / "To Sales Order" build pick_qty from these rows instead
-  // of a manually-entered target — mirrors the batch_items child table +
+  // "To Work Order" restricts to specific batches only if the supervisor
+  // opts in — leave it off and the pick behaves as before (free-scan
+  // target weight, any batch this Work Order produced accepted).
+  const restrictToBatches = ref(false)
+
+  // "From Batch" / "To Sales Order" (always) and "To Work Order" (when
+  // restrictToBatches is on) build pick_qty from these rows instead of a
+  // manually-entered target — mirrors the batch_items child table +
   // set_pick_qty_from_batch_items() on the Roll Pick Assignment doctype.
   const batchItems = ref([{ batch: '', qty: null }])
 
@@ -32,7 +38,12 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
 
   const needsDocument = computed(() => pickType.value === 'From Work Order' || pickType.value === 'To Work Order')
   const needsSalesOrder = computed(() => pickType.value === 'To Sales Order')
-  const needsBatchItems = computed(() => pickType.value === 'From Batch' || pickType.value === 'To Sales Order')
+  const offersBatchRestriction = computed(() => pickType.value === 'To Work Order')
+  const needsBatchItems = computed(() =>
+    pickType.value === 'From Batch' ||
+    pickType.value === 'To Sales Order' ||
+    (offersBatchRestriction.value && restrictToBatches.value)
+  )
 
   const batchItemsTotal = computed(() =>
     batchItems.value.reduce((sum, r) => sum + (Number(r.qty) || 0), 0)
@@ -149,15 +160,16 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
     assignedTo.value = ''
     remarks.value = ''
     batchItems.value = [{ batch: '', qty: null }]
+    restrictToBatches.value = false
     error.value = ''
   }
 
   return {
     pickType, documentName, salesOrder, sourceWarehouse, targetWarehouse, pickQty, assignedTo, remarks,
-    batchItems, batchItemsTotal,
+    batchItems, batchItemsTotal, restrictToBatches,
     warehouses, workOrders, salesOrders, batches, users,
     loadingLookups, submitting, error,
-    needsDocument, needsSalesOrder, needsBatchItems, canSubmit,
+    needsDocument, needsSalesOrder, needsBatchItems, offersBatchRestriction, canSubmit,
     loadLookups, searchUsers, searchSalesOrders, searchBatches,
     addBatchItemRow, removeBatchItemRow,
     submit, reset,
