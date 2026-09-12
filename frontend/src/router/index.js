@@ -6,13 +6,14 @@ import { isLoggedIn } from '@/api/frappe'
 // statically puts them in the main bundle instead of a lazy-loaded chunk, so
 // navigation never has to fetch a module over the network. This is what makes
 // offline navigation work in both `npm run dev` and production builds.
-import HomePage       from '@/pages/home/HomePage.vue'
-import CreateRollPage from '@/pages/create-roll/CreateRollPage.vue'
-import CreateQIPage   from '@/pages/create-qi/CreateQIPage.vue'
-import RollsPage      from '@/pages/rolls/RollsPage.vue'
-import StockEntryPage from '@/pages/stock-entry/StockEntryPage.vue'
-import WorkOrderPage  from '@/pages/work-order/WorkOrderPage.vue'
-import LoginPage      from '@/pages/login/LoginPage.vue'
+import HomePage        from '@/pages/home/HomePage.vue'
+import CreateRollPage  from '@/pages/create-roll/CreateRollPage.vue'
+import CreateRollsPage from '@/pages/create-rolls/CreateRollsPage.vue'
+import CreateQIPage    from '@/pages/create-qi/CreateQIPage.vue'
+import RollsPage       from '@/pages/rolls/RollsPage.vue'
+import StockEntryPage  from '@/pages/stock-entry/StockEntryPage.vue'
+import WorkOrderPage   from '@/pages/work-order/WorkOrderPage.vue'
+import LoginPage       from '@/pages/login/LoginPage.vue'
 
 const routes = [
   { path: '/', redirect: '/knit-app/home' },
@@ -21,12 +22,13 @@ const routes = [
   { path: '/knit-app/login', component: LoginPage },
 
   // ── Offline-critical (eager) ──
-  { path: '/knit-app/home',        component: HomePage },
-  { path: '/knit-app/create-roll', component: CreateRollPage },
-  { path: '/knit-app/create-qi',   component: CreateQIPage },
-  { path: '/knit-app/rolls',       component: RollsPage },
-  { path: '/knit-app/stock-entry', component: StockEntryPage },
-  { path: '/knit-app/work-order',  component: WorkOrderPage },
+  { path: '/knit-app/home',         component: HomePage },
+  { path: '/knit-app/create-roll',  component: CreateRollPage },
+  { path: '/knit-app/create-rolls', component: CreateRollsPage },
+  { path: '/knit-app/create-qi',    component: CreateQIPage },
+  { path: '/knit-app/rolls',        component: RollsPage },
+  { path: '/knit-app/stock-entry',  component: StockEntryPage },
+  { path: '/knit-app/work-order',   component: WorkOrderPage },
 
   // ── Online-only reports / dashboards (lazy) ──
   { path: '/knit-app/dashboard', component: () => import('@/pages/dashboard/DashboardPage.vue') },

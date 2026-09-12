@@ -35,6 +35,9 @@
           
 
           <div class="ah-section" style="margin-top:8px">PRODUCTION DATA</div>
+            <button class="ah-link" :class="{ 'ah-link--active': active === 'create-rolls' }" @click="go('/knit-app/create-rolls')">
+              <span class="ah-link__icon">✂️</span><span>Create Rolls</span>
+            </button>
             <button class="ah-link" @click="go('/knit-app/rolls')">
               <span class="ah-link__icon">🧶</span><span>Rolls</span>
             </button>

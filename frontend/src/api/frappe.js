@@ -541,3 +541,52 @@ export const searchAssignableUsers = (txt) =>
 
 export const createPickOrder = (payload) =>
   call('pranera_knit.api.pick_order.create_pick_order', payload).then(r => r.message)
+
+// ── Create Rolls page (Cut Rolls / Purchase Order / Subcontract Order) ──────
+// Backed by Server Scripts already live on erp.pranera.in:
+// knit_cut_roll, knit_create_po_so_roll, knit_get_po_items, knit_get_so_items.
+// All three roll-creation paths share the same "next numeric roll_no, not a
+// KCC-prefixed one" sequence (MAX(CAST(name AS UNSIGNED)) WHERE name REGEXP
+// '^[0-9]+$'), enforced server-side — nothing to duplicate here.
+
+export const getPOItems = (purchaseOrder) =>
+  call('knit_get_po_items', { purchase_order: purchaseOrder }).then(r => r.message || [])
+
+export const getSOItems = (subcontractingOrder) =>
+  call('knit_get_so_items', { subcontracting_order: subcontractingOrder }).then(r => r.message || [])
+
+export const createPOSORoll = (payload) =>
+  call('knit_create_po_so_roll', payload).then(r => r.message)
+
+export const cutRoll = (payload) =>
+  call('knit_cut_roll', payload).then(r => r.message)
+
+// Search rolls by roll no / item code / commercial name for the Cut Rolls
+// picker on the Create Rolls page. Excludes cancelled rolls.
+export const searchRollsForCut = (txt) =>
+  getList('Roll', {
+    filters: [['Roll', 'docstatus', '!=', 2]],
+    orFilters: [
+      ['Roll', 'name', 'like', `%${txt}%`],
+      ['Roll', 'item_code', 'like', `%${txt}%`],
+      ['Roll', 'commercial_name', 'like', `%${txt}%`]
+    ],
+    fields: [
+      'name', 'item_code', 'item_name', 'commercial_name', 'color', 'width',
+      'stock_uom', 'batch', 'roll_weight', 'total_qty', 'project',
+      'work_order', 'purchase_order', 'subcontracting_order', 'job_card',
+      'warehouse', 'knit_operator', 'knit_operator_name'
+    ],
+    limit: 25,
+    orderBy: 'creation desc'
+  })
+
+// Batches for a given item — used by the Purchase Order / Subcontract Order
+// tabs on the Create Rolls page (batch is optional there).
+export const getBatchesForItemCode = (itemCode) =>
+  getList('Batch', {
+    filters: [['Batch', 'item', '=', itemCode]],
+    fields: ['name', 'batch_id', 'item'],
+    limit: 200,
+    orderBy: 'creation desc'
+  })
