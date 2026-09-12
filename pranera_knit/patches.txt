@@ -1,3 +1,4 @@
 # Add patches here as:
 # pranera_knit.patches.patch_module.execute
 pranera_knit.patches.v1_0.add_pick_order_persistence
+pranera_knit.patches.v1_1.add_pick_qty_summary

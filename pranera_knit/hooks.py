@@ -47,6 +47,14 @@ doc_events = {
         "on_submit": "pranera_knit.roll_wise_pick_list_events.on_stock_entry_submit",
         "on_cancel": "pranera_knit.roll_wise_pick_list_events.on_stock_entry_cancel",
     },
+    # Roll Pick Assignment is owned by the Textiles And Garments app, not
+    # this one (see patches/v1_1/add_pick_qty_summary.py) — a doc_event is
+    # how this app reaches into a doctype it doesn't own, same as the
+    # Stock Entry hook above. Recomputes the per-UOM pick_qty_summary
+    # table (and the pick_qty grand total) from batch_items on every save.
+    "Roll Pick Assignment": {
+        "validate": "pranera_knit.pick_qty_summary.set_pick_qty_summary",
+    },
 }
 
 # ── Job Card visibility restriction ───────────────────────────────────────────

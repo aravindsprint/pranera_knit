@@ -15,23 +15,25 @@ Roll weights vary in the real world, so hitting an exact target
 roll-by-roll isn't practical — a tolerance band is.
 
 Validations that run on every scan:
-  1. Warehouse match — the roll's actual current location (Roll.warehouse)
-     must match whichever Source Warehouse the worker currently has
-     selected (chosen dynamically in the execution page, not locked to
-     whatever the supervisor set at creation — the worker may need to
-     adjust it to match where the rolls actually physically are).
-  2. Project match (pick_type == "To Work Order" only) — the roll's
+  1. Project match (pick_type == "To Work Order" only) — the roll's
      Project must match the target Work Order's Project, so material
      doesn't get misrouted into an unrelated project's job.
-  3. Batch match (whenever the Assignment is tied to a Work Order) — if
+  2. Batch match (whenever the Assignment is tied to a Work Order) — if
      the supervisor named specific batches (batch_items rows — optional
      for "To Work Order"), the roll's batch must be one of those. Other-
      wise it must be one this Work Order actually produced, per the
      is_finished_item rows of its own submitted Stock Entry (Manufacture)
      — not just any batch of the same item code sitting in the warehouse.
-  4. No duplicate scan — a roll can't be scanned twice, either within
+  3. No duplicate scan — a roll can't be scanned twice, either within
      this in-progress session or against a prior submitted session for
      this same Assignment.
+
+There is deliberately NO check that Roll.warehouse matches the selected
+Source Warehouse — Roll.warehouse is only ever pushed forward by
+roll_wise_pick_list_events.py, scoped to a different app's Stock Entries,
+so it's frequently stale for a roll's actual current location and isn't a
+trustworthy gate. The worker's selected Source Warehouse is trusted and
+is exactly what gets recorded against the scan (see scan_pick_order_roll).
 
 The +/-3% tolerance itself is enforced authoritatively server-side, in
 knit.create_roll_picking_entry (not here) — that's the single point where
@@ -233,9 +235,11 @@ def update_pick_order_execution(pick_order, source_warehouse=None, target_wareho
 @frappe.whitelist()
 def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     """Validates a freely-scanned roll against this Assignment's rules —
-    NOT a pre-assigned list (there isn't one): warehouse match against
-    whatever Source Warehouse the worker currently has selected, and (for
-    "To Work Order" picks) Project match against the target Work Order.
+    NOT a pre-assigned list (there isn't one): Project match against the
+    target Work Order (for "To Work Order" picks) and batch match. The
+    roll's own warehouse field is not checked (see module docstring) —
+    the scan is simply recorded against whichever Source Warehouse the
+    worker currently has selected.
 
     On success, the roll is written immediately to the Assignment's
     scanned_rolls child table — this is the persistence layer: nothing
@@ -255,10 +259,6 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     )
     if not roll:
         frappe.throw(_("Roll not found: {0}").format(roll_no))
-
-    if roll.warehouse and roll.warehouse != source_warehouse:
-        frappe.throw(_("Roll {0} is currently in {1}, not {2}").format(
-            roll_no, roll.warehouse, source_warehouse))
 
     if doc.pick_type == "To Work Order" and doc.work_order:
         wo_project = frappe.db.get_value("Work Order", doc.work_order, "project")
@@ -314,11 +314,18 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     if any(r.roll_no == roll_no for r in (doc.scanned_rolls or [])):
         frappe.throw(_("Roll {0} has already been scanned for this Order").format(roll_no))
 
+    # Roll.warehouse is NOT a reliable "where is this roll right now" signal —
+    # it's only ever pushed forward by roll_wise_pick_list_events.py, scoped
+    # strictly to Stock Entries created via the (separate) Roll Wise Pick
+    # List app, so it commonly reflects some unrelated past movement rather
+    # than this pick session. The warehouse recorded against this scan must
+    # be whichever Source Warehouse the worker actually has selected right
+    # now — that's what they physically walked to and scanned from.
     qty = roll.total_qty if (roll.stock_uom or "").lower() == "pcs" else roll.roll_weight
     result = {
         "roll_no": roll_no,
         "item_code": roll.item_code,
-        "warehouse": roll.warehouse or source_warehouse,
+        "warehouse": source_warehouse,
         "batch_no": roll.batch,
         "qty": qty,
         "uom": roll.stock_uom or "Kgs",
