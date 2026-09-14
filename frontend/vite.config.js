@@ -95,6 +95,8 @@ export default defineConfig(({ command }) => ({
       base: '/assets/pranera_knit/knit_app/',
       registerType: 'autoUpdate',
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
         // Serve the cached SPA shell for in-app navigations when offline,
         // so reloading /knit-app/home works with no network. Exclude /api and
