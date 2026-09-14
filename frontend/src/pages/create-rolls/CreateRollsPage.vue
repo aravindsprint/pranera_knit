@@ -90,6 +90,23 @@
             </div>
           </div>
 
+          <div class="form-group" v-if="cutIsPcs">
+            <label class="form-label">Roll Weight (kg) *</label>
+            <input
+              class="form-input"
+              type="number"
+              step="0.001"
+              min="0"
+              v-model="cut.rollWeight"
+              placeholder="0.000"
+            />
+          </div>
+
+          <div class="form-group" v-if="cutIsPcs && cutAvgWeightPerPcs">
+            <label class="form-label">Avg Weight Pcs</label>
+            <input class="form-input" :value="cutAvgWeightPerPcs" readonly />
+          </div>
+
           <div class="cro-field-grid">
             <div class="form-group">
               <label class="form-label">Knit Machine No</label>
@@ -289,13 +306,13 @@ function setTab(t) {
 // ══════════════════════════ CUT ROLLS ══════════════════════════════════════
 const cut = reactive({
   search: '', options: [], showDrop: false, searching: false,
-  selected: null, qty: '', machineNo: '', shiftNo: '',
+  selected: null, qty: '', rollWeight: '', machineNo: '', shiftNo: '',
   submitting: false, error: ''
 })
 
 function resetCutForm() {
   cut.search = ''; cut.options = []; cut.showDrop = false; cut.searching = false
-  cut.selected = null; cut.qty = ''; cut.machineNo = ''; cut.shiftNo = ''
+  cut.selected = null; cut.qty = ''; cut.rollWeight = ''; cut.machineNo = ''; cut.shiftNo = ''
   cut.submitting = false; cut.error = ''
 }
 
@@ -323,6 +340,7 @@ function selectCutRoll(r) {
   cut.search = r.name
   cut.showDrop = false
   cut.qty = ''
+  cut.rollWeight = ''
   cut.error = ''
 }
 
@@ -336,10 +354,19 @@ const cutRemainingPreview = computed(() => {
   const remaining = Math.max(0, cutAvailable.value - q)
   return cutIsPcs.value ? Math.round(remaining) : remaining.toFixed(3)
 })
+const cutAvgWeightPerPcs = computed(() => {
+  if (!cutIsPcs.value) return ''
+  const w = Number(cut.rollWeight || 0)
+  const q = Number(cut.qty || 0)
+  if (!w || !q) return ''
+  return (w / q).toFixed(4)
+})
 const canSubmitCut = computed(() => {
   if (!cut.selected) return false
   const q = Number(cut.qty)
-  return q > 0 && q <= cutAvailable.value
+  if (!(q > 0 && q <= cutAvailable.value)) return false
+  if (cutIsPcs.value && !(Number(cut.rollWeight) > 0)) return false
+  return true
 })
 
 async function submitCut() {
@@ -350,11 +377,17 @@ async function submitCut() {
     cut.error = `Qty exceeds available ${cutIsPcs.value ? 'qty' : 'weight'} of ${cutAvailable.value}`
     return
   }
+  if (cutIsPcs.value && !(Number(cut.rollWeight) > 0)) {
+    cut.error = 'Enter Roll Weight'
+    return
+  }
   cut.submitting = true
   try {
     const resp = await cutRoll({
       source_roll: cut.selected.name,
       qty: q,
+      roll_weight: cutIsPcs.value ? Number(cut.rollWeight) : q,
+      avg_weight_per_pcs: cutIsPcs.value ? Number(cutAvgWeightPerPcs.value || 0) : 0,
       knit_machine_no: cut.machineNo,
       knit_shift_no: cut.shiftNo
     })
