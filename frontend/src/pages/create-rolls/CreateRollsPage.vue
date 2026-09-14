@@ -432,6 +432,15 @@ function resetOrderForm() {
   batchOptions.value = []
 }
 
+// Used after a successful "Create Roll" — keeps Purchase Order/Subcontracting
+// Order/Item Code/Batch/Actual Width as-is so the next roll off the same
+// order doesn't require re-picking them, and only clears the fields that
+// actually change roll to roll.
+function resetPerRollFields() {
+  order.rollWeight = ''; order.rollQty = ''
+  order.mistakeQty = ''; order.okQty = ''; order.error = ''
+}
+
 const poFilterOptions = computed(() =>
   poOrders.value.map(o => ({ label: o.supplier ? `${o.name} · ${o.supplier}` : o.name, value: o.name }))
 )
@@ -547,7 +556,7 @@ async function submitOrder() {
     const resp = await createPOSORoll(payload)
     const roll = await getDoc('Roll', resp.name)
     result.value = roll
-    resetOrderForm()
+    resetPerRollFields()
   } catch (e) {
     order.error = e.message || 'Failed to create roll'
   } finally {
