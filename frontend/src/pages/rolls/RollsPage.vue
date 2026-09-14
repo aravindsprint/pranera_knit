@@ -23,6 +23,13 @@
             <span v-if="printingSelected" class="rp-spinner rp-spinner--sm"></span>
             🖨 Print Selected ({{ selected.size }})
           </button>
+          <button
+            class="rp-btn rp-btn--outline rp-btn--sm"
+            v-if="selected.size"
+            @click="openPackingListModal"
+          >
+            📦 Create Roll Packing List ({{ selected.size }})
+          </button>
           <button class="rp-btn rp-btn--ghost rp-btn--sm" v-if="selected.size" @click="selected.clear()">Clear</button>
           <button class="rp-btn rp-btn--primary" @click="openCreate">+ New Roll</button>
         </div>
@@ -276,12 +283,90 @@
         </div>
       </div>
 
+      <!-- Create Roll Packing List -->
+      <div class="rp-modal-overlay" v-if="rpl.open" @click.self="closePackingListModal">
+        <div class="rp-modal">
+          <div class="rp-modal__hd">
+            <span>Create Roll Packing List</span>
+            <button class="rp-modal__close" @click="closePackingListModal">✕</button>
+          </div>
+
+          <div style="padding:0 16px">
+            <div v-if="rpl.result" style="padding:8px 0 16px;text-align:center">
+              <div style="font-size:32px">✅</div>
+              <div style="font-weight:700;margin-top:6px">Roll Packing List Created</div>
+              <div style="font-size:15px;font-weight:700;color:#0f6e56;margin-top:4px">{{ rpl.result }}</div>
+              <a
+                :href="`https://erp.pranera.in/app/roll-packing-list/${rpl.result}`"
+                target="_blank"
+                rel="noopener"
+                style="font-size:12px;color:#0f6e56;text-decoration:underline"
+              >Open in ERPNext</a>
+            </div>
+
+            <div v-else-if="rpl.checking" class="rp-td-center" style="padding:20px 0">
+              <span class="rp-spinner"></span> Checking selected rolls…
+            </div>
+
+            <template v-else>
+              <div v-if="rpl.blocked.length" class="rp-error" style="align-items:flex-start;flex-direction:column;gap:4px">
+                <div>⚠ {{ rpl.blocked.length }} roll(s) already have a Job Card, Purchase Order, or Subcontracting Order and will be left out:</div>
+                <div style="font-size:12px;font-family:monospace;word-break:break-word">{{ rpl.blocked.map(b => b.name).join(', ') }}</div>
+              </div>
+
+              <div v-if="!rpl.valid.length" class="rp-error">
+                ⚠ None of the selected rolls are eligible — nothing to pack.
+              </div>
+
+              <template v-else>
+                <p style="font-size:13px;color:#475569;margin-bottom:12px">
+                  {{ rpl.valid.length }} roll(s) will be packed · {{ rpl.totalWeight.toFixed(3) }} kg{{ rpl.totalPcs ? ` · ${rpl.totalPcs} pcs` : '' }}
+                </p>
+
+                <div class="form-group">
+                  <label class="form-label">Transaction Type *</label>
+                  <select class="form-input" v-model="rpl.transactionType">
+                    <option value="">Select…</option>
+                    <option value="Inward">Inward</option>
+                    <option value="Outward">Outward</option>
+                    <option value="Reprocess">Reprocess</option>
+                    <option value="Split">Split</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label class="form-label">Posting Date</label>
+                  <input class="form-input" type="date" v-model="rpl.postingDate" />
+                </div>
+              </template>
+
+              <div class="rp-error" v-if="rpl.error">⚠ {{ rpl.error }}</div>
+            </template>
+          </div>
+
+          <div class="rp-modal__footer">
+            <button class="rp-btn rp-btn--ghost" v-if="rpl.result" @click="closePackingListModal">Close</button>
+            <template v-else>
+              <button class="rp-btn rp-btn--ghost" @click="closePackingListModal">Cancel</button>
+              <button
+                class="rp-btn rp-btn--primary"
+                v-if="!rpl.checking && rpl.valid.length"
+                :disabled="rpl.submitting || !rpl.transactionType"
+                @click="submitPackingList"
+              >
+                {{ rpl.submitting ? 'Creating…' : `Create (${rpl.valid.length})` }}
+              </button>
+            </template>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import { call, getList, getDoc, updateDoc, createDoc } from '@/api/frappe'
@@ -354,7 +439,7 @@ async function fetchRolls() {
     const res = await getList('Roll', {
       fields: ['name', 'roll_no', 'item_code', 'work_order', 'roll_weight',
                'batch', 'shift', 'datetime', 'commercial_name', 'color', 'job_card',
-               'purchase_order', 'subcontracting_order'],
+               'purchase_order', 'subcontracting_order', 'stock_uom', 'total_qty'],
       orFilters,
       limit: pageSize,
       orderBy: `CAST(name AS UNSIGNED) desc`,
@@ -494,6 +579,81 @@ async function doDelete() {
     deleteError.value = e.message || 'Delete failed'
   } finally {
     deleting.value = false
+  }
+}
+
+// ── Create Roll Packing List from selected rolls ────────────────────────────
+const rpl = reactive({
+  open: false, checking: false, submitting: false, error: '',
+  valid: [], blocked: [], totalWeight: 0, totalPcs: 0,
+  transactionType: '', postingDate: moment().format('YYYY-MM-DD'),
+  result: null,
+})
+
+async function openPackingListModal() {
+  rpl.open = true
+  rpl.checking = true
+  rpl.error = ''
+  rpl.result = null
+  rpl.valid = []
+  rpl.blocked = []
+  rpl.transactionType = ''
+  rpl.postingDate = moment().format('YYYY-MM-DD')
+  try {
+    const names = Array.from(selected.value)
+    const rows = await Promise.all(names.map(name => getDoc('Roll', name)))
+    const valid = []
+    const blocked = []
+    for (const r of rows) {
+      if (r.job_card || r.purchase_order || r.subcontracting_order) {
+        blocked.push(r)
+      } else {
+        valid.push(r)
+      }
+    }
+    rpl.valid = valid
+    rpl.blocked = blocked
+    rpl.totalWeight = valid.reduce((sum, r) => sum + (Number(r.roll_weight) || 0), 0)
+    rpl.totalPcs = valid.reduce((sum, r) => sum + (Number(r.total_qty) || 0), 0)
+  } catch (e) {
+    rpl.error = e.message || 'Failed to check selected rolls'
+  } finally {
+    rpl.checking = false
+  }
+}
+
+function closePackingListModal() {
+  rpl.open = false
+}
+
+async function submitPackingList() {
+  if (!rpl.transactionType) { rpl.error = 'Select a Transaction Type'; return }
+  rpl.submitting = true
+  rpl.error = ''
+  try {
+    const payload = {
+      naming_series: 'RPL/.####',
+      posting_date: rpl.postingDate,
+      transaction_type: rpl.transactionType,
+      total_roll_weight: Number(rpl.totalWeight.toFixed(3)),
+      total_pcs_qty: rpl.totalPcs,
+      roll_packing_list_item: rpl.valid.map(r => ({
+        roll_no: r.name,
+        item_code: r.item_code || '',
+        batch: r.batch || '',
+        uom: r.stock_uom || '',
+        roll_weight: Number(r.roll_weight) || 0,
+        total_qty: Number(r.total_qty) || 0,
+      })),
+    }
+    const doc = await createDoc('Roll Packing List', payload)
+    rpl.result = doc.name
+    selected.value.clear()
+    await fetchRolls()
+  } catch (e) {
+    rpl.error = e.message || 'Failed to create Roll Packing List'
+  } finally {
+    rpl.submitting = false
   }
 }
 
