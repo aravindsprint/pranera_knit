@@ -14,10 +14,21 @@
             <input v-model="search" class="rp-search__input" placeholder="Roll No, Item, Work Order, Job Card, Batch…"
               @keydown.enter="fetchRolls" />
           </div>
+          <button
+            class="rp-btn rp-btn--outline rp-btn--sm"
+            v-if="selected.size"
+            :disabled="printingSelected"
+            @click="printSelectedStickers"
+          >
+            <span v-if="printingSelected" class="rp-spinner rp-spinner--sm"></span>
+            🖨 Print Selected ({{ selected.size }})
+          </button>
+          <button class="rp-btn rp-btn--ghost rp-btn--sm" v-if="selected.size" @click="selected.clear()">Clear</button>
           <button class="rp-btn rp-btn--primary" @click="openCreate">+ New Roll</button>
         </div>
 
         <div class="rp-error" v-if="listError">⚠ {{ listError }}</div>
+        <div class="rp-error" v-if="printSelectedError">⚠ {{ printSelectedError }}</div>
 
         <!-- List -->
         <div class="rp-card rp-card--table" v-if="rolls.length || listLoading">
@@ -25,6 +36,9 @@
             <table class="rp-table">
               <thead>
                 <tr>
+                  <th class="rp-td-checkbox">
+                    <input type="checkbox" :checked="allOnPageSelected" @change="toggleSelectAllOnPage" />
+                  </th>
                   <th>Roll No</th>
                   <th>Item</th>
                   <th>Work Order</th>
@@ -40,9 +54,12 @@
               </thead>
               <tbody>
                 <tr v-if="listLoading">
-                  <td colspan="11" class="rp-td-center"><span class="rp-spinner"></span> Loading…</td>
+                  <td colspan="12" class="rp-td-center"><span class="rp-spinner"></span> Loading…</td>
                 </tr>
                 <tr v-for="r in rolls" :key="r.name" class="rp-row" @click="openDetail(r.name)">
+                  <td class="rp-td-checkbox" @click.stop>
+                    <input type="checkbox" :checked="selected.has(r.name)" @change="toggleSelect(r.name)" />
+                  </td>
                   <td class="rp-td-bold">{{ r.name }}</td>
                   <td class="rp-td-sm">{{ r.item_code }}</td>
                   <td class="rp-td-sm">{{ r.work_order || '—' }}</td>
@@ -264,7 +281,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import { call, getList, getDoc, updateDoc, createDoc } from '@/api/frappe'
@@ -280,6 +297,26 @@ const page        = ref(0)
 const pageSize    = 20
 const listLoading = ref(false)
 const listError   = ref('')
+
+// Persists across page/search changes so an operator can select rolls
+// scattered across multiple search-result pages and print them all at once.
+const selected           = ref(new Set())
+const printingSelected   = ref(false)
+const printSelectedError = ref('')
+const allOnPageSelected = computed(() =>
+  rolls.value.length > 0 && rolls.value.every(r => selected.value.has(r.name))
+)
+function toggleSelect(name) {
+  if (selected.value.has(name)) selected.value.delete(name)
+  else selected.value.add(name)
+}
+function toggleSelectAllOnPage() {
+  if (allOnPageSelected.value) {
+    rolls.value.forEach(r => selected.value.delete(r.name))
+  } else {
+    rolls.value.forEach(r => selected.value.add(r.name))
+  }
+}
 
 const selectedRoll  = ref(null)
 const editForm      = ref({})
@@ -468,20 +505,8 @@ async function quickPrint(name) {
   } catch(e) { alert('Failed to load roll: ' + e.message) }
 }
 
-// ── Print sticker ──────────────────────────────────────────────────────────
-async function printSticker(roll) {
-  const w = window.open('', '_blank')
-  if (!w) { alert('Allow pop-ups to print.'); return }
-
-  const weight = Number(editForm.value?.roll_weight ?? roll.roll_weight ?? 0).toFixed(3)
-  // Don't gate on roll.stock_uom === 'Pcs' -- that field is often blank on
-  // the Roll record even when the item itself is Pcs. Show qty/mistake
-  // whenever there's an actual value, regardless of stock_uom.
-  const totalQtyRaw   = editForm.value?.total_qty ?? roll.total_qty
-  const mistakeQtyRaw = editForm.value?.mistake_qty ?? roll.mistake_qty
-  const totalQty   = (totalQtyRaw !== null && totalQtyRaw !== undefined && Number(totalQtyRaw) > 0) ? Number(totalQtyRaw) : null
-  const mistakeQty = (mistakeQtyRaw !== null && mistakeQtyRaw !== undefined && Number(mistakeQtyRaw) > 0) ? Number(mistakeQtyRaw) : null
-  const qty = totalQty
+// ── Sticker markup (shared by single print, quick print, and batch print) ──
+async function buildStickerDiv(roll, weight, qty, mistakeQty) {
   const qrData = `${roll.item_code}#${roll.work_order}#${roll.name}`
   const batchRow = roll.batch ? `<tr><td>${roll.batch}</td></tr>` : ''
   // Shrink + wrap the item code row when it's long, so long codes never
@@ -497,14 +522,38 @@ async function printSticker(roll) {
   } catch(e) { console.error('QR generation failed:', e) }
   const qrCell = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
 
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
+  return `<div class="sticker">
+  <div class="qr-cell">${qrCell}</div>
+  <table>
+    <tr><td style="font-size:${itemFontSize}">${itemCode}</td></tr>
+    <tr><td>${roll.commercial_name || ''}</td></tr>
+    <tr><td>${roll.work_order || ''}</td></tr>
+    <tr><td>${roll.name}</td></tr>
+    <tr><td style="white-space:nowrap;font-size:${weightFontSize}">${weightLine}</td></tr>
+    ${batchRow}
+  </table>
+</div>`
+}
+
+// Resolve weight/qty/mistake for a roll fetched fresh from the server (no
+// editForm involved — that only applies to the currently-open detail modal).
+function stickerFieldsFromRoll(roll) {
+  const weight = Number(roll.roll_weight ?? 0).toFixed(3)
+  const totalQtyRaw   = roll.total_qty
+  const mistakeQtyRaw = roll.mistake_qty
+  const totalQty   = (totalQtyRaw !== null && totalQtyRaw !== undefined && Number(totalQtyRaw) > 0) ? Number(totalQtyRaw) : null
+  const mistakeQty = (mistakeQtyRaw !== null && mistakeQtyRaw !== undefined && Number(mistakeQtyRaw) > 0) ? Number(mistakeQtyRaw) : null
+  return { weight, qty: totalQty, mistakeQty }
+}
+
+function stickerWindowHtml(stickerDivs) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker${stickerDivs.length > 1 ? 's' : ''}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html, body { width:100%; height:100%; }
-  body { font-family:Arial,sans-serif; display:flex; flex-direction:column;
-         align-items:center; justify-content:center; min-height:100vh; }
+  html, body { width:100%; }
+  body { font-family:Arial,sans-serif; display:flex; flex-direction:column; align-items:center; }
   .sticker { width:50mm; min-height:65mm; border:1px solid #000; display:flex;
-             margin:2mm auto 0; flex-direction:column; flex-shrink:0; }
+             margin:2mm auto; flex-direction:column; flex-shrink:0; }
   .qr-cell { display:flex; align-items:center; justify-content:center; padding:2mm;
              border-bottom:1px solid #000; flex:0 0 auto; }
   table { width:calc(100% - 0.5cm); margin-left:0.5cm; border-collapse:collapse; flex:1; }
@@ -512,8 +561,6 @@ async function printSticker(roll) {
        font-family:Arial,Helvetica,sans-serif; color:#000; line-height:1.15;
        text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased;
        word-break:break-word; white-space:normal; overflow-wrap:break-word; }
-  td.item-code { font-size:${itemFontSize}; }
-  td.weight-line { font-size:${weightFontSize}; white-space:nowrap; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
@@ -522,30 +569,64 @@ async function printSticker(roll) {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
     body { display:block; }
     .sticker { margin:2mm auto 0; max-height:73mm; overflow:hidden; }
+    .sticker:not(:last-child) { page-break-after: always; }
     @page { size:60mm 75mm; margin:0; }
   }
 </style>
 </head><body>
-<div class="sticker">
-  <div class="qr-cell">${qrCell}</div>
-  <table>
-    <tr><td class="item-code">${itemCode}</td></tr>
-    <tr><td>${roll.commercial_name || ''}</td></tr>
-    <tr><td>${roll.work_order || ''}</td></tr>
-    <tr><td>${roll.name}</td></tr>
-    <tr><td class="weight-line">${weightLine}</td></tr>
-    ${batchRow}
-  </table>
-</div>
+${stickerDivs.join('\n')}
 <div class="noprint">
-  <button class="btn-p" onclick="window.print()">🖨 Print</button>
+  <button class="btn-p" onclick="window.print()">🖨 Print${stickerDivs.length > 1 ? ` All (${stickerDivs.length})` : ''}</button>
   <button class="btn-c" onclick="window.close()">Close</button>
 </div>
-</body></html>`)
+</body></html>`
+}
+
+// ── Print sticker (single roll — detail modal / quick print from list) ─────
+async function printSticker(roll) {
+  const w = window.open('', '_blank')
+  if (!w) { alert('Allow pop-ups to print.'); return }
+
+  const weight = Number(editForm.value?.roll_weight ?? roll.roll_weight ?? 0).toFixed(3)
+  // Don't gate on roll.stock_uom === 'Pcs' -- that field is often blank on
+  // the Roll record even when the item itself is Pcs. Show qty/mistake
+  // whenever there's an actual value, regardless of stock_uom.
+  const totalQtyRaw   = editForm.value?.total_qty ?? roll.total_qty
+  const mistakeQtyRaw = editForm.value?.mistake_qty ?? roll.mistake_qty
+  const totalQty   = (totalQtyRaw !== null && totalQtyRaw !== undefined && Number(totalQtyRaw) > 0) ? Number(totalQtyRaw) : null
+  const mistakeQty = (mistakeQtyRaw !== null && mistakeQtyRaw !== undefined && Number(mistakeQtyRaw) > 0) ? Number(mistakeQtyRaw) : null
+
+  const stickerDiv = await buildStickerDiv(roll, weight, totalQty, mistakeQty)
+  w.document.write(stickerWindowHtml([stickerDiv]))
   w.document.close()
+}
+
+// ── Print stickers for every checked roll in one batch ──────────────────────
+async function printSelectedStickers() {
+  if (!selected.value.size) return
+  const w = window.open('', '_blank')
+  if (!w) { alert('Allow pop-ups to print.'); return }
+
+  printingSelected.value = true
+  printSelectedError.value = ''
+  try {
+    const names = Array.from(selected.value)
+    const stickerDivs = []
+    for (const name of names) {
+      const roll = await getDoc('Roll', name)
+      const { weight, qty, mistakeQty } = stickerFieldsFromRoll(roll)
+      stickerDivs.push(await buildStickerDiv(roll, weight, qty, mistakeQty))
+    }
+    w.document.write(stickerWindowHtml(stickerDivs))
+    w.document.close()
+  } catch (e) {
+    w.close()
+    printSelectedError.value = 'Failed to prepare stickers: ' + (e.message || e)
+  } finally {
+    printingSelected.value = false
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -606,6 +687,8 @@ watch(search, () => {
 .rp-td-bold { font-weight:800; color:#0f172a; }
 .rp-td-sm   { font-size:11px; color:#475569; }
 .rp-td-num  { text-align:right; font-family:monospace; font-size:12px; }
+.rp-td-checkbox { width:32px; text-align:center; }
+.rp-td-checkbox input { width:16px; height:16px; cursor:pointer; }
 .rp-td-center { text-align:center; padding:24px; color:#94a3b8; }
 .rp-row-actions { display:flex; gap:6px; }
 .rp-icon-btn { background:#f1f5f9; border:none; border-radius:6px; width:30px; height:30px;
