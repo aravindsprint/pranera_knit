@@ -29,6 +29,8 @@
                   <th>Item</th>
                   <th>Work Order</th>
                   <th>Job Card</th>
+                  <th>Purchase Order</th>
+                  <th>Subcontract Order</th>
                   <th>Weight</th>
                   <th>Batch</th>
                   <th>Shift</th>
@@ -38,13 +40,15 @@
               </thead>
               <tbody>
                 <tr v-if="listLoading">
-                  <td colspan="9" class="rp-td-center"><span class="rp-spinner"></span> Loading…</td>
+                  <td colspan="11" class="rp-td-center"><span class="rp-spinner"></span> Loading…</td>
                 </tr>
                 <tr v-for="r in rolls" :key="r.name" class="rp-row" @click="openDetail(r.name)">
                   <td class="rp-td-bold">{{ r.name }}</td>
                   <td class="rp-td-sm">{{ r.item_code }}</td>
                   <td class="rp-td-sm">{{ r.work_order || '—' }}</td>
                   <td class="rp-td-sm">{{ r.job_card || '—' }}</td>
+                  <td class="rp-td-sm">{{ r.purchase_order || '—' }}</td>
+                  <td class="rp-td-sm">{{ r.subcontracting_order || '—' }}</td>
                   <td class="rp-td-num">{{ r.roll_weight ? Number(r.roll_weight).toFixed(3) : '—' }}</td>
                   <td class="rp-td-sm">{{ r.batch || '—' }}</td>
                   <td>{{ r.shift || '—' }}</td>
@@ -312,7 +316,8 @@ async function fetchRolls() {
 
     const res = await getList('Roll', {
       fields: ['name', 'roll_no', 'item_code', 'work_order', 'roll_weight',
-               'batch', 'shift', 'datetime', 'commercial_name', 'color', 'job_card'],
+               'batch', 'shift', 'datetime', 'commercial_name', 'color', 'job_card',
+               'purchase_order', 'subcontracting_order'],
       orFilters,
       limit: pageSize,
       orderBy: `CAST(name AS UNSIGNED) desc`,
