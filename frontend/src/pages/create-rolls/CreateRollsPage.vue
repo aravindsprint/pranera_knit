@@ -138,7 +138,17 @@
         <div class="card">
           <div class="cro-card__title">{{ tab === 'po' ? 'Purchase Order' : 'Subcontracting Order' }}</div>
 
-          <div class="form-group">
+          <div class="form-group" v-if="tab === 'so'">
+            <label class="form-label">Purchase Order *</label>
+            <AutoComplete
+              v-model="order.poFilter"
+              :options="poFilterOptions"
+              placeholder="Search Purchase Order…"
+              @change="onPoFilterChange"
+            />
+          </div>
+
+          <div class="form-group" v-if="tab === 'po' || order.poFilter">
             <label class="form-label">{{ tab === 'po' ? 'Purchase Order' : 'Subcontracting Order' }} *</label>
             <AutoComplete
               v-model="order.selected"
@@ -146,6 +156,9 @@
               :placeholder="`Search ${tab === 'po' ? 'Purchase Order' : 'Subcontracting Order'}…`"
               @change="onOrderChange"
             />
+            <div class="cro-hint" v-if="tab === 'so' && order.poFilter && !orderOptions.length">
+              No Subcontracting Orders found against this Purchase Order
+            </div>
           </div>
 
           <div class="form-group" v-if="order.selected">
@@ -406,23 +419,45 @@ const poOrders = ref([])
 const soOrders = ref([])
 
 const order = reactive({
-  selected: '', items: [], itemCode: '', item: null,
+  selected: '', poFilter: '', items: [], itemCode: '', item: null,
   batch: '', actualWidth: '', rollWeight: '', rollQty: '', mistakeQty: '', okQty: '',
   submitting: false, error: ''
 })
 const batchOptions = ref([])
 
 function resetOrderForm() {
-  order.selected = ''; order.items = []; order.itemCode = ''; order.item = null
+  order.selected = ''; order.poFilter = ''; order.items = []; order.itemCode = ''; order.item = null
   order.batch = ''; order.actualWidth = ''; order.rollWeight = ''; order.rollQty = ''
   order.mistakeQty = ''; order.okQty = ''; order.submitting = false; order.error = ''
   batchOptions.value = []
 }
 
+const poFilterOptions = computed(() =>
+  poOrders.value.map(o => ({ label: o.supplier ? `${o.name} · ${o.supplier}` : o.name, value: o.name }))
+)
+
 const orderOptions = computed(() => {
-  const list = tab.value === 'po' ? poOrders.value : soOrders.value
+  if (tab.value === 'po') {
+    return poOrders.value.map(o => ({ label: o.supplier ? `${o.name} · ${o.supplier}` : o.name, value: o.name }))
+  }
+  // 'so' tab: every Subcontracting Order belongs to exactly one Purchase
+  // Order (it's a required field on the doctype), so once a PO is chosen
+  // only the SCOs raised against it are worth showing.
+  const list = order.poFilter
+    ? soOrders.value.filter(o => o.purchase_order === order.poFilter)
+    : []
   return list.map(o => ({ label: o.supplier ? `${o.name} · ${o.supplier}` : o.name, value: o.name }))
 })
+
+function onPoFilterChange(val) {
+  order.poFilter = val
+  order.selected = ''
+  order.itemCode = ''
+  order.item = null
+  order.items = []
+  order.batch = ''
+  batchOptions.value = []
+}
 
 const itemOptions = computed(() =>
   order.items.map(i => ({ label: i.item_name ? `${i.item_code} · ${i.item_name}` : i.item_code, value: i.item_code }))
@@ -472,6 +507,10 @@ const avgWeightPerPcs = computed(() => {
 
 async function submitOrder() {
   order.error = ''
+  if (tab.value === 'so' && !order.poFilter) {
+    order.error = 'Select a Purchase Order first'
+    return
+  }
   if (!order.selected) {
     order.error = `Select a ${tab.value === 'po' ? 'Purchase Order' : 'Subcontracting Order'} first`
     return

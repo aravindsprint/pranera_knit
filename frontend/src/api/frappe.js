@@ -314,7 +314,7 @@ export const syncPurchaseOrders = () =>
 export const syncSubcontractingOrders = () =>
   getAllList('Subcontracting Order', {
     filters: [['Subcontracting Order', 'docstatus', '!=', 2]],
-    fields: ['name', 'supplier', 'status', 'transaction_date', 'modified'],
+    fields: ['name', 'supplier', 'status', 'transaction_date', 'modified', 'purchase_order'],
     pageSize: 500,
     orderBy: 'modified desc'
   })
