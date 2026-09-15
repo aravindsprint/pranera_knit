@@ -8,15 +8,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.4.0",
-    "vue-router": "^4.3.0",
-    "pinia": "^2.1.0",
+    "@vueuse/core": "^10.7.0",
     "axios": "^1.6.0",
     "dexie": "^3.2.0",
-    "qrcode": "^1.5.3",
     "html5-qrcode": "^2.3.8",
     "moment": "^2.29.4",
-    "@vueuse/core": "^10.7.0"
+    "pinia": "^2.1.0",
+    "primeicons": "^8.0.1",
+    "qrcode": "^1.5.3",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

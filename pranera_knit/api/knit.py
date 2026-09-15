@@ -29,7 +29,7 @@ blend batches.
 import frappe
 import json
 from frappe import _
-from frappe.utils import now_datetime, today, get_datetime
+from frappe.utils import now_datetime, today, get_datetime, nowtime
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
 
@@ -562,7 +562,17 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         se.stock_entry_type      = "Material Transfer"
         se.purpose               = "Material Transfer"
         se.company               = frappe.defaults.get_user_default("Company")
+        # Explicitly set both posting_date AND posting_time (with
+        # set_posting_time flagged on). Leaving posting_time unset here
+        # used to crash with "combine() argument 2 must be datetime.time,
+        # not None" — the auto-created Serial and Batch Bundle rows (from
+        # use_serial_batch_fields=1 below) build a posting datetime via
+        # datetime.combine(posting_date, posting_time) before Stock
+        # Entry's own validate() gets a chance to default posting_time
+        # to nowtime() for us.
+        se.set_posting_time      = 1
         se.posting_date          = posting_date
+        se.posting_time          = nowtime()
         se.custom_roll_wise_pick_list = pick_list.name
 
         for item in stock_entry_items.values():

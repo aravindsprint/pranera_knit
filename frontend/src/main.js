@@ -2,6 +2,12 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
+// PrimeIcons was never added as a dependency, so every `pi pi-*` class used
+// across the app (AutoComplete, RollWisePickListPage, RollWisePickOrderExecutionPage,
+// MyPickOrdersPage, CreatePickOrderPage, etc.) rendered as an empty glyph.
+// Icon-only buttons — like the roll "remove" (pi-times) button on the Pick
+// Order Execution page — looked like they simply weren't there.
+import 'primeicons/primeicons.css'
 
 // NOTE: a previous version of this file unconditionally unregistered every
 // service worker on load. That raced against registerSW.js (injected by
