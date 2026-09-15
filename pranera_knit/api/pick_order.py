@@ -69,6 +69,20 @@ def _assert_assigned_to_me(doc):
         frappe.throw(_("This Pick Order is not assigned to you"), frappe.PermissionError)
 
 
+def _resolve_document_name(doc):
+    """Which linked document a pick_type points at — must mirror the
+    pick_type branches in knit.create_roll_picking_entry() exactly, since
+    that value is what gets stamped onto the resulting Stock Entry
+    (se.work_order / se.subcontracting_order / etc). Falls back to
+    work_order for any pick_type not listed here (From Work Order,
+    Manual Roll Pick), matching the pre-existing default."""
+    if doc.pick_type == "To Sales Order":
+        return doc.sales_order
+    if doc.pick_type in ("To Subcontracting Order", "From Subcontracting Order"):
+        return doc.subcontracting_order
+    return doc.work_order
+
+
 def _valid_batches_for_work_order(work_order):
     """Batches of the finished good actually produced against this Work
     Order — read from its submitted Stock Entry (Manufacture) rows where
@@ -193,8 +207,10 @@ def get_pick_order_detail(name):
         "posting_date": doc.posting_date,
         "status": doc.status,
         "pick_type": doc.pick_type,
-        "document_name": doc.work_order,
+        "document_name": _resolve_document_name(doc),
         "sales_order": doc.sales_order,
+        "purchase_order": doc.purchase_order,
+        "subcontracting_order": doc.subcontracting_order,
         "manufactured_qty": doc.manufactured_qty,
         "project": doc.project,
         "source_warehouse": doc.source_warehouse,
@@ -400,7 +416,7 @@ def submit_pick_order(pick_order, posting_date):
 
     result = create_roll_picking_entry(
         pick_type=doc.pick_type,
-        document_name=doc.work_order,
+        document_name=_resolve_document_name(doc),
         source_warehouse=source_warehouse,
         target_warehouse=target_warehouse,
         posting_date=posting_date,
@@ -484,7 +500,7 @@ def search_assignable_users(txt=None):
 @frappe.whitelist()
 def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to, pick_qty=None,
                        document_name=None, project=None, remarks=None, sales_order=None,
-                       batch_items=None):
+                       batch_items=None, purchase_order=None, subcontracting_order=None):
     """Creates + submits a Roll Pick Assignment.
 
     For "From Work Order" / "Manual Roll Pick", pick_qty is the
@@ -531,6 +547,8 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
 
     if pick_type == "To Sales Order" and not sales_order:
         frappe.throw(_("Sales Order is required for a 'To Sales Order' pick"))
+    if pick_type == "To Subcontracting Order" and not subcontracting_order:
+        frappe.throw(_("Subcontracting Order is required for a 'To Subcontracting Order' pick"))
 
     company = frappe.db.get_value("Warehouse", source_warehouse, "company")
     if not company:
@@ -551,6 +569,10 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
             project = frappe.db.get_value("Work Order", document_name, "project")
     if pick_type == "To Sales Order" and sales_order:
         doc.sales_order = sales_order
+    if pick_type == "To Subcontracting Order" and subcontracting_order:
+        doc.subcontracting_order = subcontracting_order
+        if purchase_order:
+            doc.purchase_order = purchase_order
     if uses_batch_items:
         for row in batch_items:
             doc.append("batch_items", {"batch": row.get("batch"), "qty": row.get("qty")})
