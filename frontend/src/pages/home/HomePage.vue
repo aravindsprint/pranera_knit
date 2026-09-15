@@ -35,6 +35,9 @@
 
 
           <div class="drawer-section-label" style="margin-top:8px">PRODUCTION DATA</div>
+            <button class="drawer-link" @click="navigate('/knit-app/create-rolls')">
+              <span class="drawer-link__icon">✂️</span><span>Create Rolls</span>
+            </button>
             <button class="drawer-link" @click="navigate('/knit-app/rolls')">
               <span class="drawer-link__icon">🧶</span><span>Rolls</span>
             </button>
