@@ -397,6 +397,23 @@ def submit_roll_packing_list(jobcard, work_order):
     return {"name": se.name, "status": "Draft"}
 
 
+def _get_warehouse_address(warehouse):
+    """
+    Looks up the Address linked to a Warehouse. Warehouse has no forward
+    Link field to Address — the relationship only exists the other way,
+    via a Dynamic Link row on the Address doc (parenttype=Address,
+    link_doctype=Warehouse, link_name=<warehouse>) — so this can't be done
+    with a simple fetch_from and has to be a real lookup.
+    """
+    if not warehouse:
+        return None
+    return frappe.db.get_value(
+        "Dynamic Link",
+        {"link_doctype": "Warehouse", "link_name": warehouse, "parenttype": "Address"},
+        "parent",
+    )
+
+
 @frappe.whitelist()
 def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                source_warehouse=None, target_warehouse=None,
@@ -574,6 +591,19 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         se.posting_date          = posting_date
         se.posting_time          = nowtime()
         se.custom_roll_wise_pick_list = pick_list.name
+
+        # Stock Entry already ships with source_warehouse_address /
+        # target_warehouse_address (standard fields, Link -> Address) —
+        # normally auto-filled by the Desk form's JS when from_warehouse /
+        # to_warehouse change. Since this Stock Entry is built server-side,
+        # that JS never runs, so we fetch and set both explicitly here.
+        # Applies to every pick_type — _get_warehouse_address() just returns
+        # None when a warehouse has no linked Address, so this is harmless
+        # for warehouses that don't have one set up.
+        se.from_warehouse = source_warehouse
+        se.to_warehouse   = target_warehouse
+        se.source_warehouse_address = _get_warehouse_address(source_warehouse)
+        se.target_warehouse_address = _get_warehouse_address(target_warehouse)
 
         for item in stock_entry_items.values():
             se.append("items", {
