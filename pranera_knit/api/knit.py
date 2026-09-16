@@ -631,6 +631,25 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         if pick_type and pick_type != "Manual Roll Pick" and document_name:
             if pick_type in ("From Work Order", "To Work Order"):
                 se.work_order = document_name
+                if pick_type == "To Work Order":
+                    # Pull straight from the Work Order rather than trust
+                    # whatever the caller passed through — the Work Order is
+                    # the authoritative record of what's actually being
+                    # manufactured (Roll Pick Assignment.project is set once
+                    # at Assignment-creation time and can drift from it, and
+                    # a caller isn't guaranteed to pass project at all).
+                    wo_details = frappe.db.get_value(
+                        "Work Order", document_name,
+                        ["project", "commercial_name", "color", "required_dia"],
+                        as_dict=True,
+                    )
+                    if wo_details:
+                        if wo_details.project:
+                            project = wo_details.project
+                        se.fabric_name = wo_details.commercial_name
+                        se.colour = wo_details.color
+                        if wo_details.required_dia:
+                            se.finishing_dia = str(wo_details.required_dia)
             elif pick_type == "From Purchase Order":
                 se.purchase_order = document_name
             elif pick_type in ("To Subcontracting Order", "From Subcontracting Order"):

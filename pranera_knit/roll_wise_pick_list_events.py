@@ -1,6 +1,32 @@
 import frappe
 
 
+def set_batch_wise_weight(doc, method=None):
+    """Batch Wise Pick Item belongs to the Textiles And Garments app, not
+    this one — reached via doc_event the same way Roll Pick Assignment's
+    pick_qty_summary is (see hooks.py's note on that hook).
+
+    "weight" is a Custom Field (see the Batch Wise Pick Item-weight
+    Custom Field) that mirrors Qty, grouped by Item Code + Warehouse +
+    Batch. create_roll_picking_entry already inserts one row per unique
+    (item, batch) with warehouse held constant (see knit.py), so in the
+    normal case this just copies that row's own Qty across — but it's
+    computed as a real group sum (not row.qty directly) so a manually
+    added or edited row, or an unexpected duplicate group, still reports
+    the true combined total rather than just its own row's Qty."""
+    rows = doc.get("batch_wise_pick_item") or []
+    if not rows:
+        return
+
+    totals = {}
+    for row in rows:
+        key = (row.item_code, row.warehouse, row.batch)
+        totals[key] = totals.get(key, 0.0) + float(row.qty or 0)
+
+    for row in rows:
+        row.weight = totals[(row.item_code, row.warehouse, row.batch)]
+
+
 def on_stock_entry_submit(doc, method=None):
     """When a Stock Entry created via the Roll-wise Pick List app is
     submitted, push the transfer's target warehouse onto every Roll it

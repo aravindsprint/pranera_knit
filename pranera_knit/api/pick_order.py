@@ -236,14 +236,38 @@ def update_pick_order_execution(pick_order, source_warehouse=None, target_wareho
     this execution session, independent of scanning. Call this whenever
     either dropdown changes so a resumed session (different device, next
     shift, after a refresh) shows the same choice rather than snapping
-    back to the Assignment's original warehouses."""
+    back to the Assignment's original warehouses.
+
+    Changing the Source Warehouse mid-session also rewrites the
+    `warehouse` field on every roll already scanned this session
+    (doc.scanned_rolls) to match — those rows were recorded against
+    whichever Source Warehouse was selected at the moment they were
+    scanned, so leaving them on a stale value after the worker corrects
+    the warehouse would silently misstate where that material actually
+    came from. This mirrors scan_pick_order_roll, which always stamps
+    the *currently selected* Source Warehouse onto a scan rather than
+    trusting Roll.warehouse (see the module docstring)."""
     doc = frappe.get_doc("Roll Pick Assignment", pick_order)
     _assert_assigned_to_me(doc)
 
-    if source_warehouse is not None:
-        doc.db_set("execution_source_warehouse", source_warehouse, update_modified=False)
-    if target_warehouse is not None:
-        doc.db_set("execution_target_warehouse", target_warehouse, update_modified=False)
+    warehouse_changed = source_warehouse is not None and source_warehouse != doc.execution_source_warehouse
+
+    if warehouse_changed:
+        # Child-table rows are involved, so this needs a real save (not
+        # db_set, which only ever touches the parent's own column).
+        doc.execution_source_warehouse = source_warehouse
+        for row in (doc.scanned_rolls or []):
+            row.warehouse = source_warehouse
+        if target_warehouse is not None:
+            doc.execution_target_warehouse = target_warehouse
+        doc.save(ignore_permissions=True)
+    else:
+        # No scanned rolls to touch — keep the previous lightweight,
+        # non-modified-bumping writes for a plain warehouse selection.
+        if source_warehouse is not None:
+            doc.db_set("execution_source_warehouse", source_warehouse, update_modified=False)
+        if target_warehouse is not None:
+            doc.db_set("execution_target_warehouse", target_warehouse, update_modified=False)
     frappe.db.commit()
     return {"success": True}
 

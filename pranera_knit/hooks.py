@@ -55,6 +55,12 @@ doc_events = {
     "Roll Pick Assignment": {
         "validate": "pranera_knit.pick_qty_summary.set_pick_qty_summary",
     },
+    # Roll Wise Pick List is likewise owned by the Textiles And Garments
+    # app — keeps the "weight" Custom Field on batch_wise_pick_item rows
+    # in sync with the grouped Item Code + Warehouse + Batch Qty total.
+    "Roll Wise Pick List": {
+        "validate": "pranera_knit.roll_wise_pick_list_events.set_batch_wise_weight",
+    },
 }
 
 # ── Job Card visibility restriction ───────────────────────────────────────────
