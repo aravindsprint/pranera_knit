@@ -161,15 +161,16 @@ async function load() {
     const local = await db.work_orders.toArray()
     if (local.length) workOrders.value = enrichCommercial(local, cmap)
 
-    const reachable = await checkReachable()
-    if (reachable) {
-      const fresh = await fetchWorkOrders()
-      if (Array.isArray(fresh) && fresh.length) {
-        const enriched = enrichCommercial(fresh, cmap)
-        await db.work_orders.clear()
-        await db.work_orders.bulkPut(enriched.map(w => ({ ...w, id: w.name })))
-        workOrders.value = enriched
-      }
+    // Refresh the banner flag in the background, but always attempt the real
+    // request — a failed probe must not block loading fresh data. Failure
+    // falls through to the catch below and the cache stays on screen.
+    checkReachable()
+    const fresh = await fetchWorkOrders()
+    if (Array.isArray(fresh) && fresh.length) {
+      const enriched = enrichCommercial(fresh, cmap)
+      await db.work_orders.clear()
+      await db.work_orders.bulkPut(enriched.map(w => ({ ...w, id: w.name })))
+      workOrders.value = enriched
     }
   } catch (e) {
     console.warn('load work orders failed:', e.message)

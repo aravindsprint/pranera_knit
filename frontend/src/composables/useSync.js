@@ -28,36 +28,71 @@ let syncTimer = null
 let reachTimer = null
 
 // ── Real connectivity probe ──────────────────────────────────────────────────
-// navigator.onLine only reports whether a network interface exists — it returns
-// true on WiFi that has no route to the ERP server. This actually pings the
-// backend so isOnline reflects whether erp.pranera.in is reachable right now.
-export async function checkReachable() {
-  // If the OS says the interface is down, trust it — we're definitely offline.
-  if (!navigator.onLine) {
-    if (isOnline.value) isOnline.value = false
-    return false
-  }
+// navigator.onLine is unreliable in BOTH directions: it says "true" on WiFi
+// with no route to the server, and Safari (Private Relay / VPN / some proxies)
+// can report "false" while the network is perfectly fine. So we never trust it
+// as a verdict — we always ask the ERP itself.
+//
+// Rules the probe follows (each one fixes a way the app used to get stuck
+// showing "Offline" while actually connected):
+//  * Uses Frappe's built-in, guest-allowed /api/method/ping (no DB, no Server
+//    Script) instead of knit_get_csrf, which needs a DB round-trip through the
+//    Server Script sandbox and was easily slow enough to hit the timeout.
+//  * ANY HTTP answer proves the network path works. Only "no answer" (network
+//    error / timeout) or a gateway error (502/503/504 = ERP down) counts as
+//    unreachable. Previously any non-2xx flipped the whole app offline.
+//  * Concurrent callers share one in-flight probe (App + HomePage + timers all
+//    used to fire their own, stacking requests on the same gunicorn worker).
+//  * While offline we re-probe every few seconds so recovery is quick.
+const PROBE_URL        = '/api/method/ping'
+const PROBE_TIMEOUT_MS = 8000
+const PROBE_EVERY_ONLINE_MS  = 15_000
+const PROBE_EVERY_OFFLINE_MS = 4_000
+
+let probeInFlight = null
+
+function setOnline(next) {
+  if (isOnline.value === next) return
+  isOnline.value = next
+  if (next) { flushQueue(); syncLookupTables() }
+}
+
+async function probeOnce() {
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS)
   try {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), 4000)
-    // knit_get_csrf is a cheap, always-available Server Script endpoint.
-    const r = await fetch('/api/method/knit_get_csrf', {
+    const r = await fetch(`${PROBE_URL}?_=${Date.now()}`, {
       method: 'GET',
       credentials: 'include',
       cache: 'no-store',
       signal: ctrl.signal,
     })
-    clearTimeout(t)
-    const reachable = r.ok
-    if (isOnline.value !== reachable) {
-      isOnline.value = reachable
-      if (reachable) { flushQueue(); syncLookupTables() }
-    }
-    return reachable
+    return !(r.status === 502 || r.status === 503 || r.status === 504)
   } catch {
-    if (isOnline.value) isOnline.value = false
     return false
+  } finally {
+    clearTimeout(t)
   }
+}
+
+export function checkReachable() {
+  if (probeInFlight) return probeInFlight
+  probeInFlight = probeOnce()
+    .then(reachable => { setOnline(reachable); return reachable })
+    .finally(() => { probeInFlight = null })
+  return probeInFlight
+}
+
+// Any real API call that got an answer from the server (see frappe.js) is
+// stronger proof of connectivity than the probe — use it to self-heal.
+function onApiOk() { if (!isOnline.value) setOnline(true) }
+
+function scheduleProbe() {
+  clearTimeout(reachTimer)
+  reachTimer = setTimeout(async () => {
+    await checkReachable()
+    scheduleProbe()
+  }, isOnline.value ? PROBE_EVERY_ONLINE_MS : PROBE_EVERY_OFFLINE_MS)
 }
 
 // ── Refresh pending count from DB ────────────────────────────────────────────
@@ -283,24 +318,26 @@ export async function syncLookupTables() {
 
 // ── Composable setup / teardown ──────────────────────────────────────────────
 export function useSync() {
-  function onOnlineHandler() {
-    // OS says a network appeared — confirm the ERP is actually reachable
-    // before flipping online (checkReachable flushes + syncs if it is).
-    checkReachable()
-  }
-  function onOfflineHandler() {
-    isOnline.value = false
+  function onOnlineHandler()  { checkReachable() }        // OS hint → verify with a real request
+  function onOfflineHandler() { checkReachable() }        // OS hint → verify, don't trust blindly
+  function onWake() {
+    // Background tabs get their timers throttled/frozen (Safari especially),
+    // so re-check the moment the user comes back to the app.
+    if (document.visibilityState === 'visible') checkReachable()
   }
 
   onMounted(async () => {
     window.addEventListener('online', onOnlineHandler)
     window.addEventListener('offline', onOfflineHandler)
+    window.addEventListener('focus', onWake)
+    document.addEventListener('visibilitychange', onWake)
+    window.addEventListener('knit:api-ok', onApiOk)
     await refreshPendingCount()
     // Periodic retry every 10s
     syncTimer = setInterval(flushQueue, 10_000)
-    // Probe real backend reachability immediately, then every 15s.
+    // Probe real backend reachability immediately, then on an adaptive timer.
     checkReachable()
-    reachTimer = setInterval(checkReachable, 15_000)
+    scheduleProbe()
     if (isOnline.value) {
       flushQueue()
       // Populate offline caches (employees, items, params…) on first load
@@ -311,8 +348,11 @@ export function useSync() {
   onUnmounted(() => {
     window.removeEventListener('online', onOnlineHandler)
     window.removeEventListener('offline', onOfflineHandler)
+    window.removeEventListener('focus', onWake)
+    document.removeEventListener('visibilitychange', onWake)
+    window.removeEventListener('knit:api-ok', onApiOk)
     clearInterval(syncTimer)
-    clearInterval(reachTimer)
+    clearTimeout(reachTimer)
   })
 
   return { isOnline, isSyncing, pendingCount, lastSyncAt, flushQueue, syncLookupTables }

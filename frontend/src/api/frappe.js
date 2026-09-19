@@ -1,3 +1,15 @@
+// ── Connectivity signal ───────────────────────────────────────────────────
+// Any HTTP answer from the server (other than a gateway error) proves the
+// network path works. useSync listens for this and flips the app back online
+// even if its own probe failed/timed out — so a real request can never be
+// blocked by a stale "offline" flag.
+function signalServerReachable(res) {
+  const s = res && res.status
+  if (s && s !== 502 && s !== 503 && s !== 504) {
+    try { window.dispatchEvent(new Event('knit:api-ok')) } catch { /* ignore */ }
+  }
+}
+
 // ── CSRF ──────────────────────────────────────────────────────────────────
 let _csrf = ''
 
@@ -78,6 +90,7 @@ export async function call(method, args = {}) {
     body: body.toString(),
     credentials: 'include'
   })
+  signalServerReachable(res)
   const data = await res.json()
   if (!res.ok || data.exc) throw new Error(extractServerError(data, res.statusText))
   return data
@@ -124,6 +137,7 @@ export async function getList(doctype, { filters = [], orFilters = [], fields = 
   const res = await fetch(`/api/resource/${encodeURIComponent(doctype)}?${params}`, {
     credentials: 'include'
   })
+  signalServerReachable(res)
   const data = await res.json()
   if (!res.ok) throw new Error(data.exc || res.statusText)
   return data.data || []
@@ -152,6 +166,7 @@ export async function getAllList(doctype, { filters = [], orFilters = [], fields
     const res = await fetch(`/api/resource/${encodeURIComponent(doctype)}?${params}`, {
       credentials: 'include'
     })
+    signalServerReachable(res)
     const data = await res.json()
     if (!res.ok) throw new Error(data.exc || res.statusText)
     const rows = data.data || []

@@ -437,11 +437,12 @@ async function assignEmployee(emp) {
 }
 
 onMounted(async () => {
-  // Verify real connectivity first (isOnline can be stale after offline
-  // toggling), then load. When online, loadJobCards fetches fresh cards AND
-  // caches every card's assignment internally, so "Currently assigned" works
-  // offline for all cards without opening them.
-  await checkReachable()
+  // Refresh the connectivity flag in the background but DON'T wait on it —
+  // loadJobCards shows the cache instantly and tries the network on its own
+  // (a real request beats a probe). When it succeeds it fetches fresh cards AND
+  // caches every card's assignment, so "Currently assigned" works offline for
+  // all cards without opening them.
+  checkReachable()
   await homeStore.loadJobCards(auth.username, auth.designation, auth.employeeId)
   if (isOnline.value) {
     // Warm the employee directory cache for the Assign modal offline
@@ -459,7 +460,7 @@ onMounted(async () => {
   }
 })
 async function refresh() {
-  await checkReachable()
+  checkReachable()
   await homeStore.loadJobCards(auth.username, auth.designation, auth.employeeId)
 }
 function navigate(path) { drawerOpen.value = false; router.push(path) }
