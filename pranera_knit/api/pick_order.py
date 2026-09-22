@@ -15,16 +15,21 @@ Roll weights vary in the real world, so hitting an exact target
 roll-by-roll isn't practical — a tolerance band is.
 
 Validations that run on every scan:
-  1. Project match (pick_type == "To Work Order" only) — the roll's
+  1. Packed & manufactured — the roll must appear in at least one submitted
+     Roll Packing List whose Stock Entry field is set (i.e. it's actually
+     been packed against a real, submitted Stock Entry — normally the
+     Manufacture entry that produced it) — not just a bare Roll record
+     that was created but never went through packing.
+  2. Project match (pick_type == "To Work Order" only) — the roll's
      Project must match the target Work Order's Project, so material
      doesn't get misrouted into an unrelated project's job.
-  2. Batch match (whenever the Assignment is tied to a Work Order) — if
+  3. Batch match (whenever the Assignment is tied to a Work Order) — if
      the supervisor named specific batches (batch_items rows — optional
      for "To Work Order"), the roll's batch must be one of those. Other-
      wise it must be one this Work Order actually produced, per the
      is_finished_item rows of its own submitted Stock Entry (Manufacture)
      — not just any batch of the same item code sitting in the warehouse.
-  3. No duplicate scan — a roll can't be scanned twice, either within
+  4. No duplicate scan — a roll can't be scanned twice, either within
      this in-progress session or against a prior submitted session for
      this same Assignment.
 
@@ -299,6 +304,32 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     )
     if not roll:
         frappe.throw(_("Roll not found: {0}").format(roll_no))
+
+    # Packed & manufactured. The roll must show up in at least one
+    # submitted Roll Packing List that itself has a Stock Entry linked —
+    # that Stock Entry is normally the Manufacture entry that produced
+    # this roll's material. A Roll record can exist (e.g. created early
+    # on the shop floor) without ever having gone through packing against
+    # a real Stock Entry — such a roll isn't actually finished/moveable
+    # stock yet, so it can't be picked.
+    packed_against_stock_entry = frappe.db.sql(
+        """
+        select rpl.name
+        from `tabRoll Packing List Item` rpli
+        inner join `tabRoll Packing List` rpl on rpl.name = rpli.parent
+        where rpli.roll_no = %(roll_no)s
+            and rpl.docstatus = 1
+            and ifnull(rpl.stock_entry, '') != ''
+        limit 1
+        """,
+        {"roll_no": roll_no},
+    )
+    if not packed_against_stock_entry:
+        frappe.throw(_(
+            "Roll {0} is not included in any submitted Roll Packing List with a Stock Entry "
+            "(Manufacture) linked — it hasn't actually been packed/produced yet, so it can't "
+            "be picked"
+        ).format(roll_no))
 
     if doc.pick_type == "To Work Order" and doc.work_order:
         wo_project = frappe.db.get_value("Work Order", doc.work_order, "project")
