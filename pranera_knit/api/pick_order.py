@@ -308,34 +308,38 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
                 "rolls must match the target Work Order's project"
             ).format(roll_no, roll.project, doc.work_order, wo_project))
 
-    # Batch match. If this Assignment has explicit batch_items rows (a
-    # supervisor restricted a "To Work Order" pick to specific batches),
-    # the roll's batch must be one of those named batches — a tighter
-    # constraint than "any batch this Work Order produced". Otherwise,
-    # fall back to the broader check: the roll's batch must be one this
-    # Work Order actually produced, per its submitted Stock Entry
+    # Batch match. If this Assignment has explicit batch_items rows —
+    # "From Batch" / "To Sales Order" picks always have these (and have no
+    # work_order), and a "To Work Order" pick may optionally be restricted
+    # to specific batches this way too — the roll's batch must be one of
+    # those named batches. This is checked first and independently of
+    # work_order, since batch_items is the tighter, explicitly-supervisor-
+    # set constraint whenever it's present.
+    #
+    # Only when there are no batch_items at all and this is a Work Order
+    # pick do we fall back to the broader check: the roll's batch must be
+    # one this Work Order actually produced, per its submitted Stock Entry
     # (Manufacture) finished-item rows — not just any batch of the same
     # item code sitting in the warehouse.
-    if doc.work_order:
-        if doc.batch_items:
-            allowed_batches = {r.batch for r in doc.batch_items if r.batch}
-            if not roll.batch or roll.batch not in allowed_batches:
-                frappe.throw(_(
-                    "Roll {0}'s batch {1} is not one of the batches specified for this "
-                    "Pick Order ({2})"
-                ).format(roll_no, roll.batch or _("(no batch)"), ", ".join(sorted(allowed_batches))))
-        else:
-            valid_batches = _valid_batches_for_work_order(doc.work_order)
-            if not valid_batches:
-                frappe.throw(_(
-                    "No submitted Stock Entry (Manufacture) finished-goods batches found for "
-                    "Work Order {0} — cannot verify roll batches against it"
-                ).format(doc.work_order))
-            if not roll.batch or roll.batch not in valid_batches:
-                frappe.throw(_(
-                    "Roll {0}'s batch {1} does not belong to Work Order {2}'s manufactured "
-                    "finished goods"
-                ).format(roll_no, roll.batch or _("(no batch)"), doc.work_order))
+    if doc.batch_items:
+        allowed_batches = {r.batch for r in doc.batch_items if r.batch}
+        if not roll.batch or roll.batch not in allowed_batches:
+            frappe.throw(_(
+                "Roll {0}'s batch {1} is not one of the batches specified for this "
+                "Pick Order ({2})"
+            ).format(roll_no, roll.batch or _("(no batch)"), ", ".join(sorted(allowed_batches))))
+    elif doc.work_order:
+        valid_batches = _valid_batches_for_work_order(doc.work_order)
+        if not valid_batches:
+            frappe.throw(_(
+                "No submitted Stock Entry (Manufacture) finished-goods batches found for "
+                "Work Order {0} — cannot verify roll batches against it"
+            ).format(doc.work_order))
+        if not roll.batch or roll.batch not in valid_batches:
+            frappe.throw(_(
+                "Roll {0}'s batch {1} does not belong to Work Order {2}'s manufactured "
+                "finished goods"
+            ).format(roll_no, roll.batch or _("(no batch)"), doc.work_order))
 
     # Dedupe against rolls already submitted for this Assignment in a
     # prior completed session...
