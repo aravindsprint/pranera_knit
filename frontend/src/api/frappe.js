@@ -79,6 +79,13 @@ export async function call(method, args = {}) {
   const token = await ensureCSRF()
   const body = new URLSearchParams()
   for (const [k, v] of Object.entries(args)) {
+    // Skip omitted/absent params entirely rather than letting
+    // URLSearchParams.append coerce `undefined`/`null` into the literal
+    // string "undefined"/"null" — that string then reaches the Python
+    // method as a real (invalid) value instead of the missing arg its
+    // `=None` default expects, which for a Link field trips validation
+    // with a confusing "Could not find <Field>: undefined" error.
+    if (v === undefined || v === null) continue
     body.append(k, typeof v === 'object' ? JSON.stringify(v) : v)
   }
   const res = await fetch(`/api/method/${method}`, {
