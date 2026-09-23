@@ -19,7 +19,13 @@ Validations that run on every scan:
      Roll Packing List whose Stock Entry field is set (i.e. it's actually
      been packed against a real, submitted Stock Entry — normally the
      Manufacture entry that produced it) — not just a bare Roll record
-     that was created but never went through packing.
+     that was created but never went through packing. A cut roll (e.g.
+     "31873-1", split off "31873" by the separate Cut Rolls feature)
+     never gets its own Roll Packing List row — only the roll it was cut
+     from does — and the Roll doctype has no field linking a cut roll
+     back to its parent, only the "<parent>-<n>" naming convention. So
+     this check also walks that suffix off the scanned roll_no and
+     accepts a match on any ancestor in the chain.
   2. Project match (pick_type == "To Work Order" only) — the roll's
      Project must match the target Work Order's Project, so material
      doesn't get misrouted into an unrelated project's job.
@@ -60,6 +66,8 @@ independently (e.g. rolls turned out to be sitting somewhere else, or the
 material needs to land somewhere other than originally planned) without
 touching the original Assignment fields.
 """
+import re
+
 import frappe
 from frappe import _
 from frappe.utils import now_datetime
@@ -312,17 +320,33 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     # on the shop floor) without ever having gone through packing against
     # a real Stock Entry — such a roll isn't actually finished/moveable
     # stock yet, so it can't be picked.
+    #
+    # A cut roll never has a packing-list row of its own — only the roll
+    # it was cut from does — so check the scanned roll_no's whole ancestor
+    # chain, walking the "<parent>-<n>" naming convention (there's no DB
+    # field for this; the Cut Rolls feature never added one). "31873-1"
+    # checks as ["31873-1", "31873"]; a hypothetical "31873-1-2" would
+    # check as ["31873-1-2", "31873-1", "31873"].
+    roll_no_chain = [roll_no]
+    base = roll_no
+    while True:
+        match = re.match(r"^(.*)-\d+$", base)
+        if not match:
+            break
+        base = match.group(1)
+        roll_no_chain.append(base)
+
     packed_against_stock_entry = frappe.db.sql(
         """
         select rpl.name
         from `tabRoll Packing List Item` rpli
         inner join `tabRoll Packing List` rpl on rpl.name = rpli.parent
-        where rpli.roll_no = %(roll_no)s
+        where rpli.roll_no in %(roll_no_chain)s
             and rpl.docstatus = 1
             and ifnull(rpl.stock_entry, '') != ''
         limit 1
         """,
-        {"roll_no": roll_no},
+        {"roll_no_chain": roll_no_chain},
     )
     if not packed_against_stock_entry:
         frappe.throw(_(
