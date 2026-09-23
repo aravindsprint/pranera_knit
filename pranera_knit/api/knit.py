@@ -512,13 +512,42 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                 ).format(round(total_picked, 3), pick_qty, roll_pick_assignment))
 
     try:
+        # Per-batch warehouse override, from the Roll Pick Assignment's own
+        # Batch Items table (batch -> warehouse), when this fulfillment
+        # comes from the Pick Order flow. A batch doesn't necessarily sit
+        # in the blanket Source Warehouse selected on the execution page —
+        # the supervisor's per-batch warehouse (the one get_warehouses_for_batch
+        # in textiles_and_garments showed available qty for when the
+        # Assignment was built) is the one actually known to hold that
+        # batch's stock, so the Stock Entry rows consuming it need to be
+        # built against THAT warehouse — otherwise ERPNext's own
+        # insufficient-batch-qty check fires against the wrong warehouse
+        # ("Batch X only has 0 kg in <blanket source>, but Y kg was
+        # entered"). Falls back to source_warehouse for any batch with no
+        # warehouse set on its row (that field is optional) or when this
+        # isn't a Pick Order fulfillment at all.
+        batch_warehouse_overrides = {}
+        if roll_pick_assignment:
+            batch_warehouse_overrides = {
+                r.batch: r.warehouse
+                for r in frappe.get_all(
+                    "Roll Pick Batch Item",
+                    filters={"parenttype": "Roll Pick Assignment", "parent": roll_pick_assignment},
+                    fields=["batch", "warehouse"],
+                )
+                if r.warehouse
+            }
+
+        def _warehouse_for_batch(batch_no):
+            return batch_warehouse_overrides.get(batch_no) or source_warehouse
+
         # ── STEP 1: Roll Wise Pick List ─────────────────────────────────────
         batch_wise = {}
         for roll in rolls:
             key = (roll.get("batch_no"), roll.get("item_code"))
             b = batch_wise.setdefault(key, {
                 "item_code": roll.get("item_code"),
-                "warehouse": source_warehouse,
+                "warehouse": _warehouse_for_batch(roll.get("batch_no")),
                 "batch":     roll.get("batch_no"),
                 "qty":       0.0,
                 "uom":       roll.get("uom"),
@@ -548,7 +577,7 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
             for r in rolls:
                 pick_list.append("roll_wise_pick_item", {
                     "item_code": r.get("item_code"),
-                    "warehouse": source_warehouse,
+                    "warehouse": _warehouse_for_batch(r.get("batch_no")),
                     "batch":     r.get("batch_no"),
                     "roll_no":   r.get("roll_no"),
                     "qty":       float(r.get("qty") or 0),
@@ -564,7 +593,7 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
             key = (r.get("item_code"), r.get("batch_no"))
             se_item = stock_entry_items.setdefault(key, {
                 "item_code":   r.get("item_code"),
-                "s_warehouse": source_warehouse,
+                "s_warehouse": _warehouse_for_batch(r.get("batch_no")),
                 "t_warehouse": target_warehouse,
                 "batch_no":    r.get("batch_no"),
                 "qty":         0.0,
