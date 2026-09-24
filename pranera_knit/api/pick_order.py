@@ -43,8 +43,12 @@ There is deliberately NO check that Roll.warehouse matches the selected
 Source Warehouse — Roll.warehouse is only ever pushed forward by
 roll_wise_pick_list_events.py, scoped to a different app's Stock Entries,
 so it's frequently stale for a roll's actual current location and isn't a
-trustworthy gate. The worker's selected Source Warehouse is trusted and
-is exactly what gets recorded against the scan (see scan_pick_order_roll).
+trustworthy gate. What gets recorded against the scan is the batch's own
+per-batch warehouse override from the Assignment's Batch Items table when
+one is set (get_batch_warehouse_overrides, in knit.py), since that's the
+specific place the supervisor identified for that batch; otherwise it
+falls back to the worker's currently selected blanket Source Warehouse
+(see scan_pick_order_roll).
 
 The +/-3% tolerance itself is enforced authoritatively server-side, in
 knit.create_roll_picking_entry (not here) — that's the single point where
@@ -72,7 +76,7 @@ import frappe
 from frappe import _
 from frappe.utils import now_datetime
 
-from pranera_knit.api.knit import create_roll_picking_entry
+from pranera_knit.api.knit import create_roll_picking_entry, get_batch_warehouse_overrides
 
 TOLERANCE_PCT = 0.03
 
@@ -253,13 +257,15 @@ def update_pick_order_execution(pick_order, source_warehouse=None, target_wareho
 
     Changing the Source Warehouse mid-session also rewrites the
     `warehouse` field on every roll already scanned this session
-    (doc.scanned_rolls) to match — those rows were recorded against
-    whichever Source Warehouse was selected at the moment they were
-    scanned, so leaving them on a stale value after the worker corrects
-    the warehouse would silently misstate where that material actually
-    came from. This mirrors scan_pick_order_roll, which always stamps
-    the *currently selected* Source Warehouse onto a scan rather than
-    trusting Roll.warehouse (see the module docstring)."""
+    (doc.scanned_rolls) to match — but only for rolls whose batch has NO
+    per-batch override in Batch Items (see get_batch_warehouse_overrides);
+    a roll whose batch DOES have one keeps that override regardless of
+    what the blanket Source Warehouse changes to, same as scan_pick_order_roll
+    resolves it at scan time. Rolls without an override were recorded
+    against whichever blanket Source Warehouse was selected at the moment
+    they were scanned, so leaving them on a stale value after the worker
+    corrects the warehouse would silently misstate where that material
+    actually came from."""
     doc = frappe.get_doc("Roll Pick Assignment", pick_order)
     _assert_assigned_to_me(doc)
 
@@ -269,8 +275,9 @@ def update_pick_order_execution(pick_order, source_warehouse=None, target_wareho
         # Child-table rows are involved, so this needs a real save (not
         # db_set, which only ever touches the parent's own column).
         doc.execution_source_warehouse = source_warehouse
+        batch_warehouse_overrides = get_batch_warehouse_overrides(pick_order)
         for row in (doc.scanned_rolls or []):
-            row.warehouse = source_warehouse
+            row.warehouse = batch_warehouse_overrides.get(row.batch_no) or source_warehouse
         if target_warehouse is not None:
             doc.execution_target_warehouse = target_warehouse
         doc.save(ignore_permissions=True)
@@ -417,14 +424,24 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     # it's only ever pushed forward by roll_wise_pick_list_events.py, scoped
     # strictly to Stock Entries created via the (separate) Roll Wise Pick
     # List app, so it commonly reflects some unrelated past movement rather
-    # than this pick session. The warehouse recorded against this scan must
-    # be whichever Source Warehouse the worker actually has selected right
-    # now — that's what they physically walked to and scanned from.
+    # than this pick session. The warehouse recorded against this scan
+    # should be the Assignment's own per-batch override (Batch Items'
+    # warehouse column — see get_batch_warehouse_overrides) when this
+    # batch has one set, since that's the specific place the supervisor
+    # identified for it; otherwise fall back to whichever blanket Source
+    # Warehouse the worker currently has selected on the execution page —
+    # that's what they physically walked to and scanned from. This mirrors
+    # create_roll_picking_entry in knit.py, which resolves the same way
+    # when it builds the final Stock Entry, so a roll's recorded warehouse
+    # doesn't change between scan time and submission.
+    batch_warehouse_overrides = get_batch_warehouse_overrides(pick_order)
+    roll_warehouse = batch_warehouse_overrides.get(roll.batch) or source_warehouse
+
     qty = roll.total_qty if (roll.stock_uom or "").lower() == "pcs" else roll.roll_weight
     result = {
         "roll_no": roll_no,
         "item_code": roll.item_code,
-        "warehouse": source_warehouse,
+        "warehouse": roll_warehouse,
         "batch_no": roll.batch,
         "qty": qty,
         "uom": roll.stock_uom or "Kgs",
