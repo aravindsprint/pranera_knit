@@ -414,6 +414,32 @@ def _get_warehouse_address(warehouse):
     )
 
 
+def get_batch_warehouse_overrides(roll_pick_assignment):
+    """batch -> warehouse map from a Roll Pick Assignment's own Batch Items
+    table (the field populated via get_warehouses_for_batch in
+    textiles_and_garments's roll_pick_assignment.py, showing each batch's
+    actual per-warehouse qty when the supervisor set it up). A batch
+    doesn't necessarily sit in the Assignment's single blanket Source
+    Warehouse, so anywhere a batch's rolls get attributed to a warehouse —
+    at scan time as much as at final Stock Entry creation — should prefer
+    this override over the blanket source_warehouse. Only includes
+    batches whose row actually has a warehouse set (that field is
+    optional); callers fall back to the blanket source_warehouse for any
+    batch missing from this map. Returns {} if roll_pick_assignment is
+    falsy (a manual, non-Pick-Order fulfillment)."""
+    if not roll_pick_assignment:
+        return {}
+    return {
+        r.batch: r.warehouse
+        for r in frappe.get_all(
+            "Roll Pick Batch Item",
+            filters={"parenttype": "Roll Pick Assignment", "parent": roll_pick_assignment},
+            fields=["batch", "warehouse"],
+        )
+        if r.warehouse
+    }
+
+
 @frappe.whitelist()
 def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                source_warehouse=None, target_warehouse=None,
@@ -526,17 +552,7 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         # entered"). Falls back to source_warehouse for any batch with no
         # warehouse set on its row (that field is optional) or when this
         # isn't a Pick Order fulfillment at all.
-        batch_warehouse_overrides = {}
-        if roll_pick_assignment:
-            batch_warehouse_overrides = {
-                r.batch: r.warehouse
-                for r in frappe.get_all(
-                    "Roll Pick Batch Item",
-                    filters={"parenttype": "Roll Pick Assignment", "parent": roll_pick_assignment},
-                    fields=["batch", "warehouse"],
-                )
-                if r.warehouse
-            }
+        batch_warehouse_overrides = get_batch_warehouse_overrides(roll_pick_assignment)
 
         def _warehouse_for_batch(batch_no):
             return batch_warehouse_overrides.get(batch_no) or source_warehouse
