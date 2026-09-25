@@ -57,6 +57,20 @@
           <div v-if="store.overTolerance" class="error-banner" style="margin-top:8px">
             <i class="pi pi-exclamation-triangle"></i> Over tolerance — remove a roll before submitting
           </div>
+
+          <!-- Per-UOM breakdown, same as the Roll Pick Assignment Desk
+               view's "Pick Qty (by UOM)" table — pick_qty above stays the
+               single grand total (across all UOMs) that the tolerance
+               band is checked against; this just shows the split when a
+               batch mixes Kgs and Pcs items so it isn't hidden inside one
+               blended number. -->
+          <div v-if="store.order.pick_qty_summary && store.order.pick_qty_summary.length" class="uom-summary">
+            <div class="uom-summary__title">Pick Qty (by UOM)</div>
+            <div v-for="row in store.order.pick_qty_summary" :key="row.uom" class="uom-summary__row">
+              <span>{{ row.uom }}</span>
+              <span>{{ fmt(row.total_qty) }}</span>
+            </div>
+          </div>
         </div>
 
         <!-- Source warehouse -->
@@ -158,14 +172,28 @@
           <label class="form-label">Posting Date <span class="req">*</span></label>
           <input v-model="postingDate" type="date" class="form-input" />
 
-          <button
-            class="btn btn-primary btn-full" style="margin-top:14px"
-            @click="submit"
-            :disabled="!store.withinTolerance || !store.scannedRolls.length || store.submitting"
-          >
-            <i v-if="store.submitting" class="pi pi-spin pi-spinner"></i>
-            {{ store.submitting ? 'Submitting...' : 'Create Pick Entry' }}
-          </button>
+          <div class="submit-btn-row">
+            <button
+              class="btn btn-outline btn-full"
+              @click="submit(false)"
+              :disabled="!store.withinTolerance || !store.scannedRolls.length || store.submitting"
+            >
+              <i v-if="store.submitting && submittingDraft" class="pi pi-spin pi-spinner"></i>
+              {{ store.submitting && submittingDraft ? 'Submitting...' : 'Create Pick Entry - Draft' }}
+            </button>
+            <button
+              class="btn btn-primary btn-full"
+              @click="submit(true)"
+              :disabled="!store.withinTolerance || !store.scannedRolls.length || store.submitting"
+            >
+              <i v-if="store.submitting && !submittingDraft" class="pi pi-spin pi-spinner"></i>
+              {{ store.submitting && !submittingDraft ? 'Submitting...' : 'Create Pick Entry - Submit' }}
+            </button>
+          </div>
+          <div class="hint-text" style="margin-top:8px">
+            <i class="pi pi-info-circle"></i>
+            <span>Draft creates the pick list but leaves the Stock Entry unsubmitted for review. Submit finalizes both — material moves immediately.</span>
+          </div>
           <div v-if="submitError" class="error-banner" style="margin-top:12px">
             <i class="pi pi-exclamation-triangle"></i> {{ submitError }}
           </div>
@@ -191,8 +219,12 @@
         <div v-if="showSuccessModal" class="modal-overlay" @click.self="closeSuccessModal">
           <div class="modal-box">
             <i class="pi pi-check-circle modal-icon"></i>
-            <h3 class="modal-title">Pick Order Completed</h3>
-            <p class="modal-msg">Pick entry created successfully.</p>
+            <h3 class="modal-title">{{ submittedDraft ? 'Pick Entry Saved as Draft' : 'Pick Order Completed' }}</h3>
+            <p class="modal-msg">
+              {{ submittedDraft
+                ? 'Pick list created and the Stock Entry saved as a draft — someone still needs to review and submit it.'
+                : 'Pick entry created successfully.' }}
+            </p>
             <div v-if="submittedDocNo" class="modal-docno">{{ submittedDocNo }}</div>
             <button class="btn btn-primary btn-full" @click="closeSuccessModal">OK</button>
           </div>
@@ -224,6 +256,11 @@ const submitError = ref('')
 const warehouseSaveError = ref('')
 const showSuccessModal = ref(false)
 const submittedDocNo = ref('')
+const submittedDraft = ref(false)
+// Tracks which of the two submit buttons is currently in flight, so only
+// that one shows its own spinner/label while store.submitting is true —
+// otherwise both buttons would appear to be submitting at once.
+const submittingDraft = ref(false)
 
 function fmt(n) {
   return (Number(n) || 0).toFixed(2)
@@ -324,11 +361,16 @@ async function onCameraScanSuccess(decodedText) {
 }
 
 // ── Submit ───────────────────────────────────────────────────────────────
-async function submit() {
+// shouldSubmitStockEntry: true = "Create Pick Entry - Submit" (Stock Entry
+// submitted immediately), false = "Create Pick Entry - Draft" (Stock Entry
+// left as a draft). The Roll Wise Pick List is always submitted either way.
+async function submit(shouldSubmitStockEntry) {
   submitError.value = ''
+  submittingDraft.value = !shouldSubmitStockEntry
   try {
-    const result = await store.submitOrder(postingDate.value)
+    const result = await store.submitOrder(postingDate.value, shouldSubmitStockEntry)
     submittedDocNo.value = result?.stock_entry || ''
+    submittedDraft.value = result?.stock_entry_submitted === false
     showSuccessModal.value = true
   } catch (err) {
     submitError.value = 'Error: ' + err.message
@@ -373,7 +415,10 @@ function closeSuccessModal() {
 .btn-primary { background: #0f6e56; color: #fff; }
 .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
 .btn-outline { background: #fff; border: 1.5px solid #0f6e56; color: #0f6e56; padding: 10px; }
+.btn-outline:disabled { border-color: #94a3b8; color: #94a3b8; cursor: not-allowed; }
 .btn-full { width: 100%; padding: 12px; }
+.submit-btn-row { display: flex; gap: 10px; margin-top: 14px; }
+.submit-btn-row .btn { flex: 1; min-width: 0; }
 .btn-scan {
   display: flex; align-items: center; justify-content: center; gap: 8px;
   font-weight: 700; min-height: 48px; font-size: 15px;
@@ -389,6 +434,11 @@ function closeSuccessModal() {
 .progress-qty.ok { color: #16a34a; }
 .progress-qty.over { color: #dc2626; }
 .progress-target { font-size: 14px; color: #64748b; }
+
+.uom-summary { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
+.uom-summary__title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; color: #64748b; margin-bottom: 6px; }
+.uom-summary__row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 14px; color: #0f172a; }
+.uom-summary__row + .uom-summary__row { border-top: 1px solid #f1f5f9; }
 
 .section-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 10px; }
 .roll-checklist { display: flex; flex-direction: column; gap: 8px; }

@@ -74,7 +74,7 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.utils import now_datetime, cint
 
 from pranera_knit.api.knit import create_roll_picking_entry, get_batch_warehouse_overrides
 
@@ -215,6 +215,7 @@ def get_pick_order_detail(name):
             "batch_no": r.batch_no,
             "qty": r.qty,
             "uom": r.uom,
+            "roll_weight": r.roll_weight,
         }
         for r in (doc.scanned_rolls or [])
     ]
@@ -235,11 +236,21 @@ def get_pick_order_detail(name):
         "execution_source_warehouse": doc.execution_source_warehouse or doc.source_warehouse,
         "execution_target_warehouse": doc.execution_target_warehouse or doc.target_warehouse,
         "pick_qty": pick_qty,
+        # Per-UOM breakdown of pick_qty (e.g. separate Kgs / Pcs totals) —
+        # batches can carry different Stock UOMs, so a single summed number
+        # mixes units; this is whatever's already on the Assignment's own
+        # Pick Qty (by UOM) table (see the Roll Pick Assignment Desk view).
+        # pick_qty itself is unchanged and still the grand total across all
+        # UOMs, for the tolerance-based scan flow below that already reads it.
+        "pick_qty_summary": [
+            {"uom": r.uom, "total_qty": r.total_qty} for r in (doc.pick_qty_summary or [])
+        ],
         "tolerance_min": round(pick_qty * (1 - TOLERANCE_PCT), 3),
         "tolerance_max": round(pick_qty * (1 + TOLERANCE_PCT), 3),
         "already_picked_qty": round(already_qty, 3),
         "already_picked_rolls": already_rolls,
         "scanned_rolls": scanned_rolls,
+        "total_weight": doc.total_weight,
         "batch_items": [
             {"batch": r.batch, "qty": r.qty} for r in (doc.batch_items or [])
         ],
@@ -445,6 +456,7 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
         "batch_no": roll.batch,
         "qty": qty,
         "uom": roll.stock_uom or "Kgs",
+        "roll_weight": roll.roll_weight,
     }
 
     doc.append("scanned_rolls", {
@@ -454,6 +466,7 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
         "batch_no": result["batch_no"],
         "qty": result["qty"],
         "uom": result["uom"],
+        "roll_weight": result["roll_weight"],
         "scanned_by": frappe.session.user,
         "scanned_at": now_datetime(),
     })
@@ -483,7 +496,7 @@ def remove_scanned_roll(pick_order, roll_no):
 
 
 @frappe.whitelist()
-def submit_pick_order(pick_order, posting_date):
+def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
     """Final submission for a Pick Order Execution session. Builds the
     picked-rolls list from what's persisted server-side (scanned_rolls) —
     NOT from anything the client passes in — so the source of truth for
@@ -493,7 +506,15 @@ def submit_pick_order(pick_order, posting_date):
     tolerance check) to knit.create_roll_picking_entry, then clears
     scanned_rolls now that they've become a real, submitted pick list —
     this is the one and only pick entry this Assignment will ever
-    produce."""
+    produce.
+
+    submit_stock_entry controls only the Stock Entry's docstatus — the
+    Roll Wise Pick List is ALWAYS created and submitted either way, since
+    that's the record of what was picked. Pass 0 ("Create Pick Entry -
+    Draft") to leave the Stock Entry as a draft for someone to review and
+    submit manually later (e.g. a supervisor sign-off before material
+    actually moves); pass 1 (default, "Create Pick Entry - Submit") for
+    the normal immediate-submit flow."""
     doc = frappe.get_doc("Roll Pick Assignment", pick_order)
     _assert_assigned_to_me(doc)
 
@@ -523,6 +544,7 @@ def submit_pick_order(pick_order, posting_date):
         project=doc.project,
         rolls=rolls,
         roll_pick_assignment=pick_order,
+        submit_stock_entry=cint(submit_stock_entry),
     )
 
     # Now that these rolls are a real submitted pick list, clear the

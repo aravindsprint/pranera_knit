@@ -140,7 +140,7 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     scannedRolls.value = scannedRolls.value.filter(r => r.roll_no !== rollNo)
   }
 
-  async function submitOrder(postingDate) {
+  async function submitOrder(postingDate, submitStockEntry = true) {
     if (!order.value) throw new Error('No Pick Order loaded')
     if (!scannedRolls.value.length) throw new Error('Scan at least one roll before submitting')
     if (!withinTolerance.value) {
@@ -158,7 +158,7 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
       // execution_source_warehouse, execution_target_warehouse), so the
       // source of truth is always the saved scan session, not this tab's
       // in-memory state.
-      const res = await submitPickOrder(order.value.name, postingDate)
+      const res = await submitPickOrder(order.value.name, postingDate, submitStockEntry)
       return res
     } finally {
       submitting.value = false

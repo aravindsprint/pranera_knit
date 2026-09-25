@@ -544,9 +544,14 @@ export const updatePickOrderExecution = (pickOrder, { sourceWarehouse, targetWar
     target_warehouse: targetWarehouse,
   }).then(r => r.message)
 
-export const submitPickOrder = (pickOrder, postingDate) =>
+// submitStockEntry: true (default) submits the Stock Entry immediately —
+// "Create Pick Entry - Submit". false leaves it as a draft for later
+// review — "Create Pick Entry - Draft". The Roll Wise Pick List is always
+// submitted either way; this only affects the Stock Entry's docstatus.
+export const submitPickOrder = (pickOrder, postingDate, submitStockEntry = true) =>
   call('pranera_knit.api.pick_order.submit_pick_order', {
-    pick_order: pickOrder, posting_date: postingDate
+    pick_order: pickOrder, posting_date: postingDate,
+    submit_stock_entry: submitStockEntry ? 1 : 0,
   }).then(r => r.message)
 
 export const searchWorkOrdersForPickOrder = (txt) =>

@@ -29,7 +29,7 @@ blend batches.
 import frappe
 import json
 from frappe import _
-from frappe.utils import now_datetime, today, get_datetime, nowtime
+from frappe.utils import now_datetime, today, get_datetime, nowtime, cint
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
 
@@ -447,7 +447,7 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                batch_no=None, from_work_order=None,
                                from_subcontracting=None, rolls=None, items=None,
                                required_items=None, scanned_roll=None,
-                               roll_pick_assignment=None):
+                               roll_pick_assignment=None, submit_stock_entry=1):
     """
     Creates a Roll Wise Pick List + Stock Entry (Material Transfer) for the
     picked rolls/batches. Exact port of Node's POST /api/createRollPickingEntry
@@ -481,8 +481,16 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
     Pick Order flow (a supervisor-assigned task, see api/pick_order.py),
     pass the Roll Pick Assignment name here. On success this stamps that
     reference onto the created Roll Wise Pick List (for traceability) and
-    marks the Order's status "Completed". Ordinary manual picks (no Pick
-    Order behind them) omit this and nothing changes.
+    marks the Order's status "Completed" — or "In Progress" if
+    submit_stock_entry is falsy, since the material hasn't actually moved
+    yet. Ordinary manual picks (no Pick Order behind them) omit this and
+    nothing changes.
+
+    submit_stock_entry: the Roll Wise Pick List is ALWAYS submitted
+    regardless — it's just the record of what was picked. This only
+    controls the Stock Entry's docstatus: truthy (default) submits it
+    immediately as before; falsy inserts it as a draft for someone to
+    review and submit manually later.
     """
     frappe.has_permission("Stock Entry", throw=True)
 
@@ -712,15 +720,25 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
             se.custom_from_subcontracting = from_subcontracting
 
         se.insert(ignore_permissions=True)
-        se.submit()
+        if cint(submit_stock_entry):
+            se.submit()
 
         # Trace this Stock Entry back to the Pick Order it fulfilled (if any)
         # and close the Order out. Reuses the same Stock Entry, same rules,
         # same warehouse-sync hook — this is not a separate code path, just
         # an extra reference stamped on afterward.
+        #
+        # Status only goes to "Completed" once the Stock Entry itself is
+        # submitted — a draft Stock Entry means the material hasn't
+        # actually moved yet, so the Assignment is still "In Progress"
+        # (someone still needs to review and submit that Stock Entry
+        # before this pick is truly done).
         if roll_pick_assignment:
             pick_list.db_set("roll_pick_assignment", roll_pick_assignment, update_modified=False)
-            frappe.db.set_value("Roll Pick Assignment", roll_pick_assignment, "status", "Completed")
+            frappe.db.set_value(
+                "Roll Pick Assignment", roll_pick_assignment, "status",
+                "Completed" if cint(submit_stock_entry) else "In Progress",
+            )
 
         frappe.db.commit()
 
@@ -728,9 +746,14 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
 
         return {
             "success": True,
-            "message": "Roll Wise Pick List and Stock Entry created successfully",
+            "message": (
+                "Roll Wise Pick List and Stock Entry created successfully"
+                if cint(submit_stock_entry)
+                else "Roll Wise Pick List created; Stock Entry saved as draft"
+            ),
             "pick_list": pick_list.name,
             "stock_entry": se.name,
+            "stock_entry_submitted": bool(cint(submit_stock_entry)),
             "transfer_type": "batch" if is_batch_transfer else "roll",
             "entry_type": "Material Transfer",
             "data": {
