@@ -74,9 +74,9 @@ import re
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime, cint
+from frappe.utils import now_datetime, cint, flt
 
-from pranera_knit.api.knit import create_roll_picking_entry, get_batch_warehouse_overrides
+from pranera_knit.api.knit import create_roll_picking_entry, get_batch_warehouse_overrides, get_pick_qty_targets_by_uom
 
 TOLERANCE_PCT = 0.03
 
@@ -197,15 +197,35 @@ def get_my_pick_orders():
 
 @frappe.whitelist()
 def get_pick_order_detail(name):
-    """Full detail for one Assignment: the target (pick_qty + tolerance
-    band), whatever's already been picked in prior submitted sessions,
-    and whatever's currently scanned-but-not-yet-submitted (persisted, so
-    a worker resuming mid-way sees exactly where they left off)."""
+    """Full detail for one Assignment: the per-UOM target (see
+    get_pick_qty_targets_by_uom — a Kgs target and a Pcs target are
+    unrelated quantities and are each checked against their own ±3%
+    tolerance independently, not blended into one number), whatever's
+    already been picked in prior submitted sessions, and whatever's
+    currently scanned-but-not-yet-submitted (persisted, so a worker
+    resuming mid-way sees exactly where they left off)."""
     doc = frappe.get_doc("Roll Pick Assignment", name)
     _assert_assigned_to_me(doc)
 
     pick_qty = float(doc.pick_qty or 0)
     already_qty, already_rolls = _already_picked_qty(name)
+
+    already_by_uom = {}
+    for r in already_rolls:
+        u = r.uom or "Kgs"
+        already_by_uom[u] = already_by_uom.get(u, 0.0) + flt(r.qty)
+
+    targets_by_uom = get_pick_qty_targets_by_uom(doc)
+    pick_qty_summary = [
+        {
+            "uom": uom,
+            "total_qty": round(target, 3),
+            "already_picked_qty": round(already_by_uom.get(uom, 0.0), 3),
+            "tolerance_min": round(target * (1 - TOLERANCE_PCT), 3),
+            "tolerance_max": round(target * (1 + TOLERANCE_PCT), 3),
+        }
+        for uom, target in targets_by_uom.items()
+    ]
 
     scanned_rolls = [
         {
@@ -235,16 +255,14 @@ def get_pick_order_detail(name):
         "target_warehouse": doc.target_warehouse,
         "execution_source_warehouse": doc.execution_source_warehouse or doc.source_warehouse,
         "execution_target_warehouse": doc.execution_target_warehouse or doc.target_warehouse,
+        # pick_qty and the tolerance_min/max below it are the OLD blended
+        # grand-total-across-all-UOMs numbers — kept for display/backward
+        # compat only. They are NOT what gates submission any more; that's
+        # pick_qty_summary now (each UOM checked independently). See
+        # get_pick_qty_targets_by_uom's docstring for why blending Kgs and
+        # Pcs into one "target" was wrong in the first place.
         "pick_qty": pick_qty,
-        # Per-UOM breakdown of pick_qty (e.g. separate Kgs / Pcs totals) —
-        # batches can carry different Stock UOMs, so a single summed number
-        # mixes units; this is whatever's already on the Assignment's own
-        # Pick Qty (by UOM) table (see the Roll Pick Assignment Desk view).
-        # pick_qty itself is unchanged and still the grand total across all
-        # UOMs, for the tolerance-based scan flow below that already reads it.
-        "pick_qty_summary": [
-            {"uom": r.uom, "total_qty": r.total_qty} for r in (doc.pick_qty_summary or [])
-        ],
+        "pick_qty_summary": pick_qty_summary,
         "tolerance_min": round(pick_qty * (1 - TOLERANCE_PCT), 3),
         "tolerance_max": round(pick_qty * (1 + TOLERANCE_PCT), 3),
         "already_picked_qty": round(already_qty, 3),

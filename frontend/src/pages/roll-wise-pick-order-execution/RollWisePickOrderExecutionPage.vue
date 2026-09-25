@@ -37,39 +37,29 @@
           </div>
         </div>
 
-        <!-- Target / progress -->
-        <div class="card">
-          <label class="form-label">Target Pick Qty</label>
+        <!-- Target / progress — one block per UOM (Kgs, Pcs, ...), each
+             tracked and tolerance-checked independently. A Kgs target and
+             a Pcs target are unrelated quantities, so there's no single
+             blended "Target Pick Qty" number any more — see
+             get_pick_qty_targets_by_uom in knit.py. -->
+        <div class="card" v-for="u in store.uomProgress" :key="u.uom">
+          <label class="form-label">Target Pick Qty — {{ u.uom }}</label>
           <div class="progress-row">
-            <span class="progress-qty" :class="{ over: store.overTolerance, ok: store.withinTolerance }">
-              {{ fmt(store.totalPickedQty) }}
+            <span class="progress-qty" :class="{ over: u.overTolerance, ok: u.withinTolerance }">
+              {{ fmt(u.totalPicked) }}
             </span>
-            <span class="progress-target">/ {{ fmt(store.order.pick_qty) }} kg</span>
+            <span class="progress-target">/ {{ fmt(u.targetQty) }} {{ u.uom }}</span>
           </div>
           <div class="hint-text">
             <i class="pi pi-info-circle"></i>
-            <span>Tolerance band: {{ fmt(store.order.tolerance_min) }} – {{ fmt(store.order.tolerance_max) }} kg</span>
+            <span>Tolerance band: {{ fmt(u.toleranceMin) }} – {{ fmt(u.toleranceMax) }} {{ u.uom }}</span>
           </div>
-          <div v-if="store.order.already_picked_qty" class="hint-text">
+          <div v-if="u.alreadyPickedQty" class="hint-text">
             <i class="pi pi-history"></i>
-            <span>{{ fmt(store.order.already_picked_qty) }} kg already picked in prior sessions</span>
+            <span>{{ fmt(u.alreadyPickedQty) }} {{ u.uom }} already picked in prior sessions</span>
           </div>
-          <div v-if="store.overTolerance" class="error-banner" style="margin-top:8px">
-            <i class="pi pi-exclamation-triangle"></i> Over tolerance — remove a roll before submitting
-          </div>
-
-          <!-- Per-UOM breakdown, same as the Roll Pick Assignment Desk
-               view's "Pick Qty (by UOM)" table — pick_qty above stays the
-               single grand total (across all UOMs) that the tolerance
-               band is checked against; this just shows the split when a
-               batch mixes Kgs and Pcs items so it isn't hidden inside one
-               blended number. -->
-          <div v-if="store.order.pick_qty_summary && store.order.pick_qty_summary.length" class="uom-summary">
-            <div class="uom-summary__title">Pick Qty (by UOM)</div>
-            <div v-for="row in store.order.pick_qty_summary" :key="row.uom" class="uom-summary__row">
-              <span>{{ row.uom }}</span>
-              <span>{{ fmt(row.total_qty) }}</span>
-            </div>
+          <div v-if="u.overTolerance" class="error-banner" style="margin-top:8px">
+            <i class="pi pi-exclamation-triangle"></i> Over tolerance for {{ u.uom }} — remove a roll before submitting
           </div>
         </div>
 
@@ -434,11 +424,6 @@ function closeSuccessModal() {
 .progress-qty.ok { color: #16a34a; }
 .progress-qty.over { color: #dc2626; }
 .progress-target { font-size: 14px; color: #64748b; }
-
-.uom-summary { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
-.uom-summary__title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; color: #64748b; margin-bottom: 6px; }
-.uom-summary__row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; font-size: 14px; color: #0f172a; }
-.uom-summary__row + .uom-summary__row { border-top: 1px solid #f1f5f9; }
 
 .section-title { font-size: 14px; font-weight: 700; color: #0f172a; margin: 0 0 10px; }
 .roll-checklist { display: flex; flex-direction: column; gap: 8px; }

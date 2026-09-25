@@ -70,13 +70,44 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
   // this browser tab, so closing the app mid-session loses nothing.
   const scannedRolls = ref([])
 
-  const sessionQty = computed(() => scannedRolls.value.reduce((sum, r) => sum + (Number(r.qty) || 0), 0))
-  const totalPickedQty = computed(() => (order.value?.already_picked_qty || 0) + sessionQty.value)
-  const withinTolerance = computed(() => {
-    if (!order.value) return false
-    return totalPickedQty.value >= order.value.tolerance_min && totalPickedQty.value <= order.value.tolerance_max
+  // Per-UOM progress — pairs each target from order.pick_qty_summary
+  // (Kgs, Pcs, whatever UOMs the batch items carry) with this session's
+  // scanned rolls of that same UOM plus whatever was already picked in a
+  // prior session. A Kgs target and a Pcs target are unrelated
+  // quantities — see get_pick_qty_targets_by_uom in knit.py — so each is
+  // tracked and tolerance-checked independently rather than blended into
+  // one combined number.
+  const uomProgress = computed(() => {
+    if (!order.value) return []
+    const sessionByUom = {}
+    for (const r of scannedRolls.value) {
+      const uom = r.uom || 'Kgs'
+      sessionByUom[uom] = (sessionByUom[uom] || 0) + (Number(r.qty) || 0)
+    }
+    return (order.value.pick_qty_summary || []).map(target => {
+      const sessionQtyForUom = sessionByUom[target.uom] || 0
+      const totalPicked = (target.already_picked_qty || 0) + sessionQtyForUom
+      return {
+        uom: target.uom,
+        targetQty: target.total_qty,
+        toleranceMin: target.tolerance_min,
+        toleranceMax: target.tolerance_max,
+        alreadyPickedQty: target.already_picked_qty || 0,
+        sessionQty: sessionQtyForUom,
+        totalPicked,
+        withinTolerance: totalPicked >= target.tolerance_min && totalPicked <= target.tolerance_max,
+        overTolerance: totalPicked > target.tolerance_max,
+      }
+    })
   })
-  const overTolerance = computed(() => !!order.value && totalPickedQty.value > order.value.tolerance_max)
+
+  // Submission requires every UOM group to independently land within
+  // tolerance — a Kgs group sitting fine while Pcs is still short (or
+  // over) means the pick isn't actually done yet.
+  const withinTolerance = computed(() =>
+    uomProgress.value.length > 0 && uomProgress.value.every(u => u.withinTolerance)
+  )
+  const overTolerance = computed(() => uomProgress.value.some(u => u.overTolerance))
 
   async function loadOrder(name) {
     orderLoading.value = true
@@ -144,9 +175,12 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     if (!order.value) throw new Error('No Pick Order loaded')
     if (!scannedRolls.value.length) throw new Error('Scan at least one roll before submitting')
     if (!withinTolerance.value) {
+      const offenders = uomProgress.value.filter(u => !u.withinTolerance)
+      const detail = offenders
+        .map(u => `${u.uom}: picked ${u.totalPicked.toFixed(2)}, target ${u.targetQty.toFixed(2)}`)
+        .join('; ')
       throw new Error(
-        `Total picked (${totalPickedQty.value.toFixed(2)}) is outside the \u00b13% tolerance ` +
-        `for the target (${order.value.pick_qty.toFixed(2)})`
+        `Outside the \u00b13% tolerance for ${offenders.length > 1 ? 'these UOMs' : 'this UOM'} — ${detail}`
       )
     }
 
@@ -178,7 +212,7 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     order, orderLoading, orderError, submitting,
     sourceWarehouse, targetWarehouse, warehouses, warehousesLoading, loadWarehouses,
     scannedRolls,
-    sessionQty, totalPickedQty, withinTolerance, overTolerance,
+    uomProgress, withinTolerance, overTolerance,
     loadOrder, setSourceWarehouse, setTargetWarehouse,
     scanRoll, removeScannedRoll, submitOrder, reset,
   }

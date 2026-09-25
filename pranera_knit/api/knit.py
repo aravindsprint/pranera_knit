@@ -440,6 +440,35 @@ def get_batch_warehouse_overrides(roll_pick_assignment):
     }
 
 
+def get_pick_qty_targets_by_uom(assignment_doc):
+    """Per-UOM breakdown of a Roll Pick Assignment's pick target — {uom:
+    target_qty} — derived directly from the Assignment's own Batch Items
+    (grouped by stock_uom), NOT from the doctype's own "Pick Qty (by UOM)"
+    field. That field's computation logic isn't in any file this app
+    ships — it's populated by something outside this codebase, almost
+    certainly a Server Script that exists only on production, the exact
+    known-risky pattern this app has hit before (see the module docstring
+    on why Server Scripts are avoided here). Computing it fresh here also
+    fixes the actual bug that prompted this: pick_qty itself is a single
+    blended number that naively sums qty across every batch_items row
+    regardless of stock_uom — for a mixed Kgs+Pcs Assignment that means
+    adding a piece count directly to a weight and calling the sum "kg",
+    which is meaningless. Each UOM's target must be checked against its
+    own scanned total independently instead.
+
+    Falls back to a single "Kgs" bucket built from pick_qty when there are
+    no Batch Items at all (e.g. "From Work Order" / "Manual Roll Pick"
+    flows, which are always plain single-UOM weight picks with no batch
+    breakdown to derive from)."""
+    targets = {}
+    for row in (assignment_doc.batch_items or []):
+        uom = row.stock_uom or "Kgs"
+        targets[uom] = targets.get(uom, 0.0) + flt(row.qty)
+    if not targets and assignment_doc.pick_qty:
+        targets["Kgs"] = flt(assignment_doc.pick_qty)
+    return targets
+
+
 @frappe.whitelist()
 def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                source_warehouse=None, target_warehouse=None,
@@ -513,37 +542,52 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
     if not rolls:
         frappe.throw(_("At least one roll is required"))
 
-    # When fulfilling a Pick Order, the target qty (pick_qty, set by the
-    # supervisor) is the authoritative check — validated here rather than
-    # only client-side, since this is the one place a Pick Order's
-    # fulfillment actually becomes a real Stock Entry. Accounts for
-    # whatever was already submitted against this Order in a prior
+    # When fulfilling a Pick Order, the per-UOM target (from Batch Items,
+    # see get_pick_qty_targets_by_uom) is the authoritative check —
+    # validated here rather than only client-side, since this is the one
+    # place a Pick Order's fulfillment actually becomes a real Stock
+    # Entry. Each UOM is checked independently (a Kgs target and a Pcs
+    # target are unrelated quantities — see get_pick_qty_targets_by_uom's
+    # docstring for why they can't be blended into one number). Accounts
+    # for whatever was already submitted against this Order in a prior
     # session too, so partial-then-resume fulfillment is checked against
-    # the true cumulative total, not just this call's rolls.
+    # the true cumulative total per UOM, not just this call's rolls.
     if roll_pick_assignment:
-        pick_qty = frappe.db.get_value("Roll Pick Assignment", roll_pick_assignment, "pick_qty")
-        pick_qty = float(pick_qty or 0)
-        if pick_qty:
+        assignment_doc = frappe.get_doc("Roll Pick Assignment", roll_pick_assignment)
+        targets_by_uom = get_pick_qty_targets_by_uom(assignment_doc)
+
+        if targets_by_uom:
             prior_lists = frappe.get_all(
                 "Roll Wise Pick List",
                 filters={"roll_pick_assignment": roll_pick_assignment, "docstatus": 1},
                 pluck="name",
             )
-            prior_qty = 0.0
+            prior_by_uom = {}
             if prior_lists:
-                prior_qty = frappe.db.sql("""
-                    select coalesce(sum(qty), 0) from `tabRoll Wise Pick Item`
-                    where parenttype = 'Roll Wise Pick List' and parent in %(lists)s
-                """, {"lists": prior_lists})[0][0] or 0.0
+                prior_rows = frappe.get_all(
+                    "Roll Wise Pick Item",
+                    filters={"parenttype": "Roll Wise Pick List", "parent": ["in", prior_lists]},
+                    fields=["qty", "uom"],
+                )
+                for r in prior_rows:
+                    u = r.uom or "Kgs"
+                    prior_by_uom[u] = prior_by_uom.get(u, 0.0) + flt(r.qty)
 
-            this_qty = sum(float(r.get("qty") or 0) for r in rolls)
-            total_picked = float(prior_qty) + this_qty
-            tolerance = pick_qty * 0.03
-            if not (pick_qty - tolerance <= total_picked <= pick_qty + tolerance):
-                frappe.throw(_(
-                    "Picked quantity {0} is outside the allowed \u00b13% tolerance for the "
-                    "target {1} (Pick Order {2})"
-                ).format(round(total_picked, 3), pick_qty, roll_pick_assignment))
+            this_by_uom = {}
+            for r in rolls:
+                u = r.get("uom") or "Kgs"
+                this_by_uom[u] = this_by_uom.get(u, 0.0) + flt(r.get("qty"))
+
+            for uom, target in targets_by_uom.items():
+                if not target:
+                    continue
+                total_picked = prior_by_uom.get(uom, 0.0) + this_by_uom.get(uom, 0.0)
+                tolerance = target * 0.03
+                if not (target - tolerance <= total_picked <= target + tolerance):
+                    frappe.throw(_(
+                        "Picked quantity {0} {1} is outside the allowed \u00b13% tolerance for "
+                        "the {1} target {2} (Pick Order {3})"
+                    ).format(round(total_picked, 3), uom, target, roll_pick_assignment))
 
     try:
         # Per-batch warehouse override, from the Roll Pick Assignment's own
