@@ -29,7 +29,7 @@ blend batches.
 import frappe
 import json
 from frappe import _
-from frappe.utils import now_datetime, today, get_datetime, nowtime, cint
+from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
 
