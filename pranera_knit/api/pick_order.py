@@ -251,6 +251,10 @@ def get_pick_order_detail(name):
         "already_picked_rolls": already_rolls,
         "scanned_rolls": scanned_rolls,
         "total_weight": doc.total_weight,
+        "item_wise_weight": [
+            {"item_code": r.item_code, "total_weight": r.total_weight}
+            for r in (doc.item_wise_weight or [])
+        ],
         "batch_items": [
             {"batch": r.batch, "qty": r.qty} for r in (doc.batch_items or [])
         ],
