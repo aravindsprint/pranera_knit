@@ -547,6 +547,10 @@ let breakdownStartTime  = null
 let endRollClickTime    = null
 let endRollRunningTime  = null
 let nextRollStartTime   = null
+// Start time of the roll being completed (End Roll → weight form). End Roll
+// immediately repoints actualRollStartTime at the NEXT roll so its timer can
+// run; without this the saved roll got start_time == end_time.
+let completingRollStartTime = null
 
 // ── End roll cooldown ─────────────────────────────────────────────────────
 //const ENDROLL_COOLDOWN    = 1 * 10 * 1000
@@ -630,6 +634,7 @@ function saveSession() {
     endRollClickTime: endRollClickTime?.toISOString() || null,
     endRollRunningTime: endRollRunningTime,
     nextRollStartTime: nextRollStartTime?.toISOString() || null,
+    completingRollStartTime: completingRollStartTime?.toISOString() || null,
     breakdownStartTime: breakdownStartTime?.toISOString() || null,
     isBreakdownActive: isBreakdownActive.value,
     totalBreakdownTime: totalBreakdownTime.value,
@@ -671,6 +676,7 @@ function restoreSession() {
     if (d.actualRollStartTime) actualRollStartTime = new Date(d.actualRollStartTime)
     if (d.endRollClickTime)    endRollClickTime    = new Date(d.endRollClickTime)
     if (d.nextRollStartTime)   nextRollStartTime   = new Date(d.nextRollStartTime)
+    if (d.completingRollStartTime) completingRollStartTime = new Date(d.completingRollStartTime)
     if (d.endRollRunningTime)  endRollRunningTime  = d.endRollRunningTime
 
     if (d.breakdownStartTime) {
@@ -1177,6 +1183,7 @@ async function endCurrentRoll() {
   endRollClickTime    = new Date()
   endRollRunningTime  = runningTime.value
   nextRollStartTime   = endRollClickTime
+  completingRollStartTime = actualRollStartTime   // remember the finishing roll's real start
   setCooldown()
   completingRollNo.value = currentRollNo.value
   currentRollNo.value    = null
@@ -1195,6 +1202,7 @@ async function endRollAndSubmitJob() {
   if (!canClickEndRoll.value) return
   if (!confirm('End current roll and submit job card?')) return
   endRollClickTime    = new Date()
+  completingRollStartTime = actualRollStartTime
   endRollRunningTime  = runningTime.value
   stopTimer()
   completingRollNo.value = currentRollNo.value
@@ -1212,6 +1220,7 @@ function cancelEndRoll() {
     isJobSubmissionMode.value = false
     currentRollNo.value = completingRollNo.value
     completingRollNo.value = null
+    completingRollStartTime = null
     endRollClickTime = null
     endRollRunningTime = null
     if (isRollActive.value && actualRollStartTime) startTimer()
@@ -1222,6 +1231,9 @@ function cancelEndRoll() {
     endRollRunningTime = null
     currentRollNo.value = completingRollNo.value
     completingRollNo.value = null
+    // End Roll had repointed the timer at the next roll — put the original start back
+    if (completingRollStartTime) actualRollStartTime = completingRollStartTime
+    completingRollStartTime = null
     stopTimer()
     if (isRollActive.value && actualRollStartTime) startTimer()
     showToast('Roll end cancelled.', 'info')
@@ -1274,7 +1286,7 @@ async function submitRollWeight() {
     total_qty:         isPcsUOM.value ? (totalQty.value || 0) : null,
     mistake_qty:       isPcsUOM.value ? (mistakeQty.value || 0) : null,
     shift,
-    start_time:        toLocalDatetime(actualRollStartTime || new Date()),
+    start_time:        toLocalDatetime(completingRollStartTime || actualRollStartTime || new Date()),
     end_time:          toLocalDatetime(endTime),
     total_time_seconds:      finalTime,
     breakdown_time_seconds:  totalBreakdownTime.value,
@@ -1298,6 +1310,7 @@ async function submitRollWeight() {
     }
 
     completingRollNo.value   = null
+    completingRollStartTime  = null
     showPrintButtons.value   = true
     showEndRollForm.value    = false
     isRollActive.value       = false
