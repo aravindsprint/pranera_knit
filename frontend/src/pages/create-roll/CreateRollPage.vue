@@ -97,9 +97,10 @@
           class="cr-btn cr-btn--submit cr-btn--full"
           style="margin-top:10px"
           @click="submitJobCard"
-          :disabled="submitting"
+          :disabled="submitting || jobSubmitBusy"
         >
-          ✓ Submit Job Card
+          <span v-if="jobSubmitBusy" class="cr-spinner"></span>
+          {{ jobSubmitBusy ? 'Submitting…' : '✓ Submit Job Card' }}
         </button>
       </div>
 
@@ -246,9 +247,10 @@
           class="cr-btn cr-btn--submit cr-btn--full"
           style="margin-top:10px"
           @click="submitJobCard"
-          :disabled="submitting"
+          :disabled="submitting || jobSubmitBusy"
         >
-          ✓ Submit Job Card
+          <span v-if="jobSubmitBusy" class="cr-spinner"></span>
+          {{ jobSubmitBusy ? 'Submitting…' : '✓ Submit Job Card' }}
         </button>
       </div>
 
@@ -464,11 +466,11 @@
         </div>
 
         <div class="cr-cons-ft">
-          <button class="cr-btn cr-btn--ghost" @click="submitWithPlanned" :disabled="consumptionModal.saving">
+          <button class="cr-btn cr-btn--ghost" @click="submitWithPlanned" :disabled="consumptionModal.saving || jobSubmitBusy">
             Use Planned (BOM)
           </button>
           <button class="cr-btn cr-btn--submit" @click="submitWithActuals"
-            :disabled="consumptionModal.saving || !consumptionModal.rows.length || !consumptionValid">
+            :disabled="consumptionModal.saving || jobSubmitBusy || !consumptionModal.rows.length || !consumptionValid">
             {{ consumptionModal.saving ? 'Submitting…' : 'Submit with Actuals' }}
           </button>
         </div>
@@ -499,6 +501,12 @@ const auth      = useAuthStore()
 const initializing  = ref(true)
 const loadingMsg    = ref('Loading…')
 const submitting    = ref(false)
+// Double-submit guard for the Job Card submit flow. `jobSubmitBusy` drives the
+// UI (buttons disabled) from the very first tap, through the pre-checks, until
+// the server responds. `submitInFlight` is a plain variable so the check is
+// synchronous — two taps landing in the same frame can't both get through.
+const jobSubmitBusy = ref(false)
+let submitInFlight  = false
 const consumptionModal = ref({ open: false, loading: false, saving: false, rows: [], error: '' })
 const beforeModal = ref({ open: false, loading: false, saving: false, rows: [], error: '', mode: 'startJob' })
 const returnCreating = ref(false)
@@ -1363,6 +1371,21 @@ async function startNextRollAfterPrint() {
 
 // ── Submit Job Card ───────────────────────────────────────────────────────
 async function submitJobCard() {
+  // Lock BEFORE the first await — the pre-checks below take a couple of
+  // network round-trips and a second tap during that window used to start a
+  // parallel submit flow (→ duplicate Manufacture Stock Entry).
+  if (submitInFlight || jobSubmitBusy.value || isJobSubmitted.value) return
+  jobSubmitBusy.value = true
+  try {
+    await _submitJobCardFlow()
+  } finally {
+    // doSubmitJobCard keeps its own lock while the request is in flight and
+    // after success; only release here if we never got that far.
+    if (!submitInFlight) jobSubmitBusy.value = false
+  }
+}
+
+async function _submitJobCardFlow() {
   const hasRolls = await checkIfRollsExist()
   if (!hasRolls && rollCount.value === 0) {
     showToast('No rolls found. Create at least one roll before submitting.', 'error')
@@ -1474,12 +1497,14 @@ function closeConsumptionModal() {
 
 // Skip = submit using BOM planned qty (no actuals sent)
 async function submitWithPlanned() {
+  if (submitInFlight || consumptionModal.value.saving) return
   await doSubmitJobCard(null)
 }
 
 // Submit using computed actual consumption (roll-weight split).
 // Persists before/after onto the WO, builds a new BOM from the actuals, then submits.
 async function submitWithActuals() {
+  if (submitInFlight || consumptionModal.value.saving) return
   recomputeActuals()
   if (!consumptionValid.value) {
     consumptionModal.value.error = 'Enter the After cone weight for each yarn (at least one must be > 0).'
@@ -1538,9 +1563,17 @@ async function createLeftoverReturn() {
 }
 
 async function doSubmitJobCard(actuals) {
-  if (!confirm(`Submit job card with ${rollCount.value} roll(s), total ${totalRollWeight.value.toFixed(3)} kg?`)) return
+  if (submitInFlight || isJobSubmitted.value) return
+  if (!confirm(`Submit job card with ${rollCount.value} roll(s), total ${totalRollWeight.value.toFixed(3)} kg?`)) {
+    consumptionModal.value.saving = false
+    return
+  }
+  // Set synchronously right after confirm() — no await in between.
+  submitInFlight = true
+  jobSubmitBusy.value = true
   consumptionModal.value.saving = true
   submitting.value = true
+  let succeeded = false
   try {
     const args = {
       jobcard: rollStore.productData.name,
@@ -1549,7 +1582,16 @@ async function doSubmitJobCard(actuals) {
     if (actuals && actuals.length) {
       args.actual_consumption = JSON.stringify(actuals)
     }
-    await call('knit_submit_roll_packing_list_v2', args)
+    try {
+      await call('knit_submit_roll_packing_list_v2', args)
+    } catch (e) {
+      // The server serializes submits per Job Card; if an earlier request
+      // (e.g. one whose response was lost on a flaky connection) already
+      // completed, treat that as success instead of showing an error.
+      if (!/already fully submitted/i.test(e.message || '')) throw e
+      console.warn('Job card was already submitted:', e.message)
+    }
+    succeeded = true
     consumptionModal.value.open = false
     isJobSubmitted.value      = true
     isJobStarted.value        = false
@@ -1565,6 +1607,11 @@ async function doSubmitJobCard(actuals) {
   } finally {
     submitting.value = false
     consumptionModal.value.saving = false
+    // On success stay locked until the page reloads; on failure allow a retry.
+    if (!succeeded) {
+      submitInFlight = false
+      jobSubmitBusy.value = false
+    }
   }
 }
 
