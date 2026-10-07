@@ -48,7 +48,9 @@ per-batch warehouse override from the Assignment's Batch Items table when
 one is set (get_batch_warehouse_overrides, in knit.py), since that's the
 specific place the supervisor identified for that batch; otherwise it
 falls back to the worker's currently selected blanket Source Warehouse
-(see scan_pick_order_roll).
+(see scan_pick_order_roll). "From Batch" Assignments never use the
+per-batch override — the worker's selected Source Warehouse is used for
+every roll, same as "To Work Order" (see get_batch_warehouse_overrides).
 
 The +/-3% tolerance itself is enforced authoritatively server-side, in
 knit.create_roll_picking_entry (not here) — that's the single point where
