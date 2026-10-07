@@ -426,8 +426,20 @@ def get_batch_warehouse_overrides(roll_pick_assignment):
     batches whose row actually has a warehouse set (that field is
     optional); callers fall back to the blanket source_warehouse for any
     batch missing from this map. Returns {} if roll_pick_assignment is
-    falsy (a manual, non-Pick-Order fulfillment)."""
+    falsy (a manual, non-Pick-Order fulfillment).
+
+    "From Batch" Assignments ALWAYS return {} — for that pick type the
+    worker picks the Source Warehouse on the Pick Order Execution page
+    (roll-wise-pick-order-execution), and that selection must win for
+    every roll, exactly as it does for "To Work Order": scans are
+    recorded against it, changing it mid-session moves every already
+    scanned roll to it, and the Stock Entry rows are built from it. The
+    per-batch Warehouse on the Batch Items rows is only the supervisor's
+    planning hint for From Batch (where stock was sitting when the
+    Assignment was made), not a binding override."""
     if not roll_pick_assignment:
+        return {}
+    if frappe.db.get_value("Roll Pick Assignment", roll_pick_assignment, "pick_type") == "From Batch":
         return {}
     return {
         r.batch: r.warehouse
