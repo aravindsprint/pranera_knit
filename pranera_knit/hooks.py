@@ -59,8 +59,12 @@ doc_events = {
     # app — keeps the "weight" Custom Field on batch_wise_pick_item rows
     # in sync with the summed roll_weight of the matching Roll Wise Pick
     # Item rows (grouped by Item Code + Warehouse + Batch).
+    # on_submit / on_cancel also refresh the linked Roll Pick Assignment's
+    # Pick Qty (by UOM) Total Weight column (see pick_qty_summary.py).
     "Roll Wise Pick List": {
         "validate": "pranera_knit.roll_wise_pick_list_events.set_batch_wise_weight",
+        "on_submit": "pranera_knit.pick_qty_summary.refresh_from_pick_list",
+        "on_cancel": "pranera_knit.pick_qty_summary.refresh_from_pick_list",
     },
 }
 
