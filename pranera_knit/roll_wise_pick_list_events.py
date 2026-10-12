@@ -7,24 +7,45 @@ def set_batch_wise_weight(doc, method=None):
     pick_qty_summary is (see hooks.py's note on that hook).
 
     "weight" is a Custom Field (see the Batch Wise Pick Item-weight
-    Custom Field) that mirrors Qty, grouped by Item Code + Warehouse +
-    Batch. create_roll_picking_entry already inserts one row per unique
-    (item, batch) with warehouse held constant (see knit.py), so in the
-    normal case this just copies that row's own Qty across — but it's
-    computed as a real group sum (not row.qty directly) so a manually
-    added or edited row, or an unexpected duplicate group, still reports
-    the true combined total rather than just its own row's Qty."""
+    Custom Field) holding the total ROLL WEIGHT of the matching Roll Wise
+    Pick Item rows, grouped by Item Code + Warehouse + Batch. This is the
+    physical weight in kg regardless of the item's UOM — for Pcs items
+    (collars/cuffs) Qty is a piece count, so weight must come from
+    roll_weight, never from Qty.
+
+    roll_weight is fetch_from roll_no.roll_weight; _validate_links fills
+    it before validate hooks run, but if it's still empty (e.g. a roll
+    with no weight set yet) we read it straight off the Roll.
+
+    Batch-transfer picks have no Roll Wise Pick Item rows at all (see
+    create_roll_picking_entry in knit.py) — those groups keep falling
+    back to the batch row's own Qty, as before."""
     rows = doc.get("batch_wise_pick_item") or []
     if not rows:
         return
 
-    totals = {}
+    weights = {}
+    for roll in doc.get("roll_wise_pick_item") or []:
+        roll_weight = float(roll.roll_weight or 0)
+        if not roll_weight and roll.roll_no:
+            roll_weight = float(
+                frappe.db.get_value("Roll", roll.roll_no, "roll_weight") or 0
+            )
+            roll.roll_weight = roll_weight
+        key = (roll.item_code, roll.warehouse, roll.batch)
+        weights[key] = weights.get(key, 0.0) + roll_weight
+
+    qty_totals = {}
     for row in rows:
         key = (row.item_code, row.warehouse, row.batch)
-        totals[key] = totals.get(key, 0.0) + float(row.qty or 0)
+        qty_totals[key] = qty_totals.get(key, 0.0) + float(row.qty or 0)
 
     for row in rows:
-        row.weight = totals[(row.item_code, row.warehouse, row.batch)]
+        key = (row.item_code, row.warehouse, row.batch)
+        if key in weights:
+            row.weight = round(weights[key], 3)
+        else:
+            row.weight = qty_totals[key]
 
 
 def on_stock_entry_submit(doc, method=None):

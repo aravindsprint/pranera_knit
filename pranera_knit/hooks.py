@@ -57,7 +57,8 @@ doc_events = {
     },
     # Roll Wise Pick List is likewise owned by the Textiles And Garments
     # app — keeps the "weight" Custom Field on batch_wise_pick_item rows
-    # in sync with the grouped Item Code + Warehouse + Batch Qty total.
+    # in sync with the summed roll_weight of the matching Roll Wise Pick
+    # Item rows (grouped by Item Code + Warehouse + Batch).
     "Roll Wise Pick List": {
         "validate": "pranera_knit.roll_wise_pick_list_events.set_batch_wise_weight",
     },
