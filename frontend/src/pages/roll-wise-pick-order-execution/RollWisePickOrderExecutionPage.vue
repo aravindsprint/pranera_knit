@@ -16,7 +16,7 @@
         <div class="card">
           <div class="order-title">{{ store.order.name }}</div>
           <div class="order-sub">
-            {{ store.order.pick_type }}<span v-if="store.order.document_name"> · {{ store.order.document_name }}</span><span v-if="store.order.sales_order"> · {{ store.order.sales_order }}</span>
+            {{ store.order.pick_type }}<span v-if="store.order.roll_source === 'QI Report Details'"> · QI rolls</span><span v-if="store.order.document_name"> · {{ store.order.document_name }}</span><span v-if="store.order.sales_order"> · {{ store.order.sales_order }}</span>
           </div>
           <div v-if="store.order.manufactured_qty" class="hint-text" style="margin-top:6px">
             <i class="pi pi-box"></i>
@@ -130,13 +130,13 @@
         <div class="card" v-if="store.scannedRolls.length">
           <h2 class="section-title">Scanned This Session</h2>
           <div class="roll-checklist">
-            <div v-for="r in store.scannedRolls" :key="r.roll_no" class="roll-row roll-row--done">
+            <div v-for="r in store.scannedRolls" :key="r.roll_no + '|' + (r.qi_report || '')" class="roll-row roll-row--done">
               <i class="pi pi-check-circle"></i>
               <div class="roll-row__body">
                 <div class="roll-row__no">Roll {{ r.roll_no }}</div>
-                <div class="roll-row__meta">{{ r.item_code }} · {{ r.batch_no }} · {{ fmt(r.qty) }} {{ r.uom }}</div>
+                <div class="roll-row__meta">{{ r.item_code }} · {{ r.batch_no }} · {{ fmt(r.qty) }} {{ r.uom }}<span v-if="r.qi_report"> · {{ r.qi_report }}</span></div>
               </div>
-              <button class="btn-remove" @click="onRemoveRoll(r.roll_no)" title="Remove">
+              <button class="btn-remove" @click="onRemoveRoll(r.roll_no, r.qi_report)" title="Remove">
                 <i class="pi pi-times"></i>
               </button>
             </div>
@@ -274,10 +274,10 @@ async function onTargetWarehouseChange(value) {
   }
 }
 
-async function onRemoveRoll(rollNo) {
+async function onRemoveRoll(rollNo, qiReport = null) {
   scanError.value = ''
   try {
-    await store.removeScannedRoll(rollNo)
+    await store.removeScannedRoll(rollNo, qiReport)
   } catch (err) {
     scanError.value = err.message
   }

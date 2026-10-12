@@ -141,10 +141,12 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     await updatePickOrderExecution(order.value.name, { targetWarehouse: value })
   }
 
-  // Scans one roll: accepts the same composite barcode format used
-  // elsewhere in the app ("item_code#batch#roll_no", falling back to the
-  // raw value if it isn't in that shape), extracts the roll number, then
-  // validates + persists it server-side (warehouse match against the
+  // Scans one roll. The RAW sticker text goes to the server, which parses
+  // it per the Pick Order's Roll Source: "item_code#batch#roll_no" for
+  // Roll stickers, "item_code#batch#lot#roll_no" for old QI Report
+  // Details stickers (the batch is needed there because QI roll numbers
+  // repeat across reports). The local duplicate check below only needs
+  // the roll number. Then it validates + persists it server-side (warehouse match against the
   // currently selected sourceWarehouse, project match for "To Work Order"
   // picks, and dedupe against both prior submitted sessions and this
   // in-progress one). Also blocks an obvious duplicate within this local
@@ -153,22 +155,29 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     if (!order.value) throw new Error('No Pick Order loaded')
     if (!sourceWarehouse.value) throw new Error('Select a Source Warehouse first')
 
-    const parts = String(scannedValue).split('#')
-    const rollNo = parts.length >= 3 ? parts[2] : scannedValue
+    const raw = String(scannedValue).trim()
+    const parts = raw.split('#')
+    const isQi = order.value.roll_source === 'QI Report Details'
+    const rollNo = parts.length >= 3 ? (isQi ? parts[parts.length - 1] : parts[2]) : raw
+    const qrBatch = parts.length >= 3 ? parts[1] : null
 
-    if (scannedRolls.value.some(r => r.roll_no === rollNo)) {
+    // For QI rolls the same number can belong to another report/batch, so
+    // only block locally when the batch matches too (the server re-checks).
+    if (scannedRolls.value.some(r => r.roll_no === rollNo && (!isQi || !qrBatch || r.batch_no === qrBatch))) {
       throw new Error(`Roll ${rollNo} has already been scanned this session`)
     }
 
-    const result = await scanPickOrderRoll(order.value.name, rollNo, sourceWarehouse.value)
+    const result = await scanPickOrderRoll(order.value.name, raw, sourceWarehouse.value)
     scannedRolls.value = [...scannedRolls.value, result]
     return result
   }
 
-  async function removeScannedRoll(rollNo) {
+  async function removeScannedRoll(rollNo, qiReport = null) {
     if (!order.value) return
-    await apiRemoveScannedRoll(order.value.name, rollNo)
-    scannedRolls.value = scannedRolls.value.filter(r => r.roll_no !== rollNo)
+    await apiRemoveScannedRoll(order.value.name, rollNo, qiReport)
+    scannedRolls.value = scannedRolls.value.filter(
+      r => !(r.roll_no === rollNo && (!qiReport || r.qi_report === qiReport))
+    )
   }
 
   async function submitOrder(postingDate, submitStockEntry = true) {

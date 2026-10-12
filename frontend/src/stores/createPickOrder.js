@@ -14,6 +14,9 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   const pickQty = ref(null)
   const assignedTo = ref('')
   const remarks = ref('')
+  // Where scanned rolls are looked up: 'Roll' (stickers printed by this
+  // app) or 'QI Report Details' (old rolls, sticker item#batch#lot#roll_no).
+  const rollSource = ref('Roll')
 
   // "To Work Order" restricts to specific batches only if the supervisor
   // opts in — leave it off and the pick behaves as before (free-scan
@@ -140,6 +143,7 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
           : null,
         assigned_to: assignedTo.value,
         remarks: remarks.value || null,
+        roll_source: rollSource.value || 'Roll',
       }
       return await createPickOrder(payload)
     } catch (err) {
@@ -159,13 +163,14 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
     pickQty.value = null
     assignedTo.value = ''
     remarks.value = ''
+    rollSource.value = 'Roll'
     batchItems.value = [{ batch: '', qty: null }]
     restrictToBatches.value = false
     error.value = ''
   }
 
   return {
-    pickType, documentName, salesOrder, sourceWarehouse, targetWarehouse, pickQty, assignedTo, remarks,
+    pickType, documentName, salesOrder, sourceWarehouse, targetWarehouse, pickQty, assignedTo, remarks, rollSource,
     batchItems, batchItemsTotal, restrictToBatches,
     warehouses, workOrders, salesOrders, batches, users,
     loadingLookups, submitting, error,

@@ -655,14 +655,28 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
 
         if not is_batch_transfer:
             for r in rolls:
-                pick_list.append("roll_wise_pick_item", {
+                row = {
                     "item_code": r.get("item_code"),
                     "warehouse": _warehouse_for_batch(r.get("batch_no")),
                     "batch":     r.get("batch_no"),
                     "roll_no":   r.get("roll_no"),
                     "qty":       float(r.get("qty") or 0),
                     "uom":       r.get("uom"),
-                })
+                }
+                if r.get("qi_report"):
+                    # Old roll from a QI Report Details row — no Roll doc
+                    # behind it (or an unrelated Roll with the same number),
+                    # so its weight is set here, never fetched from Roll.
+                    row["qi_report"] = r.get("qi_report")
+                    row["roll_weight"] = float(r.get("roll_weight") or 0)
+                    row["custom_roll_weight"] = str(row["roll_weight"])
+                pick_list.append("roll_wise_pick_item", row)
+
+        # roll_no is a Link to Roll; a QI roll's number either doesn't exist
+        # as a Roll or points at an unrelated one. Skip link validation (and
+        # with it the roll_no.roll_weight fetch) for picks that include any.
+        if any(r.get("qi_report") for r in rolls):
+            pick_list.flags.ignore_links = True
 
         pick_list.insert(ignore_permissions=True)
         pick_list.submit()

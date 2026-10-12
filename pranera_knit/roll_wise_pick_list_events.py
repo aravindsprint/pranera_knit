@@ -27,7 +27,9 @@ def set_batch_wise_weight(doc, method=None):
     weights = {}
     for roll in doc.get("roll_wise_pick_item") or []:
         roll_weight = float(roll.roll_weight or 0)
-        if not roll_weight and roll.roll_no:
+        # QI-sourced rows (qi_report set) carry their own weight; their
+        # roll_no is not a Roll document, so never look it up there.
+        if not roll_weight and roll.roll_no and not roll.get("qi_report"):
             roll_weight = float(
                 frappe.db.get_value("Roll", roll.roll_no, "roll_weight") or 0
             )
@@ -86,9 +88,11 @@ def _sync_roll_warehouse(doc, reverse):
         return
     pick_list = frappe.get_doc("Roll Wise Pick List", pick_list_name)
 
+    # Skip QI-sourced rows: their roll_no is a QI Report Details roll
+    # number, not a Roll document (and may collide with an unrelated one).
     roll_nos = [
         row.roll_no for row in (pick_list.get("roll_wise_pick_item") or [])
-        if row.roll_no
+        if row.roll_no and not row.get("qi_report")
     ]
     if not roll_nos:
         return  # batch-transfer pick — no individual rolls tracked

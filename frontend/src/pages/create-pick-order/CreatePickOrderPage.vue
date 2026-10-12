@@ -14,6 +14,16 @@
           <option value="To Sales Order">To Sales Order</option>
         </select>
 
+        <label class="form-label" style="margin-top:14px">Roll Source <span class="req">*</span></label>
+        <select v-model="store.rollSource" class="form-input">
+          <option value="Roll">Roll (new stickers)</option>
+          <option value="QI Report Details">QI Report Details (old rolls)</option>
+        </select>
+        <div v-if="store.rollSource === 'QI Report Details'" class="hint-text">
+          <i class="pi pi-info-circle"></i>
+          <span>For old rolls with stickers like item#batch#lot#roll_no — weight and UOM come from the QI Report Details roll row.</span>
+        </div>
+
         <template v-if="store.needsDocument">
           <label class="form-label" style="margin-top:14px">Work Order <span class="req">*</span></label>
           <input

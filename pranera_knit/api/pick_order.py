@@ -39,6 +39,13 @@ Validations that run on every scan:
      this in-progress session or against a prior submitted session for
      this same Assignment.
 
+── Roll Source (roll_source, patches/v1_4) ───────────────────────────────
+"Roll" (default): everything above. "QI Report Details": old rolls that
+only exist as a row in a submitted QI Report Details' Roll Details table,
+stickered "item#batch#lot#roll_no". Looked up by roll_no + the sticker's
+batch (_get_qi_roll); roll_weight / stock_uom come from that row. Checks
+1 and 2 don't apply (no packing list, no project); 3 and 4 do.
+
 There is deliberately NO check that Roll.warehouse matches the selected
 Source Warehouse — Roll.warehouse is only ever pushed forward by
 roll_wise_pick_list_events.py, scoped to a different app's Stock Entries,
@@ -152,6 +159,89 @@ def _already_picked_qty(assignment_name):
     return total, rows
 
 
+QI_SOURCE = "QI Report Details"
+
+
+def _roll_source(doc):
+    return doc.get("roll_source") or "Roll"
+
+
+def _parse_scanned_value(value, roll_source):
+    """Splits a scanned sticker into (roll_no, batch_from_qr).
+
+    New stickers (Roll doctype):   item_code#batch#roll_no      (3 parts)
+    Old stickers (QI Report):      item_code#batch#lot#roll_no  (4 parts)
+    Anything without '#' is treated as a bare roll number (manual entry,
+    or a frontend that already parsed it).
+    """
+    value = (value or "").strip()
+    parts = [p.strip() for p in value.split("#")]
+    if len(parts) < 3:
+        return value, None
+    if roll_source == QI_SOURCE:
+        return parts[-1], parts[1] or None
+    if len(parts) >= 4:
+        frappe.throw(_(
+            "This looks like an old QI sticker ({0}). Set Roll Source to "
+            "'QI Report Details' on this Pick Order to scan old rolls."
+        ).format(value))
+    return parts[2], parts[1] or None
+
+
+def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
+    """Finds an old roll in a submitted QI Report Details' Roll Details.
+
+    QI roll numbers are not unique across reports, so the batch printed on
+    the sticker (or, failing that, the Pick Order's allowed batches) is
+    used to pick the right row. Returns a dict shaped like the Roll lookup
+    in scan_pick_order_roll, plus qi_report."""
+    rows = frappe.db.sql(
+        """
+        SELECT q.name AS qi_report, q.item_code, q.batch_no AS batch,
+               d.roll_weight, IFNULL(NULLIF(d.stock_uom, ''), q.stock_uom) AS stock_uom
+        FROM `tabRoll Details` d
+        INNER JOIN `tabQI Report Details` q ON q.name = d.parent
+        WHERE d.parenttype = 'QI Report Details'
+          AND d.parentfield = 'roll_details'
+          AND d.roll_no = %(roll_no)s
+          AND q.docstatus = 1
+        ORDER BY q.creation DESC
+        """,
+        {"roll_no": roll_no},
+        as_dict=True,
+    )
+    if not rows:
+        frappe.throw(_("Roll {0} not found in any submitted QI Report Details").format(roll_no))
+
+    if batch_from_qr:
+        rows = [r for r in rows if r.batch == batch_from_qr]
+        if not rows:
+            frappe.throw(_(
+                "Roll {0} with batch {1} not found in any submitted QI Report Details"
+            ).format(roll_no, batch_from_qr))
+    if len(rows) > 1 and allowed_batches:
+        narrowed = [r for r in rows if r.batch in allowed_batches]
+        if narrowed:
+            rows = narrowed
+    if len(rows) > 1:
+        frappe.throw(_(
+            "Roll {0} appears in more than one QI Report ({1}) — scan the sticker "
+            "QR (it carries the batch) instead of typing the roll number"
+        ).format(roll_no, ", ".join(r.qi_report for r in rows)))
+
+    row = rows[0]
+    uom = row.stock_uom or "Kgs"
+    if uom.lower() not in ("kg", "kgs"):
+        frappe.throw(_(
+            "Roll {0} (QI Report {1}) is in {2} — only Kgs rolls can be picked "
+            "from QI Report Details, since the QI roll row only carries a weight"
+        ).format(roll_no, row.qi_report, uom))
+    row.stock_uom = uom
+    row.project = None
+    row.total_qty = None
+    return row
+
+
 @frappe.whitelist()
 def get_my_pick_orders():
     """Assignments given to the current user, still open (not yet
@@ -238,6 +328,7 @@ def get_pick_order_detail(name):
             "qty": r.qty,
             "uom": r.uom,
             "roll_weight": r.roll_weight,
+            "qi_report": r.get("qi_report"),
         }
         for r in (doc.scanned_rolls or [])
     ]
@@ -247,6 +338,7 @@ def get_pick_order_detail(name):
         "posting_date": doc.posting_date,
         "status": doc.status,
         "pick_type": doc.pick_type,
+        "roll_source": _roll_source(doc),
         "document_name": _resolve_document_name(doc),
         "sales_order": doc.sales_order,
         "purchase_order": doc.purchase_order,
@@ -347,6 +439,18 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     if not source_warehouse:
         frappe.throw(_("Select a Source Warehouse first"))
 
+    # roll_no may be the raw sticker text — parse it server-side so the
+    # Roll vs QI sticker formats are handled in one place.
+    roll_source = _roll_source(doc)
+    roll_no, batch_from_qr = _parse_scanned_value(roll_no, roll_source)
+    if not roll_no:
+        frappe.throw(_("Empty scan"))
+
+    if roll_source == QI_SOURCE:
+        allowed = {r.batch for r in (doc.batch_items or []) if r.batch}
+        roll = _get_qi_roll(roll_no, batch_from_qr, allowed)
+        return _record_scan(doc, roll_no, roll, source_warehouse)
+
     roll = frappe.db.get_value(
         "Roll", roll_no,
         ["item_code", "warehouse", "batch", "project", "roll_weight", "total_qty", "stock_uom"],
@@ -405,6 +509,16 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
                 "rolls must match the target Work Order's project"
             ).format(roll_no, roll.project, doc.work_order, wo_project))
 
+    return _record_scan(doc, roll_no, roll, source_warehouse)
+
+
+def _record_scan(doc, roll_no, roll, source_warehouse):
+    """Checks shared by both roll sources (batch match, de-duplication),
+    then persists the scan to scanned_rolls. `roll` is a Roll lookup or a
+    QI Report Details lookup (_get_qi_roll, which adds qi_report)."""
+    pick_order = doc.name
+    qi_report = roll.get("qi_report")
+
     # Batch match. If this Assignment has explicit batch_items rows —
     # "From Batch" / "To Sales Order" picks always have these (and have no
     # work_order), and a "To Work Order" pick may optionally be restricted
@@ -445,14 +559,22 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
         filters={"roll_pick_assignment": pick_order, "docstatus": 1},
         pluck="name",
     )
-    if linked_pick_lists and frappe.db.exists("Roll Wise Pick Item", {
+    prior_filters = {
         "roll_no": roll_no, "parenttype": "Roll Wise Pick List", "parent": ["in", linked_pick_lists],
-    }):
+    }
+    if qi_report:
+        # QI roll numbers repeat across reports — the same number from a
+        # different report is a different physical roll.
+        prior_filters["qi_report"] = qi_report
+    if linked_pick_lists and frappe.db.exists("Roll Wise Pick Item", prior_filters):
         frappe.throw(_("Roll {0} has already been picked for this Order").format(roll_no))
 
     # ...and against rolls already scanned (persisted) THIS in-progress
     # session, whether from this device or an earlier one.
-    if any(r.roll_no == roll_no for r in (doc.scanned_rolls or [])):
+    if any(
+        r.roll_no == roll_no and (r.get("qi_report") or None) == (qi_report or None)
+        for r in (doc.scanned_rolls or [])
+    ):
         frappe.throw(_("Roll {0} has already been scanned for this Order").format(roll_no))
 
     # Roll.warehouse is NOT a reliable "where is this roll right now" signal —
@@ -481,6 +603,7 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
         "qty": qty,
         "uom": roll.stock_uom or "Kgs",
         "roll_weight": roll.roll_weight,
+        "qi_report": qi_report,
     }
 
     doc.append("scanned_rolls", {
@@ -491,6 +614,7 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
         "qty": result["qty"],
         "uom": result["uom"],
         "roll_weight": result["roll_weight"],
+        "qi_report": result["qi_report"],
         "scanned_by": frappe.session.user,
         "scanned_at": now_datetime(),
     })
@@ -502,7 +626,7 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
 
 
 @frappe.whitelist()
-def remove_scanned_roll(pick_order, roll_no):
+def remove_scanned_roll(pick_order, roll_no, qi_report=None):
     """Removes a persisted (not-yet-submitted) roll from this Assignment's
     scan session — the server-side counterpart to the execution page's
     per-row remove button."""
@@ -510,7 +634,12 @@ def remove_scanned_roll(pick_order, roll_no):
     _assert_assigned_to_me(doc)
 
     before = len(doc.scanned_rolls or [])
-    doc.set("scanned_rolls", [r for r in (doc.scanned_rolls or []) if r.roll_no != roll_no])
+    def _matches(r):
+        if r.roll_no != roll_no:
+            return False
+        return not qi_report or r.get("qi_report") == qi_report
+
+    doc.set("scanned_rolls", [r for r in (doc.scanned_rolls or []) if not _matches(r)])
     if len(doc.scanned_rolls) == before:
         frappe.throw(_("Roll {0} was not found in this session").format(roll_no))
 
@@ -555,6 +684,8 @@ def submit_pick_order(pick_order, posting_date, submit_stock_entry=1):
             "batch_no": r.batch_no,
             "qty": r.qty,
             "uom": r.uom,
+            "roll_weight": r.roll_weight,
+            "qi_report": r.get("qi_report"),
         }
         for r in doc.scanned_rolls
     ]
@@ -646,7 +777,8 @@ def search_assignable_users(txt=None):
 @frappe.whitelist()
 def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to, pick_qty=None,
                        document_name=None, project=None, remarks=None, sales_order=None,
-                       batch_items=None, purchase_order=None, subcontracting_order=None):
+                       batch_items=None, purchase_order=None, subcontracting_order=None,
+                       roll_source=None):
     """Creates + submits a Roll Pick Assignment.
 
     For "From Work Order" / "Manual Roll Pick", pick_qty is the
@@ -708,6 +840,10 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
     doc.target_warehouse = target_warehouse
     doc.assigned_to = assigned_to
     doc.pick_qty = pick_qty
+    if roll_source:
+        if roll_source not in ("Roll", QI_SOURCE):
+            frappe.throw(_("Roll Source must be 'Roll' or '{0}'").format(QI_SOURCE))
+        doc.roll_source = roll_source
 
     if pick_type in ("From Work Order", "To Work Order") and document_name:
         doc.work_order = document_name

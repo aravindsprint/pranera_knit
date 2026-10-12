@@ -528,9 +528,9 @@ export const scanPickOrderRoll = (pickOrder, rollNo, sourceWarehouse) =>
 // existing scanPickOrderRoll export (in the "Pick Order" section).
 // Do NOT overwrite the whole file with this — it's a snippet to insert.
 
-export const removeScannedRoll = (pickOrder, rollNo) =>
+export const removeScannedRoll = (pickOrder, rollNo, qiReport = null) =>
   call('pranera_knit.api.pick_order.remove_scanned_roll', {
-    pick_order: pickOrder, roll_no: rollNo
+    pick_order: pickOrder, roll_no: rollNo, qi_report: qiReport
   }).then(r => r.message)
 
 // Persists the worker's Source/Target Warehouse choice for this execution
