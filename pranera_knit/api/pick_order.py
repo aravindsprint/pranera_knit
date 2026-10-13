@@ -453,7 +453,8 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
 
     roll = frappe.db.get_value(
         "Roll", roll_no,
-        ["item_code", "warehouse", "batch", "project", "roll_weight", "total_qty", "stock_uom"],
+        ["item_code", "warehouse", "batch", "project", "roll_weight", "total_qty", "stock_uom",
+         "subcontracting_order", "purchase_order"],
         as_dict=True,
     )
     if not roll:
@@ -494,6 +495,14 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
         """,
         {"roll_no_chain": roll_no_chain},
     )
+    # Greige rolls knitted by a subcontractor (or bought in) never go
+    # through an in-house Manufacture + Roll Packing List — their stock
+    # arrives via a submitted Subcontracting Receipt / Purchase Receipt.
+    # Such a roll is real, moveable stock as long as its batch was
+    # actually received, so accept it on that basis instead.
+    if not packed_against_stock_entry and _is_received_external_roll(roll):
+        packed_against_stock_entry = True
+
     if not packed_against_stock_entry:
         frappe.throw(_(
             "Roll {0} is not included in any submitted Roll Packing List with a Stock Entry "
@@ -510,6 +519,46 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
             ).format(roll_no, roll.project, doc.work_order, wo_project))
 
     return _record_scan(doc, roll_no, roll, source_warehouse)
+
+
+def _is_received_external_roll(roll):
+    """True when the roll came from a Subcontracting / Purchase Order and
+    its batch has been received against a submitted, non-cancelled
+    Subcontracting Receipt or Purchase Receipt."""
+    if not roll.batch or not (roll.get("subcontracting_order") or roll.get("purchase_order")):
+        return False
+
+    receipt_types = ("Subcontracting Receipt", "Purchase Receipt")
+
+    # v15 Serial and Batch Bundle path
+    if frappe.db.sql(
+        """
+        select 1
+        from `tabSerial and Batch Entry` sbe
+        inner join `tabSerial and Batch Bundle` sbb on sbb.name = sbe.parent
+        where sbe.batch_no = %(batch)s
+            and sbb.voucher_type in %(types)s
+            and sbb.docstatus = 1
+            and sbb.is_cancelled = 0
+            and sbb.type_of_transaction = 'Inward'
+        limit 1
+        """,
+        {"batch": roll.batch, "types": receipt_types},
+    ):
+        return True
+
+    # Legacy batch_no on the ledger (pre-bundle entries)
+    return bool(frappe.db.sql(
+        """
+        select 1 from `tabStock Ledger Entry`
+        where batch_no = %(batch)s
+            and voucher_type in %(types)s
+            and is_cancelled = 0
+            and actual_qty > 0
+        limit 1
+        """,
+        {"batch": roll.batch, "types": receipt_types},
+    ))
 
 
 def _record_scan(doc, roll_no, roll, source_warehouse):
