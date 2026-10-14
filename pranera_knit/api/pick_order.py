@@ -188,6 +188,24 @@ def _parse_scanned_value(value, roll_source):
     return parts[2], parts[1] or None
 
 
+def _assert_not_stale_client_qi_scan(roll_no, batch_from_qr, allowed_batches):
+    """Builds of the Knit App from before the QI Roll Source change parsed
+    the sticker on the phone and sent parts[2]. On a 4-part QI sticker
+    (item#batch#lot#roll_no), parts[2] is the dyeing lot, not the roll, so
+    the server gets e.g. "26-8222-1-WC" and fails with a misleading
+    "not found". New builds send the raw sticker, so batch_from_qr is set.
+    A bare value that matches the lot suffix of one of this Assignment's
+    batches means the phone is still running an old cached build."""
+    if batch_from_qr or not roll_no or "/" in roll_no:
+        return
+    if any(b.endswith("/" + roll_no) for b in (allowed_batches or ())):
+        frappe.throw(_(
+            "{0} is the lot number, not the roll number. The Knit App on this "
+            "phone is out of date. Fully close the app (and any browser tab "
+            "with it open), reopen it, then scan again."
+        ).format(roll_no))
+
+
 def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
     """Finds an old roll in a submitted QI Report Details' Roll Details.
 
@@ -448,6 +466,7 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
 
     if roll_source == QI_SOURCE:
         allowed = {r.batch for r in (doc.batch_items or []) if r.batch}
+        _assert_not_stale_client_qi_scan(roll_no, batch_from_qr, allowed)
         roll = _get_qi_roll(roll_no, batch_from_qr, allowed)
         return _record_scan(doc, roll_no, roll, source_warehouse)
 
