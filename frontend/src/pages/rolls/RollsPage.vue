@@ -325,8 +325,8 @@
 
             <template v-else>
               <div v-if="rpl.blocked.length" class="rp-error" style="align-items:flex-start;flex-direction:column;gap:4px">
-                <div>⚠ {{ rpl.blocked.length }} roll(s) already have a Job Card, Purchase Order, or Subcontracting Order and will be left out:</div>
-                <div style="font-size:12px;font-family:monospace;word-break:break-word">{{ rpl.blocked.map(b => b.name).join(', ') }}</div>
+                <div>⚠ {{ rpl.blocked.length }} roll(s) are already on a Roll Packing List and will be left out:</div>
+                <div style="font-size:12px;font-family:monospace;word-break:break-word">{{ rpl.blocked.map(b => `${b.name} (${b.rpl})`).join(', ') }}</div>
               </div>
 
               <div v-if="!rpl.valid.length" class="rp-error">
@@ -679,15 +679,18 @@ async function openPackingListModal() {
   rpl.postingDate = moment().format('YYYY-MM-DD')
   try {
     const names = Array.from(selected.value)
-    const rows = await mapLimited(names, 8, name => getDoc('Roll', name))
+    const [rows, packed] = await Promise.all([
+      mapLimited(names, 8, name => getDoc('Roll', name)),
+      call('pranera_knit.api.knit.get_packed_rolls', { roll_nos: JSON.stringify(names) }),
+    ])
     const valid = []
     const blocked = []
     for (const r of rows) {
-      if (r.job_card || r.purchase_order || r.subcontracting_order) {
-        blocked.push(r)
-      } else {
-        valid.push(r)
-      }
+      // Only a roll already on a draft/submitted Roll Packing List is left
+      // out — Job Card / Purchase Order / Subcontracting Order rolls can be packed.
+      const rplName = packed?.message?.[r.name]
+      if (rplName) blocked.push({ ...r, rpl: rplName })
+      else valid.push(r)
     }
     rpl.valid = valid
     rpl.blocked = blocked
