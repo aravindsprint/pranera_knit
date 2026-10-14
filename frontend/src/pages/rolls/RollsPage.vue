@@ -30,12 +30,27 @@
           >
             📦 Create Roll Packing List ({{ selected.size }})
           </button>
-          <button class="rp-btn rp-btn--ghost rp-btn--sm" v-if="selected.size" @click="selected.clear()">Clear</button>
+          <button class="rp-btn rp-btn--ghost rp-btn--sm" v-if="selected.size" @click="clearSelection">Clear</button>
           <button class="rp-btn rp-btn--primary" @click="openCreate">+ New Roll</button>
         </div>
 
         <div class="rp-error" v-if="listError">⚠ {{ listError }}</div>
         <div class="rp-error" v-if="printSelectedError">⚠ {{ printSelectedError }}</div>
+
+        <!-- Select-all-matching banner: the table only shows one page (20),
+             so offer to extend the selection to every roll matching the search. -->
+        <div class="rp-select-banner" v-if="selectAllError">⚠ {{ selectAllError }}</div>
+        <div class="rp-select-banner" v-else-if="selectingAll">
+          <span class="rp-spinner rp-spinner--sm"></span> Selecting all rolls matching “{{ search.trim() }}”…
+        </div>
+        <div class="rp-select-banner" v-else-if="allMatchingInfo">
+          {{ allMatchingInfo }}
+          <button class="rp-link-btn" @click="clearSelection">Clear selection</button>
+        </div>
+        <div class="rp-select-banner" v-else-if="canSelectAllMatching">
+          All {{ rolls.length }} rolls on this page are selected.
+          <button class="rp-link-btn" @click="selectAllMatching">Select all rolls matching “{{ search.trim() }}”</button>
+        </div>
 
         <!-- List -->
         <div class="rp-card rp-card--table" v-if="rolls.length || listLoading">
@@ -369,7 +384,7 @@
 import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
-import { call, getList, getDoc, updateDoc, createDoc } from '@/api/frappe'
+import { call, getList, getAllList, getDoc, updateDoc, createDoc } from '@/api/frappe'
 import QRCode from 'qrcode'
 import moment from 'moment'
 
@@ -396,11 +411,83 @@ function toggleSelect(name) {
   else selected.value.add(name)
 }
 function toggleSelectAllOnPage() {
+  allMatchingInfo.value = ''
   if (allOnPageSelected.value) {
     rolls.value.forEach(r => selected.value.delete(r.name))
   } else {
     rolls.value.forEach(r => selected.value.add(r.name))
   }
+}
+function clearSelection() {
+  selected.value.clear()
+  allMatchingInfo.value = ''
+  selectAllError.value = ''
+}
+
+// ── Select ALL rolls matching the search (not just the visible page) ──────
+const selectingAll    = ref(false)
+const selectAllError  = ref('')
+const allMatchingInfo = ref('')
+// Offer it only for a search whose current page is full and fully ticked —
+// a short page already means every match is on screen.
+const canSelectAllMatching = computed(() =>
+  !!search.value.trim() && allOnPageSelected.value && rolls.value.length === pageSize
+)
+
+function rollSearchOrFilters(q) {
+  return q
+    ? [
+        ['name', 'like', `%${q}%`],
+        ['roll_no', 'like', `%${q}%`],
+        ['item_code', 'like', `%${q}%`],
+        ['work_order', 'like', `%${q}%`],
+        ['batch', 'like', `%${q}%`],
+        ['job_card', 'like', `%${q}%`],
+      ]
+    : []
+}
+
+async function selectAllMatching() {
+  const q = search.value.trim()
+  if (!q) return
+  selectingAll.value   = true
+  selectAllError.value = ''
+  try {
+    let rows = await getAllList('Roll', {
+      fields: ['name', 'roll_no', 'item_code', 'work_order', 'batch', 'job_card'],
+      orFilters: rollSearchOrFilters(q),
+      orderBy: 'creation desc',
+    })
+    // The search is a LIKE '%q%', so batch "…-1" also matches "…-10",
+    // "…-11" etc. If the text is an exact batch / work order / item /
+    // job card / roll, keep only the exact matches.
+    const exact = rows.filter(r =>
+      [r.name, r.roll_no, r.batch, r.work_order, r.item_code, r.job_card].includes(q)
+    )
+    if (exact.length) rows = exact
+    rows.forEach(r => selected.value.add(r.name))
+    allMatchingInfo.value = `All ${rows.length} rolls matching “${q}” are selected` +
+      (exact.length ? ' (exact match).' : '.')
+  } catch (e) {
+    selectAllError.value = 'Failed to select all rolls: ' + (e.message || e)
+  } finally {
+    selectingAll.value = false
+  }
+}
+
+// Run fn over items with at most `limit` requests in flight — keeps a
+// several-hundred-roll selection from firing hundreds of parallel calls.
+async function mapLimited(items, limit, fn) {
+  const out = new Array(items.length)
+  let i = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i++
+      out[idx] = await fn(items[idx])
+    }
+  })
+  await Promise.all(workers)
+  return out
 }
 
 const selectedRoll  = ref(null)
@@ -425,16 +512,7 @@ async function fetchRolls() {
   listError.value   = ''
   try {
     const q = (search.value || '').trim()
-    const orFilters = q
-      ? [
-          ['name', 'like', `%${q}%`],
-          ['roll_no', 'like', `%${q}%`],
-          ['item_code', 'like', `%${q}%`],
-          ['work_order', 'like', `%${q}%`],
-          ['batch', 'like', `%${q}%`],
-          ['job_card', 'like', `%${q}%`],
-        ]
-      : []
+    const orFilters = rollSearchOrFilters(q)
 
     const res = await getList('Roll', {
       fields: ['name', 'roll_no', 'item_code', 'work_order', 'roll_weight',
@@ -442,9 +520,9 @@ async function fetchRolls() {
                'purchase_order', 'subcontracting_order', 'stock_uom', 'total_qty'],
       orFilters,
       limit: pageSize,
+      start: page.value * pageSize,
       orderBy: `CAST(name AS UNSIGNED) desc`,
     })
-    // Offset manually via page
     const raw = Array.isArray(res) ? res : (res?.data || [])
     rolls.value = raw
   } catch(e) {
@@ -601,7 +679,7 @@ async function openPackingListModal() {
   rpl.postingDate = moment().format('YYYY-MM-DD')
   try {
     const names = Array.from(selected.value)
-    const rows = await Promise.all(names.map(name => getDoc('Roll', name)))
+    const rows = await mapLimited(names, 8, name => getDoc('Roll', name))
     const valid = []
     const blocked = []
     for (const r of rows) {
@@ -648,7 +726,7 @@ async function submitPackingList() {
     }
     const doc = await createDoc('Roll Packing List', payload)
     rpl.result = doc.name
-    selected.value.clear()
+    clearSelection()
     await fetchRolls()
   } catch (e) {
     rpl.error = e.message || 'Failed to create Roll Packing List'
@@ -802,6 +880,8 @@ let searchTimer = null
 watch(search, () => {
   clearTimeout(searchTimer)
   page.value = 0
+  allMatchingInfo.value = ''
+  selectAllError.value = ''
   searchTimer = setTimeout(fetchRolls, 400)
 })
 </script>
@@ -857,6 +937,8 @@ watch(search, () => {
 .rp-icon-btn--danger:hover { background:#fee2e2; }
 
 /* Pagination */
+.rp-select-banner { display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; background:#eff6ff; color:#1e3a8a; border:1px solid #bfdbfe; border-radius:8px; padding:8px 14px; font-size:13px; margin-bottom:10px; }
+.rp-link-btn { background:none; border:none; padding:0; color:#1d4ed8; font-weight:600; font-size:13px; text-decoration:underline; cursor:pointer; }
 .rp-pagination { display:flex; align-items:center; justify-content:center; gap:14px; padding:12px; border-top:1px solid #f1f5f9; }
 .rp-page-info { font-size:13px; color:#64748b; font-weight:600; }
 

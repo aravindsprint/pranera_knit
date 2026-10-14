@@ -133,11 +133,12 @@ function extractServerError(data, fallback = 'Request failed') {
   return fallback
 }
 
-export async function getList(doctype, { filters = [], orFilters = [], fields = ['name'], limit = 200, orderBy } = {}) {
+export async function getList(doctype, { filters = [], orFilters = [], fields = ['name'], limit = 200, start = 0, orderBy } = {}) {
   const params = new URLSearchParams({
     filters: JSON.stringify(filters),
     fields: JSON.stringify(fields),
     limit_page_length: limit,
+    limit_start: start,
     ...(orFilters && orFilters.length ? { or_filters: JSON.stringify(orFilters) } : {}),
     ...(orderBy ? { order_by: orderBy } : {})
   })
