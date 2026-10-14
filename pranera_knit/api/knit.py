@@ -503,7 +503,8 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
 
       STEP 2 — create + submit a Stock Entry (Material Transfer):
         * naming_series is "MT/26/" for pick_type == "To Work Order" (Material
-          Transfer for Manufacture), otherwise "MT/26/".
+          Transfer for Manufacture), "RFB/26/" for "To Sales Order" (ready
+          for billing), otherwise "BM/26/".
         * items are grouped by (item_code, batch_no) so multiple rolls of the
           same item/batch collapse into a single Stock Entry Detail row.
         * custom_batch_wise_packing_summary carries the batch/qty/roll-count
@@ -695,7 +696,12 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
             })
             se_item["qty"] += float(r.get("qty") or 0)
 
-        naming_series = "MT/26/" if pick_type == "To Work Order" else "BM/26/"
+        if pick_type == "To Work Order":
+            naming_series = "MT/26/"
+        elif pick_type == "To Sales Order":
+            naming_series = "RFB/26/"
+        else:
+            naming_series = "BM/26/"
 
         se = frappe.new_doc("Stock Entry")
         se.naming_series         = naming_series
