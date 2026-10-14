@@ -415,41 +415,23 @@ def _get_warehouse_address(warehouse):
 
 
 def get_batch_warehouse_overrides(roll_pick_assignment):
-    """batch -> warehouse map from a Roll Pick Assignment's own Batch Items
-    table (the field populated via get_warehouses_for_batch in
-    textiles_and_garments's roll_pick_assignment.py, showing each batch's
-    actual per-warehouse qty when the supervisor set it up). A batch
-    doesn't necessarily sit in the Assignment's single blanket Source
-    Warehouse, so anywhere a batch's rolls get attributed to a warehouse —
-    at scan time as much as at final Stock Entry creation — should prefer
-    this override over the blanket source_warehouse. Only includes
-    batches whose row actually has a warehouse set (that field is
-    optional); callers fall back to the blanket source_warehouse for any
-    batch missing from this map. Returns {} if roll_pick_assignment is
-    falsy (a manual, non-Pick-Order fulfillment).
+    """Always {} — for EVERY pick type, the Source Warehouse the worker
+    selects on the Pick Order Execution page (roll-wise-pick-order-execution)
+    wins for every roll: scans are recorded against it, changing it
+    mid-session moves every already-scanned roll to it, and the Stock Entry
+    rows are built from it.
 
-    "From Batch" Assignments ALWAYS return {} — for that pick type the
-    worker picks the Source Warehouse on the Pick Order Execution page
-    (roll-wise-pick-order-execution), and that selection must win for
-    every roll, exactly as it does for "To Work Order": scans are
-    recorded against it, changing it mid-session moves every already
-    scanned roll to it, and the Stock Entry rows are built from it. The
-    per-batch Warehouse on the Batch Items rows is only the supervisor's
-    planning hint for From Batch (where stock was sitting when the
-    Assignment was made), not a binding override."""
-    if not roll_pick_assignment:
-        return {}
-    if frappe.db.get_value("Roll Pick Assignment", roll_pick_assignment, "pick_type") == "From Batch":
-        return {}
-    return {
-        r.batch: r.warehouse
-        for r in frappe.get_all(
-            "Roll Pick Batch Item",
-            filters={"parenttype": "Roll Pick Assignment", "parent": roll_pick_assignment},
-            fields=["batch", "warehouse"],
-        )
-        if r.warehouse
-    }
+    Previously only "From Batch" behaved this way; To Work Order / To Sales
+    Order / To Subcontracting Order used the per-batch Warehouse on the
+    Assignment's Batch Items rows instead, so the worker's selection on the
+    execution page was silently ignored (e.g. RPA-0679). That per-batch
+    Warehouse is now only the supervisor's planning hint (where stock was
+    sitting when the Assignment was made), not a binding override.
+
+    Kept as a function (callers still fall back to source_warehouse for any
+    batch missing from the map) so a per-type override can be reintroduced
+    in one place if ever needed."""
+    return {}
 
 
 def get_pick_qty_targets_by_uom(assignment_doc):
@@ -603,20 +585,8 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                     ).format(round(total_picked, 3), uom, target, roll_pick_assignment))
 
     try:
-        # Per-batch warehouse override, from the Roll Pick Assignment's own
-        # Batch Items table (batch -> warehouse), when this fulfillment
-        # comes from the Pick Order flow. A batch doesn't necessarily sit
-        # in the blanket Source Warehouse selected on the execution page —
-        # the supervisor's per-batch warehouse (the one get_warehouses_for_batch
-        # in textiles_and_garments showed available qty for when the
-        # Assignment was built) is the one actually known to hold that
-        # batch's stock, so the Stock Entry rows consuming it need to be
-        # built against THAT warehouse — otherwise ERPNext's own
-        # insufficient-batch-qty check fires against the wrong warehouse
-        # ("Batch X only has 0 kg in <blanket source>, but Y kg was
-        # entered"). Falls back to source_warehouse for any batch with no
-        # warehouse set on its row (that field is optional) or when this
-        # isn't a Pick Order fulfillment at all.
+        # Stock Entry rows use the Source Warehouse selected on the execution
+        # page for every pick type (get_batch_warehouse_overrides returns {}).
         batch_warehouse_overrides = get_batch_warehouse_overrides(roll_pick_assignment)
 
         def _warehouse_for_batch(batch_no):
