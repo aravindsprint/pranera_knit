@@ -920,8 +920,9 @@ def get_item_with_qi_parameters(item_code):
 @frappe.whitelist()
 def get_packed_rolls(roll_nos):
     """{roll_no: Roll Packing List name} for every roll in `roll_nos` that is
-    already on a draft or submitted Roll Packing List. Used by the Rolls
-    page so a roll can't be packed twice. Roll Packing List Item is a child
+    already on a SUBMITTED Roll Packing List (drafts and cancelled ones don't
+    count). The Rolls page refuses to create a new Roll Packing List if any
+    selected roll is in this map. Roll Packing List Item is a child
     table (not readable via /api/resource for most users), so this goes
     through the parent's read permission instead."""
     if isinstance(roll_nos, str):
@@ -936,7 +937,7 @@ def get_packed_rolls(roll_nos):
         FROM `tabRoll Packing List Item` i
         INNER JOIN `tabRoll Packing List` p ON p.name = i.parent
         WHERE i.parenttype = 'Roll Packing List'
-          AND p.docstatus < 2
+          AND p.docstatus = 1
           AND i.roll_no IN %(roll_nos)s
         """,
         {"roll_nos": tuple(roll_nos)},

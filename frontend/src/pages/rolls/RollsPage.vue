@@ -325,11 +325,11 @@
 
             <template v-else>
               <div v-if="rpl.blocked.length" class="rp-error" style="align-items:flex-start;flex-direction:column;gap:4px">
-                <div>⚠ {{ rpl.blocked.length }} roll(s) are already on a Roll Packing List and will be left out:</div>
+                <div>⚠ Cannot create — {{ rpl.blocked.length }} selected roll(s) are already in a submitted Roll Packing List. Remove them from the selection and try again:</div>
                 <div style="font-size:12px;font-family:monospace;word-break:break-word">{{ rpl.blocked.map(b => `${b.name} (${b.rpl})`).join(', ') }}</div>
               </div>
 
-              <div v-if="!rpl.valid.length" class="rp-error">
+              <div v-else-if="!rpl.valid.length" class="rp-error">
                 ⚠ None of the selected rolls are eligible — nothing to pack.
               </div>
 
@@ -686,13 +686,13 @@ async function openPackingListModal() {
     const valid = []
     const blocked = []
     for (const r of rows) {
-      // Only a roll already on a draft/submitted Roll Packing List is left
-      // out — Job Card / Purchase Order / Subcontracting Order rolls can be packed.
+      // Job Card / Purchase Order / Subcontracting Order rolls can be packed.
+      // A roll already on a SUBMITTED Roll Packing List blocks the whole list.
       const rplName = packed?.message?.[r.name]
       if (rplName) blocked.push({ ...r, rpl: rplName })
       else valid.push(r)
     }
-    rpl.valid = valid
+    rpl.valid = blocked.length ? [] : valid
     rpl.blocked = blocked
     rpl.totalWeight = valid.reduce((sum, r) => sum + (Number(r.roll_weight) || 0), 0)
     rpl.totalPcs = valid.reduce((sum, r) => sum + (Number(r.total_qty) || 0), 0)
