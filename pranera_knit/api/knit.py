@@ -915,3 +915,32 @@ def get_item_with_qi_parameters(item_code):
             "inspectionParameters": inspection_parameters,
         }
     }
+
+
+@frappe.whitelist()
+def get_packed_rolls(roll_nos):
+    """{roll_no: Roll Packing List name} for every roll in `roll_nos` that is
+    already on a SUBMITTED Roll Packing List (drafts and cancelled ones don't
+    count). The Rolls page refuses to create a new Roll Packing List if any
+    selected roll is in this map. Roll Packing List Item is a child
+    table (not readable via /api/resource for most users), so this goes
+    through the parent's read permission instead."""
+    if isinstance(roll_nos, str):
+        roll_nos = frappe.parse_json(roll_nos)
+    roll_nos = [r for r in (roll_nos or []) if r]
+    if not roll_nos:
+        return {}
+    frappe.has_permission("Roll Packing List", "read", throw=True)
+    rows = frappe.db.sql(
+        """
+        SELECT i.roll_no, i.parent
+        FROM `tabRoll Packing List Item` i
+        INNER JOIN `tabRoll Packing List` p ON p.name = i.parent
+        WHERE i.parenttype = 'Roll Packing List'
+          AND p.docstatus = 1
+          AND i.roll_no IN %(roll_nos)s
+        """,
+        {"roll_nos": tuple(roll_nos)},
+        as_dict=True,
+    )
+    return {r.roll_no: r.parent for r in rows}
