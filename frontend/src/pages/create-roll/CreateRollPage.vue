@@ -617,15 +617,46 @@ function calculateShift(ts) {
   const h = new Date(ts).getHours()
   return (h >= 8 && h < 20) ? '1' : '2'
 }
+// ── Page ownership ─────────────────────────────────────────────────────────
+// FIX (Roll 38689, 14-Oct-2026): the session used to be keyed by whatever job
+// card was *currently* in rollStore. If this page was left while an await was
+// still pending (e.g. knit_create_roll on slow Wi-Fi), the continuation called
+// startTimer() on the already-unmounted page; that orphaned interval kept
+// calling saveSession() every 30 s, writing THIS job card's roll no / batch /
+// start time under the key of the job card the operator opened next. That
+// card then restored another machine's running roll, saved its weight onto
+// it and printed a sticker with the same roll number (and the other WO's
+// batch). The page now pins the job card it was opened for and goes inert
+// once unmounted.
+let pageJobCard = null     // job card this page instance belongs to
+let pageWorkOrder = null
+let pageUnmounted = false
+
+function ownsActiveJobCard() {
+  return !pageUnmounted && !!pageJobCard && rollStore.productData?.name === pageJobCard
+}
+
+function expectedBatchFor(pd) {
+  return pd ? `${pd.project}/${pd.work_order}` : ''
+}
+
+// A batch belongs to this job card's work order when it ends in "/<WO>".
+function batchMatchesWorkOrder(batch, workOrder) {
+  return !batch || !workOrder || String(batch).endsWith(`/${workOrder}`)
+}
+
 function getSessionKey() {
-  return `cr_session_${rollStore.productData?.name || 'unknown'}`
+  return `cr_session_${pageJobCard || rollStore.productData?.name || 'unknown'}`
 }
 
 // ── Session ────────────────────────────────────────────────────────────────
 function saveSession() {
-  if (!rollStore.productData?.name) return
+  // Never write from a page that has been left, or when the store now points
+  // at a different job card — that is how one card's session got another's roll.
+  if (!ownsActiveJobCard()) return
   const data = {
-    jobCardId: rollStore.productData.name,
+    jobCardId: pageJobCard,
+    workOrder: pageWorkOrder,
     isJobStarted: isJobStarted.value,
     isRollActive: isRollActive.value,
     currentRollNo: currentRollNo.value,
@@ -657,7 +688,17 @@ function restoreSession() {
     const raw = localStorage.getItem(getSessionKey())
     if (!raw) return false
     const d = JSON.parse(raw)
-    if (d.jobCardId !== rollStore.productData.name) return false
+    const pd = rollStore.productData
+    if (d.jobCardId !== pd.name) return false
+    // Reject a session that carries another work order's data (sessions
+    // written by older builds can be contaminated — see ownsActiveJobCard).
+    if ((d.workOrder && d.workOrder !== pd.work_order) ||
+        !batchMatchesWorkOrder(d.batchNo, pd.work_order)) {
+      console.warn('Discarding roll session from another work order:', d)
+      localStorage.removeItem(getSessionKey())
+      showToast('Previous roll session belonged to another work order — cleared. Please start the roll again.', 'error')
+      return false
+    }
 
     isJobStarted.value      = d.isJobStarted || false
     isRollActive.value      = d.isRollActive || false
@@ -704,7 +745,7 @@ function restoreSession() {
 
 function clearSession() {
   localStorage.removeItem(getSessionKey())
-  localStorage.removeItem(`cr_cooldown_${rollStore.productData?.name}`)
+  localStorage.removeItem(`cr_cooldown_${pageJobCard || rollStore.productData?.name}`)
 }
 
 // ── Reset session ─────────────────────────────────────────────────────────
@@ -715,6 +756,12 @@ async function resetSession() {
   // Delete orphan roll (weight = 0) if one was created
   if (currentRollNo.value) {
     try {
+      // Only delete it if it really is this job card's roll.
+      const r = await call('frappe.client.get_value', {
+        doctype: 'Roll', filters: { name: String(currentRollNo.value) }, fieldname: 'job_card'
+      })
+      const owner = r?.message?.job_card
+      if (owner && owner !== pageJobCard) throw new Error(`roll belongs to ${owner}`)
       await call('knit_delete_roll', { roll_name: String(currentRollNo.value) })
     } catch(e) {
       console.warn('Could not delete orphan roll:', e.message)
@@ -727,7 +774,9 @@ async function resetSession() {
 // ── Timer ─────────────────────────────────────────────────────────────────
 function startTimer() {
   stopTimer()
+  if (pageUnmounted) return   // late await on a page already left — don't leak an interval
   timerInterval = setInterval(() => {
+    if (pageUnmounted) { stopTimer(); return }
     if (actualRollStartTime) {
       runningTime.value = Math.floor((Date.now() - actualRollStartTime.getTime()) / 1000)
     } else {
@@ -747,7 +796,7 @@ function stopTimer() {
 
 // ── Cooldown ──────────────────────────────────────────────────────────────
 function checkCooldown() {
-  const key = `cr_cooldown_${rollStore.productData?.name}`
+  const key = `cr_cooldown_${pageJobCard || rollStore.productData?.name}`
   const last = localStorage.getItem(key)
   if (!last) { canClickEndRoll.value = true; return }
   const elapsed = Date.now() - new Date(last).getTime()
@@ -759,13 +808,15 @@ function checkCooldown() {
   }
 }
 function setCooldown() {
-  const key = `cr_cooldown_${rollStore.productData?.name}`
+  if (pageUnmounted) return
+  const key = `cr_cooldown_${pageJobCard || rollStore.productData?.name}`
   localStorage.setItem(key, new Date().toISOString())
   canClickEndRoll.value = false
   startCooldownTimer(ENDROLL_COOLDOWN)
 }
 function startCooldownTimer(ms) {
   clearInterval(cooldownInterval)
+  if (pageUnmounted) return
   updateCooldownDisplay(ms)
   cooldownInterval = setInterval(() => {
     ms -= 1000
@@ -794,6 +845,8 @@ onMounted(async () => {
   rollStore.loadProductDataFromSession?.()
   const pd = rollStore.productData
   if (!pd) { initializing.value = false; return }
+  pageJobCard   = pd.name
+  pageWorkOrder = pd.work_order
 
   isPcsUOM.value = (pd.stock_uom || '').toLowerCase() === 'pcs'
   isJobStarted.value = ['Work In Progress', 'Completed'].includes(pd.status)
@@ -869,7 +922,8 @@ onMounted(async () => {
 onUnmounted(() => {
   stopTimer()
   clearInterval(cooldownInterval)
-  saveSession()
+  saveSession()            // last save, while we still own the job card
+  pageUnmounted = true     // from here on: no timers, no session writes
 })
 
 // ── Batch creation ────────────────────────────────────────────────────────
@@ -1102,6 +1156,9 @@ async function createKnitRoll({ keepTimer = false } = {}) {
       job_card: pd.name,
       batch_no: batchNo.value,
     })
+    // Operator left this page while the request was in flight — the roll
+    // stays an empty orphan on the server; don't touch this page's state.
+    if (pageUnmounted) return
     const rollData = resp?.message?.[0]
     const rollIdx  = rollData?.idx || rollData?.name || Date.now()
 
@@ -1137,6 +1194,7 @@ async function createKnitRoll({ keepTimer = false } = {}) {
     saveSession()
     showToast(keepTimer ? `Roll #${rollIdx} started!` : `Roll #${rollIdx} started!`)
   } catch(e) {
+    if (pageUnmounted) return
     // Offline: assign next sequential roll number matching ERP's sequence
     const idx = nextOfflineRollNo()
     currentRollNo.value  = idx
@@ -1261,6 +1319,15 @@ async function submitRollWeight() {
   if (isPcsUOM.value && (!totalQty.value || totalQty.value <= 0)) {
     showToast('Please enter a valid total quantity.', 'error'); return
   }
+  // Last line of defence before a sticker is printed: the roll on screen must
+  // belong to this job card / work order.
+  if (!ownsActiveJobCard()) {
+    showToast('This screen is out of date for the selected job card. Go back and reopen it.', 'error'); return
+  }
+  if (!batchMatchesWorkOrder(batchNo.value, rollStore.productData.work_order)) {
+    showToast(`Batch ${batchNo.value} does not belong to ${rollStore.productData.work_order}. Tap Reset (⟲) and start the roll again.`, 'error')
+    return
+  }
 
   submitting.value = true
   const endTime     = endRollClickTime || new Date()
@@ -1302,6 +1369,11 @@ async function submitRollWeight() {
 
     lastCompletedRollData.value = {
       roll_no:     completingRollNo.value,
+      // Snapshot what the sticker must say, so it can never mix this roll's
+      // number with another job card's work order.
+      work_order:  pd.work_order,
+      item_code:   pd.production_item,
+      commercial_name: pd.commercial_name || '',
       roll_weight: rollWeight.value,
       total_qty:   totalQty.value,
       mistake_qty: mistakeQty.value,
@@ -1757,8 +1829,9 @@ async function generatePrintLabel() {
   const d  = lastCompletedRollData.value
   printData.value = {
     rollNo:    d.roll_no,
-    itemCode:  pd.production_item,
-    workOrder: pd.work_order,
+    itemCode:  d.item_code || pd.production_item,
+    commercialName: d.commercial_name ?? (pd.commercial_name || ''),
+    workOrder: d.work_order || pd.work_order,
     batchNo:   d.batch_no,
     weight:    parseFloat(d.roll_weight || 0).toFixed(3),
     totalQty:  d.total_qty,
@@ -1767,7 +1840,7 @@ async function generatePrintLabel() {
   }
   showQRModal.value = true
   await nextTick()
-  const qrData = `${pd.production_item}#${pd.work_order}#${d.roll_no}`
+  const qrData = `${printData.value.itemCode}#${printData.value.workOrder}#${d.roll_no}`
   try {
     await QRCode.toCanvas(qrCanvas.value, qrData, { width: 200 })
   } catch(e) { console.error(e) }
@@ -1776,9 +1849,8 @@ async function generatePrintLabel() {
 async function printLabel() {
   const w = window.open('', '_blank')
   if (!w) { showToast('Allow pop-ups to print.', 'error'); return }
-  const pd = rollStore.productData
   const d  = printData.value
-  const qrData = `${pd.production_item}#${pd.work_order}#${d.rollNo}`
+  const qrData = `${d.itemCode}#${d.workOrder}#${d.rollNo}`
   // Generate the QR as a data URL using the bundled qrcode package so it works
   // offline (no CDN). Embedded directly as an <img> in the print HTML.
   let qrImg = ''
@@ -1786,9 +1858,9 @@ async function printLabel() {
     qrImg = await QRCode.toDataURL(qrData, { width: 200, margin: 1 })
   } catch(e) { console.error('QR generation failed:', e) }
   w.document.write(buildStickerHTML({
-    itemCode:       pd.production_item,
-    commercialName: pd.commercial_name || '',
-    workOrder:      pd.work_order,
+    itemCode:       d.itemCode,
+    commercialName: d.commercialName || '',
+    workOrder:      d.workOrder,
     rollNo:         d.rollNo,
     weight:         d.weight,
     batch:          d.batchNo,

@@ -127,4 +127,7 @@ override_whitelisted_methods = {
     "knit_save_before_consumption": "pranera_knit.api.yarn_consumption.save_before_consumption",
     "knit_get_yarn_consumption": "pranera_knit.api.yarn_consumption.get_yarn_consumption",
     "knit_apply_actual_bom": "pranera_knit.api.yarn_consumption.apply_actual_bom",
+    # Replaces the "knit-save-roll-data" Server Script: same behaviour, but
+    # refuses to overwrite a roll that belongs to a different job card.
+    "knit_save_roll_data": "pranera_knit.api.knit.save_roll_data",
 }

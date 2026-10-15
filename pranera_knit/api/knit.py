@@ -119,66 +119,185 @@ def create_knit_roll(job_card, batch_no=None):
     return [{"name": roll.name, "idx": roll.idx, "start_time": str(roll.start_time), "batch_no": batch_no}]
 
 
+def _next_roll_no():
+    """Next free numeric Roll name (max numeric name + 1)."""
+    row = frappe.db.sql("""
+        SELECT MAX(CAST(name AS UNSIGNED)) AS max_no
+        FROM `tabRoll`
+        WHERE name REGEXP '^[0-9]+$'
+    """, as_dict=True)
+    n = int((row[0].max_no if row else 0) or 0) + 1
+    while frappe.db.exists("Roll", str(n)):
+        n += 1
+    return str(n)
+
+
+def _job_card_lineage(job_card):
+    """The job card plus every job card it was amended from. Rolls of a
+    cancelled job card are moved to its amendment (job_card_events.
+    on_after_cancel), so a save coming from the amendment may legitimately
+    target a roll still pointing at an older version."""
+    seen = []
+    jc = job_card
+    while jc and jc not in seen and len(seen) < 20:
+        seen.append(jc)
+        jc = frappe.db.get_value("Job Card", jc, "amended_from")
+    return seen
+
+
+def _parse_dt(val):
+    if not val or str(val) in ("null", "None", ""):
+        return None
+    s = str(val).strip().replace("T", " ")
+    s = s.replace("Z", "")
+    for ch in ("+", "-"):
+        i = s.rfind(ch)
+        if i > 10:
+            s = s[:i]
+    s = s.split(".")[0].strip()
+    try:
+        return get_datetime(s)
+    except Exception:
+        return None
+
+
+def _num(val):
+    return val if val not in (None, "", "null", "None") else None
+
+
 @frappe.whitelist()
-def save_roll_data(
-    job_card, work_order, item_code, roll_no, roll_weight,
-    batch=None, shift=None, start_time=None, end_time=None,
-    total_time_seconds=None, breakdown_time_seconds=None,
-    net_production_time_seconds=None, efficiency_percentage=None,
-    total_qty=None, mistake_qty=None, stock_uom=None,
-    item_name=None, commercial_name=None, color=None, width=None,
-    project=None, knitting_machine_no=None, knit_operator_name=None,
-    complete_roll=None, next_roll_start_time=None
-):
-    """
-    Updates Roll entry with production data (mirrors updateKnitCCRollNoInDB + insertIntoRollTable).
-    roll_no is the idx value.
+def save_roll_data(**kwargs):
+    """Saves a completed roll (weight, times, operator…) from the knit PWA.
+
+    Backs the `knit_save_roll_data` endpoint (see override_whitelisted_methods
+    in hooks.py) and replaces the old Server Script of the same name.
+
+    FIX (Roll 38689, 14-Oct-2026): the old script looked the roll up by
+    name ONLY. When the PWA sent a roll number that belonged to a different
+    job card — a stale page session (PO-JOB21859 / WO/26/12068-1 sending
+    JC PO-JOB21862's running roll 38689), or an offline-guessed number that
+    collided with a real roll — it silently overwrote that roll's
+    work_order, weight and machine, and two physical rolls ended up carrying
+    the same roll number on their stickers. Now:
+      * a roll is only updated when it belongs to the same job card (or one
+        the job card was amended from);
+      * an offline-queued roll (has `_localId`) whose guessed number is taken
+        by another job card gets a fresh number instead;
+      * any other mismatch is refused, so the operator sees an error before
+        a wrong sticker is printed.
     """
     frappe.has_permission("Roll", throw=True)
+    fd = frappe._dict(kwargs)
+    job_card = fd.job_card
+    if not job_card:
+        frappe.throw(_("job_card is required"))
 
-    # Find roll by idx + job_card
-    roll_name = frappe.db.get_value(
-        "Roll",
-        {"job_card": job_card, "idx": int(roll_no)},
-        "name"
-    )
+    roll_no = None
+    if fd.roll_no not in (None, "", "null", "None"):
+        try:
+            roll_no = str(int(str(fd.roll_no)))
+        except Exception:
+            roll_no = None
 
-    if roll_name:
-        roll = frappe.get_doc("Roll", roll_name)
+    existing = None
+    if roll_no:
+        existing = frappe.db.get_value(
+            "Roll", roll_no, ["name", "job_card", "work_order"], as_dict=True
+        )
+
+    if existing and existing.job_card and existing.job_card not in _job_card_lineage(job_card):
+        if fd.get("_localId"):
+            # Offline roll whose locally-guessed number is already used by a
+            # different job card's roll — never touch that roll, create ours.
+            frappe.logger("pranera_knit").warning(
+                f"knit_save_roll_data: offline roll_no {roll_no} for {job_card} "
+                f"collides with Roll {roll_no} of {existing.job_card}; "
+                f"allocating a new roll number"
+            )
+            existing = None
+        else:
+            frappe.throw(_(
+                "Roll {0} belongs to Job Card {1} ({2}), not {3} ({4}). "
+                "This screen was showing another job card's roll — nothing "
+                "was saved. Tap Reset (⟲) on this job card and start the "
+                "roll again."
+            ).format(roll_no, existing.job_card, existing.work_order or "-",
+                     job_card, fd.work_order or "-"),
+                title=_("Roll belongs to another Job Card"))
+
+    if existing:
+        roll = frappe.get_doc("Roll", existing.name)
     else:
-        # Fallback: create if missing
         roll = frappe.new_doc("Roll")
+        roll.roll_no = _next_roll_no()
         roll.job_card = job_card
-        roll.idx      = int(roll_no)
-        roll.work_order = work_order
+        roll.work_order = fd.work_order
 
-    roll.work_order          = work_order or roll.work_order
-    roll.item_code           = item_code or roll.item_code
-    roll.item_name           = item_name or ""
-    roll.commercial_name     = commercial_name or ""
-    roll.color               = color or ""
-    roll.width               = width or ""
-    roll.batch               = batch or ""
-    roll.shift               = shift or ""
-    roll.roll_weight         = float(roll_weight or 0)
-    roll.total_qty           = float(total_qty or 0)
-    roll.mistake_qty         = float(mistake_qty or 0)
-    roll.correct_qty         = float(total_qty or 0) - float(mistake_qty or 0)
-    roll.avg_weight_per_pcs  = (float(roll_weight or 0) / float(total_qty)) if total_qty and float(total_qty) > 0 else 0
-    roll.stock_uom           = stock_uom or "Kgs"
-    roll.project             = project or ""
-    roll.knitting_machine_no = knitting_machine_no or ""
-    roll.name_of_the_operator = knit_operator_name or ""
-    roll.start_time          = get_datetime(start_time) if start_time else roll.start_time
-    roll.end_time            = get_datetime(end_time) if end_time else now_datetime()
+    roll.work_order = fd.work_order or roll.work_order
+    roll.item_code = fd.item_code or ""
+    roll.item_name = fd.item_name or ""
+    roll.commercial_name = fd.commercial_name or ""
+    roll.color = fd.color or ""
+    roll.width = fd.width or ""
+    roll.batch = fd.batch or ""
+    roll.shift = fd.shift or ""
+    roll.stock_uom = fd.stock_uom or "Kgs"
+    roll.project = fd.project or ""
+    roll.knitting_machine_no = fd.knitting_machine_no or ""
+    roll.name_of_the_operator = fd.knit_operator_name or ""
+    roll.knit_operator_name = fd.knit_operator_name or ""
 
-    if roll_name:
+    rw, tq, mq = _num(fd.roll_weight), _num(fd.total_qty), _num(fd.mistake_qty)
+    roll.roll_weight = float(rw) if rw else 0.0
+    roll.total_qty = int(float(tq)) if tq else 0
+    roll.mistake_qty = int(float(mq)) if mq else 0
+    roll.correct_qty = roll.total_qty - roll.mistake_qty
+    if roll.total_qty > 0:
+        roll.avg_weight_per_pcs = roll.roll_weight / roll.total_qty
+
+    # Keep whichever start is EARLIER: knit_create_roll's creation stamp or
+    # the frontend's (auto-continued rolls start at the previous End Roll tap).
+    st = _parse_dt(fd.start_time)
+    existing_st = get_datetime(roll.start_time) if roll.get("start_time") else None
+    if st and existing_st:
+        roll.start_time = st if st < existing_st else existing_st
+    elif st:
+        roll.start_time = st
+
+    roll.end_time = _parse_dt(fd.end_time) or now_datetime()
+    roll.datetime = today()
+
+    def _hms(secs):
+        secs = int(float(secs)) if _num(secs) else 0
+        return f"{secs // 3600:02d}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"
+
+    roll.total_breakdown = _hms(fd.breakdown_time_seconds)
+    roll.net_production_time = _hms(fd.net_production_time_seconds)
+    eff = _num(fd.efficiency_percentage)
+    roll.efficiency = f"{eff}%" if eff else "0.0%"
+
+    roll.warehouse = (
+        frappe.db.get_value("Work Order", roll.work_order, "fg_warehouse") or ""
+    ) if roll.work_order else ""
+
+    # Batch IDs are deterministic ({project}/{work_order}); make sure it exists
+    # before the Roll links to it (covers online saves and offline replays).
+    if roll.batch and not frappe.db.exists("Batch", roll.batch):
+        try:
+            b = frappe.new_doc("Batch")
+            b.batch_id = roll.batch
+            b.item = roll.item_code
+            b.insert(ignore_permissions=True)
+        except frappe.DuplicateEntryError:
+            pass
+
+    if existing:
         roll.save(ignore_permissions=True)
     else:
         roll.insert(ignore_permissions=True)
 
     frappe.db.commit()
-    return {"success": True, "name": roll.name, "idx": roll.idx}
+    return {"success": True, "name": roll.name}
 
 
 @frappe.whitelist()
