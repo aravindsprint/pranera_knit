@@ -44,6 +44,37 @@
         </div>
       </div>
 
+      <!-- Job Card (Material Receipt only).
+           A top-up receipt into a WIP warehouse only counts for a work order's
+           Manufacture entry when it is tagged with one of that WO's job cards
+           (custom_job_card) — ERPNext clears the standard Work Order field on
+           Material Receipts. Required whenever a row targets a 'WIP - …' warehouse. -->
+      <div class="se-card" v-if="purpose === 'Material Receipt'">
+        <div class="se-card__title">Job Card</div>
+        <div class="se-field se-field--full">
+          <label class="se-label">Job Card {{ needsJobCard ? '*' : '(optional)' }}</label>
+          <div class="se-autocomplete">
+            <input class="se-input" v-model="jobCard.search"
+              :placeholder="needsJobCard ? 'Select the job card this top-up is for…' : 'Search job card…'"
+              @input="onJobCardSearch" @focus="onJobCardSearch" @blur="closeJobCardDrop" />
+            <div class="se-dropdown" v-if="jobCard.showDrop && jobCard.options.length">
+              <div v-for="jc in jobCard.options" :key="jc.name"
+                class="se-dropdown__item" @mousedown.prevent="selectJobCard(jc)">
+                <div class="se-dropdown__name">{{ jc.name }}</div>
+                <div class="se-dropdown__sub">{{ jc.work_order }} · {{ jc.production_item }}</div>
+              </div>
+            </div>
+          </div>
+          <div v-if="jobCard.selected" class="se-wo-ref">
+            <span>Work Order: <strong>{{ jobCard.selected.work_order }}</strong></span>
+            <span>WIP: <strong>{{ jobCard.selected.wip_warehouse || '—' }}</strong></span>
+          </div>
+          <div v-else-if="needsJobCard" class="se-jc-hint">
+            Receipts into a WIP warehouse must be linked to a job card, or the stock won't count for that work order.
+          </div>
+        </div>
+      </div>
+
       <!-- Items -->
       <div class="se-card" v-if="purpose">
         <div class="se-card__title" style="display:flex;justify-content:space-between;align-items:center">
@@ -235,6 +266,66 @@ const rows = ref([defaultRow()])
 
 const totalQty = computed(() => rows.value.reduce((s, r) => s + (parseFloat(r.qty) || 0), 0))
 
+// ── Job Card (WIP top-up tag) ─────────────────────────────────────────────
+// Mirrors the server rule in knit_create_stock_entry_draft: a Material Receipt
+// into a 'WIP - …' warehouse must carry a job card of the WO that owns that WIP.
+const isWipWarehouse = wh => (wh || '').startsWith('WIP - ')
+
+const jobCard = ref({ search: '', selected: null, options: [], showDrop: false })
+
+const wipWarehouses = computed(() =>
+  [...new Set(rows.value.map(r => r.warehouse).filter(isWipWarehouse))]
+)
+const needsJobCard = computed(() =>
+  purpose.value === 'Material Receipt' && wipWarehouses.value.length > 0
+)
+
+let jcTimer = null
+function onJobCardSearch() {
+  jobCard.value.showDrop = true
+  // Typing again after a pick means the user is changing it
+  if (jobCard.value.selected && jobCard.value.search !== jobCard.value.selected.name) {
+    jobCard.value.selected = null
+  }
+  clearTimeout(jcTimer)
+  jcTimer = setTimeout(async () => {
+    const q = (jobCard.value.search || '').trim()
+    // Open job cards only; narrowed to the WIP chosen in the rows when there is one,
+    // so an empty focus already lists the right candidates.
+    const filters = [['Job Card', 'docstatus', '=', 0]]
+    if (q) filters.push(['Job Card', 'name', 'like', `%${q}%`])
+    if (wipWarehouses.value.length === 1) filters.push(['Job Card', 'wip_warehouse', '=', wipWarehouses.value[0]])
+    else if (!q) { jobCard.value.options = []; return }
+    try {
+      const res = await getList('Job Card', {
+        filters,
+        fields: ['name', 'work_order', 'production_item', 'wip_warehouse'],
+        limit: 15,
+        orderBy: 'modified desc',
+      })
+      jobCard.value.options = Array.isArray(res) ? res : (res?.data || [])
+    } catch(e) { jobCard.value.options = [] }
+  }, 300)
+}
+function closeJobCardDrop() { setTimeout(() => { jobCard.value.showDrop = false }, 200) }
+function selectJobCard(jc) {
+  jobCard.value.selected = jc
+  jobCard.value.search   = jc.name
+  jobCard.value.showDrop = false
+  jobCard.value.options  = []
+}
+async function loadJobCard(name) {
+  try {
+    const res = await getList('Job Card', {
+      filters: [['Job Card', 'name', '=', name]],
+      fields: ['name', 'work_order', 'production_item', 'wip_warehouse'],
+      limit: 1,
+    })
+    const jc = (Array.isArray(res) ? res : (res?.data || []))[0]
+    if (jc) selectJobCard(jc)
+  } catch(e) { console.warn('Job card prefill error', e) }
+}
+
 // ── Purpose ────────────────────────────────────────────────────────────────
 function setPurpose(p) {
   purpose.value = p
@@ -339,6 +430,14 @@ function validate() {
     if (!r.qty || parseFloat(r.qty) <= 0) return `Row ${n}: Qty must be greater than 0`
     if (!r.warehouse)  return `Row ${n}: Warehouse is required`
   }
+  if (needsJobCard.value) {
+    const jc = jobCard.value.selected
+    if (!jc) return 'Job Card is required for a Material Receipt into a WIP warehouse'
+    if (jc.wip_warehouse) {
+      const wrong = wipWarehouses.value.find(wh => wh !== jc.wip_warehouse)
+      if (wrong) return `${wrong} is not the WIP warehouse of ${jc.work_order} (${jc.wip_warehouse})`
+    }
+  }
   return null
 }
 
@@ -374,6 +473,9 @@ async function createStockEntry() {
       remarks:          form.value.remarks || null,
       items_json:       JSON.stringify(items),
     }
+    if (purpose.value === 'Material Receipt' && jobCard.value.selected) {
+      payload.job_card = jobCard.value.selected.name
+    }
 
     const resp = await call('knit_create_stock_entry_draft', payload)
     createdName.value = resp?.message?.name
@@ -386,6 +488,7 @@ async function createStockEntry() {
 }
 
 onMounted(async () => {
+  if (route.query.job_card) loadJobCard(route.query.job_card)
   const wo = route.query.work_order
   if (wo) {
     try {
@@ -432,6 +535,7 @@ function resetForm() {
   createdName.value  = ''
   errorMsg.value     = ''
   rows.value         = [defaultRow()]
+  jobCard.value      = { search: '', selected: null, options: [], showDrop: false }
   form.value.remarks = ''
   form.value.posting_date = new Date().toISOString().split('T')[0]
 }
@@ -520,6 +624,7 @@ function resetForm() {
 .se-success-sub   { font-size:12px; color:#94a3b8; margin-bottom:16px; }
 .se-wo-ref { display:flex; gap:12px; margin-top:6px; font-size:11px; color:#64748b; flex-wrap:wrap; }
 .se-wo-ref strong { color:#0f172a; }
+.se-jc-hint { margin-top:6px; font-size:11px; color:#b45309; }
 .se-input--readonly { background:#f8fafc; color:#64748b; cursor:default; }
 .se-prefill-banner { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:10px 14px;
   font-size:13px; color:#15803d; display:flex; gap:8px; align-items:flex-start; margin-bottom:0; }

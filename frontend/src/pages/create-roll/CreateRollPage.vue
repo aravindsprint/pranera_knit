@@ -1438,7 +1438,7 @@ async function goToStockEntry() {
   // Pass only the work_order — StockEntryPage fetches fresh data itself
   router.push({
     path: '/knit-app/stock-entry',
-    query: { work_order: rollStore.productData.work_order }
+    query: { work_order: rollStore.productData.work_order, job_card: rollStore.productData.name }
   })
 }
 
