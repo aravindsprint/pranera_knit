@@ -23,10 +23,23 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useSync, isOnline, isSyncing, pendingCount } from '@/composables/useSync'
 import { initCSRF, isLoggedIn } from '@/api/frappe'
 useSync()
+
+// Session expired mid-shift (an API call came back unauthenticated): send the
+// operator to the login page and bring them back to where they were. Anything
+// in the offline queue stays in IndexedDB and syncs after they log in.
+const router = useRouter()
+window.addEventListener('knit:session-expired', () => {
+  auth.refreshSession()
+  const current = router.currentRoute.value
+  if (current.path !== '/knit-app/login') {
+    router.push({ path: '/knit-app/login', query: { redirect: current.fullPath, expired: '1' } })
+  }
+})
 
 const THEME_COLORS = {
   green:  '#0f6e56',

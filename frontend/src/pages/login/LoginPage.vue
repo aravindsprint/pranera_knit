@@ -41,6 +41,9 @@
           </button>
         </div>
 
+        <div v-if="route.query.expired && !errorMsg" class="alert alert-warning">
+          Your session expired. Log in again — any unsynced rolls are kept and will sync after login.
+        </div>
         <div v-if="errorMsg" class="error-box">
           ⚠️ {{ errorMsg }}
         </div>
