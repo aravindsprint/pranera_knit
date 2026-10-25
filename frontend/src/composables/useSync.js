@@ -5,7 +5,8 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { db } from '@/db'
 import {
   createRollInERP, createQualityInspection,
-  createPickingEntry, startJobCard, submitRollPackingList
+  createPickingEntry, startJobCard, submitRollPackingList,
+  isLoggedIn, isSessionExpiredError
 } from '@/api/frappe'
 
 export const isOnline = ref(navigator.onLine)
@@ -173,6 +174,10 @@ export async function clearRollSession(jobCardId) {
 // ── Flush pending queue to ERPNext ────────────────────────────────────────────
 export async function flushQueue() {
   if (isSyncing.value || !isOnline.value) return
+  // Never push queued work without a real session. Queued rolls used to be
+  // flushed after the session had expired and were created as "Guest";
+  // they now wait here until the operator logs in again.
+  if (!isLoggedIn()) return
   isSyncing.value = true
 
   try {
@@ -248,6 +253,13 @@ export async function flushQueue() {
         await db.syncQueue.update(item.id, { _status: 'synced', _syncedAt: new Date().toISOString() })
 
       } catch (err) {
+        if (isSessionExpiredError(err)) {
+          // Session gone: keep this item (and everything after it) pending
+          // without burning a retry, and stop until the user logs back in.
+          await db.syncQueue.update(item.id, { _status: 'pending' })
+          console.warn(`Sync paused: session expired while syncing ${item.endpoint}`)
+          break
+        }
         const retries = (item._retries || 0) + 1
         // Exponential backoff — mark as failed after 5 retries
         const newStatus = retries >= 5 ? 'failed' : 'pending'
@@ -265,7 +277,7 @@ export async function flushQueue() {
 
 // ── Sync lookup tables (replaces dojobs* Node cron endpoints) ─────────────────
 export async function syncLookupTables() {
-  if (!isOnline.value) return
+  if (!isOnline.value || !isLoggedIn()) return
 
   const {
     syncItems, syncWorkOrders, syncTimeLogs,
