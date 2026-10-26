@@ -382,11 +382,32 @@ def get_pick_order_detail(name):
             {"item_code": r.item_code, "total_weight": r.total_weight}
             for r in (doc.item_wise_weight or [])
         ],
-        "batch_items": [
-            {"batch": r.batch, "qty": r.qty} for r in (doc.batch_items or [])
-        ],
+        "batch_items": _batch_items_detail(doc),
         "remarks": doc.remarks,
     }
+
+
+def _batch_items_detail(doc):
+    """Planned Batch Items with their item_code and UOM, so the execution
+    page can show picked-vs-planned per batch + item. The child row may not
+    carry item_code itself, so it falls back to the Batch master's item."""
+    rows = doc.batch_items or []
+    batches = list({r.batch for r in rows if r.batch})
+    batch_info = {}
+    if batches:
+        for b in frappe.get_all("Batch", filters={"name": ["in", batches]},
+                                fields=["name", "item", "stock_uom"]):
+            batch_info[b.name] = b
+    out = []
+    for r in rows:
+        info = batch_info.get(r.batch) or {}
+        out.append({
+            "batch": r.batch,
+            "item_code": r.get("item_code") or r.get("item") or info.get("item"),
+            "uom": r.get("stock_uom") or info.get("stock_uom") or "Kgs",
+            "qty": r.qty,
+        })
+    return out
 
 
 @frappe.whitelist()
