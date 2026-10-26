@@ -101,6 +101,55 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     })
   })
 
+  // Per batch + item_code breakdown — planned qty (order.batch_items)
+  // against what's already been picked in prior submitted sessions
+  // (order.already_picked_rolls) plus this session's scanned rolls. Rolls
+  // whose batch/item isn't in the plan (e.g. a To Work Order pick with no
+  // batch_items) still get a row, with a planned qty of 0.
+  const batchProgress = computed(() => {
+    if (!order.value) return []
+    const key = (batch, item) => `${batch || ''}||${item || ''}`
+    const picked = new Map()
+    const add = (batch, item, uom, field, qty) => {
+      const k = key(batch, item)
+      if (!picked.has(k)) {
+        picked.set(k, { batch: batch || '', item_code: item || '', uom: uom || 'Kgs', alreadyQty: 0, sessionQty: 0, rolls: 0 })
+      }
+      const p = picked.get(k)
+      p[field] += Number(qty) || 0
+      p.rolls += 1
+    }
+    for (const r of (order.value.already_picked_rolls || [])) add(r.batch, r.item_code, r.uom, 'alreadyQty', r.qty)
+    for (const r of scannedRolls.value) add(r.batch_no, r.item_code, r.uom, 'sessionQty', r.qty)
+
+    const rows = []
+    const used = new Set()
+    for (const b of (order.value.batch_items || [])) {
+      const row = {
+        batch: b.batch || '', item_code: b.item_code || '', uom: b.uom || 'Kgs',
+        plannedQty: Number(b.qty) || 0, alreadyQty: 0, sessionQty: 0, rolls: 0,
+      }
+      // Planned row without a known item_code takes every item picked from that batch.
+      for (const [k, p] of picked) {
+        if (used.has(k) || p.batch !== row.batch) continue
+        if (row.item_code && p.item_code !== row.item_code) continue
+        row.alreadyQty += p.alreadyQty
+        row.sessionQty += p.sessionQty
+        row.rolls += p.rolls
+        if (!row.item_code) row.item_code = p.item_code
+        used.add(k)
+      }
+      rows.push(row)
+    }
+    for (const [k, p] of picked) {
+      if (!used.has(k)) rows.push({ ...p, plannedQty: 0 })
+    }
+    return rows.map(r => {
+      const totalPicked = r.alreadyQty + r.sessionQty
+      return { ...r, totalPicked, balance: r.plannedQty - totalPicked, unplanned: r.plannedQty === 0 }
+    })
+  })
+
   // Submission requires every UOM group to independently land within
   // tolerance — a Kgs group sitting fine while Pcs is still short (or
   // over) means the pick isn't actually done yet.
@@ -221,7 +270,7 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
     order, orderLoading, orderError, submitting,
     sourceWarehouse, targetWarehouse, warehouses, warehousesLoading, loadWarehouses,
     scannedRolls,
-    uomProgress, withinTolerance, overTolerance,
+    uomProgress, batchProgress, withinTolerance, overTolerance,
     loadOrder, setSourceWarehouse, setTargetWarehouse,
     scanRoll, removeScannedRoll, submitOrder, reset,
   }

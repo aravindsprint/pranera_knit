@@ -63,6 +63,33 @@
           </div>
         </div>
 
+        <!-- Picked by batch + item — planned vs prior sessions vs this session -->
+        <div class="card" v-if="store.batchProgress.length">
+          <label class="form-label">Picked by Batch / Item</label>
+          <div class="bp-list">
+            <div v-for="b in store.batchProgress" :key="b.batch + '|' + b.item_code" class="bp-row"
+                 :class="{ 'bp-row--done': !b.unplanned && b.balance <= 0, 'bp-row--extra': b.unplanned }">
+              <div class="bp-head">
+                <div class="bp-id">
+                  <div class="bp-batch">{{ b.batch || '—' }}</div>
+                  <div class="bp-item">{{ b.item_code || '—' }}</div>
+                </div>
+                <div class="bp-total">
+                  {{ fmt(b.totalPicked) }}<span v-if="!b.unplanned"> / {{ fmt(b.plannedQty) }}</span> {{ b.uom }}
+                </div>
+              </div>
+              <div class="bp-meta">
+                <span>{{ b.rolls }} roll(s)</span>
+                <span v-if="b.alreadyQty">Prior: {{ fmt(b.alreadyQty) }}</span>
+                <span>This session: {{ fmt(b.sessionQty) }}</span>
+                <span v-if="b.unplanned" class="bp-flag">Not in plan</span>
+                <span v-else-if="b.balance > 0">Balance: {{ fmt(b.balance) }}</span>
+                <span v-else-if="b.balance < 0" class="bp-flag">Excess: {{ fmt(-b.balance) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Source warehouse -->
         <div class="card">
           <label class="form-label">Source Warehouse <span class="req">*</span></label>
@@ -472,4 +499,17 @@ function closeSuccessModal() {
 }
 .modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.2s; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
+
+/* Picked by batch / item */
+.bp-list { display: flex; flex-direction: column; gap: 8px; }
+.bp-row { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; }
+.bp-row--done { border-color: #bbf7d0; background: #f0fdf4; }
+.bp-row--extra { border-color: #fde68a; background: #fffbeb; }
+.bp-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.bp-id { min-width: 0; }
+.bp-batch { font-weight: 700; font-size: 13px; color: #0f172a; overflow-wrap: anywhere; }
+.bp-item { font-size: 12px; color: #475569; overflow-wrap: anywhere; }
+.bp-total { font-weight: 700; font-size: 14px; color: #0f172a; white-space: nowrap; }
+.bp-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: #64748b; margin-top: 4px; }
+.bp-flag { color: #b45309; font-weight: 600; }
 </style>
