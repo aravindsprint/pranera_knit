@@ -2,26 +2,21 @@
 pranera_knit/api/stock.py
 Whitelisted methods behind the knit-app "Stock" page.
 
-get_warehouse_stock(warehouse) → one row per roll (or per batch / item when
-there's no roll to show), with item_code, commercial_name, batch, roll_no,
-qty, stock_uom.
+get_warehouse_stock(warehouse) → one row per (item_code, batch) with its
+Stock Ledger balance: item_code, commercial_name, batch, qty, stock_uom,
+plus roll_nos.
 
-  Quantities come from the Stock Ledger, which is the source of truth:
-  balance per (item_code, batch) in that warehouse, reading the batch
-  from each entry's Serial and Batch Bundle (or the legacy batch_no
-  column on older entries). Only positive balances are shown.
+  qty is the Stock Ledger balance in that warehouse — the same number
+  ERPNext's own stock reports use — reading the batch from each entry's
+  Serial and Batch Bundle (or the legacy batch_no column on older
+  entries). Only positive balances are shown, so the page total always
+  equals the real stock.
 
-  Each batch is then broken into its Roll records whose `warehouse` is
-  this warehouse. Roll.warehouse is only maintained by the Roll Wise Pick
-  List flow (see roll_wise_pick_list_events.py), so it can lag reality;
-  whatever part of the ledger balance those rolls don't account for is
-  shown as one extra batch-level row with no roll_no (unmatched=1). That
-  keeps the page's totals equal to the real stock, whatever the roll
-  records say. When it's the other way round — rolls recorded here add up
-  to more than the ledger holds (some have left without Roll.warehouse
-  being updated) — those rows carry over_rolled=<excess> so the page can
-  flag them, and ledger_totals gives the true per-UOM totals. Roll qty follows the scan logic in pick_order.py:
-  total_qty for Pcs rolls, roll_weight otherwise.
+  roll_nos lists the Roll records whose `warehouse` is this warehouse for
+  that batch. It's for reference and search only: Roll.warehouse is
+  updated just by pick scans, which don't check where a roll actually was
+  (see pick_order.py), so these numbers can disagree with the ledger and
+  are never summed into qty.
 
 resolve_scan(value) → what a scanned QR points to:
   * a warehouse label  — the full Warehouse name, or the name without the
@@ -35,9 +30,6 @@ from frappe import _
 from frappe.utils import flt
 
 QTY_EPSILON = 0.001
-# Ledger vs roll-total gaps at or below this are rounding noise (roll
-# weights are entered to 2 dp), not stock that's missing a roll.
-UNMATCHED_TOLERANCE = 0.05
 
 
 @frappe.whitelist()
@@ -80,54 +72,27 @@ def get_warehouse_stock(warehouse):
         for r in frappe.get_all(
             "Roll",
             filters={"batch": ["in", batches], "warehouse": warehouse, "docstatus": ["<", 2]},
-            fields=["name", "item_code", "batch", "commercial_name", "stock_uom",
-                    "roll_weight", "total_qty"],
+            fields=["name", "item_code", "batch", "commercial_name"],
             order_by="name asc",
             limit_page_length=0,
         ):
             rolls_by_key.setdefault((r.item_code, r.batch), []).append(r)
 
     rows = []
+    ledger_totals = {}
     for b in sorted(balances, key=lambda x: (x.item_code, x.batch)):
         item = items.get(b.item_code) or frappe._dict()
         uom = item.stock_uom or ""
-        base = {
-            "item_code": b.item_code,
-            "commercial_name": item.commercial_name or item.item_name or "",
-            "batch": b.batch,
-            "stock_uom": uom,
-        }
         rolls = rolls_by_key.get((b.item_code, b.batch), [])
-        rolled = 0.0
-        for r in rolls:
-            r_uom = r.stock_uom or uom
-            qty = flt(r.total_qty) if r_uom.lower() == "pcs" else flt(r.roll_weight)
-            rolled += qty
-            rows.append({
-                **base,
-                "commercial_name": r.commercial_name or base["commercial_name"],
-                "roll_no": r.name,
-                "qty": round(qty, 3),
-                "stock_uom": r_uom,
-                "unmatched": 0,
-            })
-        remainder = flt(b.qty) - rolled
-        if rolls and remainder < -UNMATCHED_TOLERANCE:
-            # More roll qty recorded here than the ledger holds — some of
-            # these rolls have moved on without Roll.warehouse catching up.
-            for row in rows[len(rows) - len(rolls):]:
-                row["over_rolled"] = round(-remainder, 3)
-        if not rolls or remainder > UNMATCHED_TOLERANCE:
-            rows.append({
-                **base,
-                "roll_no": "",
-                "qty": round(flt(b.qty) if not rolls else remainder, 3),
-                "unmatched": 1 if rolls or b.batch else 0,
-            })
-
-    ledger_totals = {}
-    for b in balances:
-        uom = (items.get(b.item_code) or frappe._dict()).stock_uom or ""
+        rows.append({
+            "item_code": b.item_code,
+            "commercial_name": item.commercial_name or item.item_name
+                               or next((r.commercial_name for r in rolls if r.commercial_name), ""),
+            "batch": b.batch,
+            "qty": round(flt(b.qty), 3),
+            "stock_uom": uom,
+            "roll_nos": [r.name for r in rolls],
+        })
         ledger_totals[uom] = round(ledger_totals.get(uom, 0.0) + flt(b.qty), 3)
 
     return {"warehouse": warehouse, "rows": rows, "ledger_totals": ledger_totals}

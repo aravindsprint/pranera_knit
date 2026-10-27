@@ -36,8 +36,7 @@
           <div>
             <div class="table-title">{{ loadedFor }}</div>
             <div class="muted small">
-              {{ filtered.length.toLocaleString() }} of {{ rows.length.toLocaleString() }} rows
-              · {{ rollCount.toLocaleString() }} rolls
+              {{ filtered.length.toLocaleString() }} of {{ rows.length.toLocaleString() }} batches
             </div>
           </div>
           <button v-if="anyFilter" class="btn-link" @click="clearFilters">
@@ -46,18 +45,9 @@
         </div>
 
         <div class="totals">
-          <span class="totals__label">Shown</span>
+          <span class="totals__label">{{ anyFilter ? 'Filtered stock' : 'Stock' }}</span>
           <span v-for="(qty, uom) in filteredTotals" :key="uom" class="total-chip">
             {{ fmtQty(qty) }} <small>{{ uom || '—' }}</small>
-          </span>
-        </div>
-        <div v-if="Object.keys(ledgerTotals).length" class="totals totals--ledger">
-          <span class="totals__label">Ledger stock</span>
-          <span v-for="(qty, uom) in ledgerTotals" :key="uom" class="total-chip total-chip--ledger">
-            {{ fmtQty(qty) }} <small>{{ uom || '—' }}</small>
-          </span>
-          <span v-if="flaggedBatches" class="muted small">
-            · {{ flaggedBatches }} batch{{ flaggedBatches > 1 ? 'es have' : ' has' }} more rolls recorded here than in stock
           </span>
         </div>
 
@@ -87,18 +77,23 @@
             </thead>
             <tbody>
               <tr
-                v-for="(r, i) in visible" :key="r.roll_no || `${r.item_code}|${r.batch}|${i}`"
-                :class="{ 'row--batch': !r.roll_no && r.batch, 'row--flag': r.over_rolled, 'row--hit': highlight && r.roll_no === highlight }"
+                v-for="r in visible" :key="`${r.item_code}|${r.batch}`"
+                :class="{ 'row--hit': highlight && r.roll_nos.includes(highlight) }"
               >
                 <td class="mono code"><template v-for="(seg, j) in segs(r.item_code)" :key="j"><wbr v-if="j" />{{ seg }}</template></td>
                 <td>{{ r.commercial_name }}</td>
                 <td class="mono code"><template v-if="r.batch"><template v-for="(seg, j) in segs(r.batch)" :key="j"><wbr v-if="j" />{{ seg }}</template></template><template v-else>—</template></td>
-                <td class="mono">
-                  <template v-if="r.roll_no">{{ r.roll_no }}</template>
-                  <span v-else-if="r.batch" class="tag" title="Ledger stock not matched to a roll recorded in this warehouse">no roll</span>
-                  <template v-else>—</template>
-                  <i v-if="r.over_rolled" class="pi pi-exclamation-circle flag-icon"
-                     :title="`Rolls recorded here exceed ledger stock for this batch by ${fmtQty(r.over_rolled)}`"></i>
+                <td class="rolls-cell">
+                  <template v-if="r.roll_nos.length">
+                    <button class="rolls-toggle" @click="toggleRolls(r)">
+                      {{ r.roll_nos.length }} roll{{ r.roll_nos.length > 1 ? 's' : '' }}
+                      <i class="pi" :class="isOpen(r) ? 'pi-chevron-up' : 'pi-chevron-down'"></i>
+                    </button>
+                    <div v-if="isOpen(r)" class="roll-list">
+                      <span v-for="n in r.roll_nos" :key="n" class="roll-chip" :class="{ 'roll-chip--hit': n === highlight }">{{ n }}</span>
+                    </div>
+                  </template>
+                  <span v-else class="muted">—</span>
                 </td>
                 <td class="num strong">{{ fmtQty(r.qty) }}</td>
                 <td>{{ r.stock_uom }}</td>
@@ -115,8 +110,8 @@
         </button>
 
         <div class="legend">
-          <span><span class="swatch swatch--batch"></span> no roll — ledger stock with no roll recorded here</span>
-          <span><i class="pi pi-exclamation-circle flag-icon"></i> rolls recorded here exceed ledger stock</span>
+          <i class="pi pi-info-circle"></i>
+          <span>Qty is the stock ledger balance. Rolls are the roll records marked at this location, listed for reference — they aren't added into Qty.</span>
         </div>
       </div>
 
@@ -155,7 +150,7 @@ const COLUMNS = [
   { key: 'item_code', label: 'Item Code' },
   { key: 'commercial_name', label: 'Commercial Name' },
   { key: 'batch', label: 'Batch' },
-  { key: 'roll_no', label: 'Roll No' },
+  { key: 'roll_nos', label: 'Rolls' },
   { key: 'qty', label: 'Qty', num: true },
   { key: 'stock_uom', label: 'UOM' },
 ]
@@ -167,13 +162,20 @@ const warehouses = ref([])
 const warehouse = ref('')
 const loadedFor = ref('')
 const rows = ref([])
-const ledgerTotals = ref({})
 const loading = ref(false)
 const error = ref('')
 const highlight = ref('')
 const limit = ref(PAGE)
 
-const filters = reactive({ item_code: '', commercial_name: '', batch: '', roll_no: '', qty: '', stock_uom: '' })
+const filters = reactive({ item_code: '', commercial_name: '', batch: '', roll_nos: '', qty: '', stock_uom: '' })
+const openRows = ref(new Set())
+const rowKey = (r) => `${r.item_code}|${r.batch}`
+const isOpen = (r) => openRows.value.has(rowKey(r))
+function toggleRolls(r) {
+  const s = new Set(openRows.value)
+  s.has(rowKey(r)) ? s.delete(rowKey(r)) : s.add(rowKey(r))
+  openRows.value = s
+}
 const sortKey = ref('')
 const sortDir = ref(1)
 
@@ -200,7 +202,7 @@ async function load() {
   try {
     const res = await getWarehouseStock(warehouse.value)
     rows.value = res.rows || []
-    ledgerTotals.value = res.ledger_totals || {}
+    openRows.value = new Set()
     loadedFor.value = res.warehouse
     limit.value = PAGE
   } catch (e) {
@@ -229,7 +231,7 @@ const filtered = computed(() => {
     (!f.item_code || (r.item_code || '').toLowerCase().includes(f.item_code)) &&
     (!f.commercial_name || (r.commercial_name || '').toLowerCase().includes(f.commercial_name)) &&
     (!f.batch || (r.batch || '').toLowerCase().includes(f.batch)) &&
-    (!f.roll_no || (r.roll_no || '').toLowerCase().includes(f.roll_no)) &&
+    (!f.roll_nos || r.roll_nos.some(n => n.toLowerCase().includes(f.roll_nos))) &&
     (!filters.stock_uom || r.stock_uom === filters.stock_uom) &&
     qtyMatches(Number(r.qty) || 0, f.qty)
   )
@@ -238,22 +240,19 @@ const filtered = computed(() => {
     out = [...out].sort((a, b) => {
       const x = a[k], y = b[k]
       if (k === 'qty') return ((Number(x) || 0) - (Number(y) || 0)) * d
+      if (k === 'roll_nos') return (x.length - y.length) * d
       return String(x || '').localeCompare(String(y || ''), undefined, { numeric: true }) * d
     })
   }
   return out
 })
 const visible = computed(() => filtered.value.slice(0, limit.value))
-const rollCount = computed(() => filtered.value.filter(r => r.roll_no).length)
 const uoms = computed(() => [...new Set(rows.value.map(r => r.stock_uom))].sort())
 const filteredTotals = computed(() => {
   const t = {}
   for (const r of filtered.value) t[r.stock_uom] = (t[r.stock_uom] || 0) + (Number(r.qty) || 0)
   return t
 })
-const flaggedBatches = computed(() =>
-  new Set(rows.value.filter(r => r.over_rolled).map(r => `${r.item_code}|${r.batch}`)).size
-)
 const anyFilter = computed(() => Object.values(filters).some(v => String(v).trim()))
 
 watch(filters, () => { limit.value = PAGE })
@@ -325,9 +324,11 @@ async function onScan(text) {
       error.value = `${res.roll_no || res.batch} has no recorded warehouse — select one to search in.`
       return
     }
-    if (res.roll_no && rows.value.some(r => r.roll_no === res.roll_no)) {
-      filters.roll_no = res.roll_no
+    const hit = res.roll_no && rows.value.find(r => r.roll_nos.includes(res.roll_no))
+    if (hit) {
+      filters.roll_nos = res.roll_no
       highlight.value = res.roll_no
+      openRows.value = new Set([rowKey(hit)])
     } else if (res.batch) {
       filters.batch = res.batch
     }
@@ -375,9 +376,8 @@ function fmtQty(n) {
 .totals { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 10px 0 12px; }
 .total-chip { background: #f0fdf4; color: #166534; font-weight: 700; font-size: 13px; padding: 5px 10px; border-radius: 999px; }
 .total-chip small { font-weight: 500; }
-.totals--ledger { margin-top: -6px; }
 .totals__label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8; min-width: 86px; }
-.total-chip--ledger { background: #f1f5f9; color: #334155; }
+
 
 .table-wrap { overflow: auto; max-height: 70vh; border: 1px solid #f1f5f9; border-radius: 10px; }
 .stock-table { width: 100%; min-width: 780px; border-collapse: collapse; font-size: 13px; }
@@ -396,15 +396,17 @@ function fmtQty(n) {
 .num { text-align: right !important; white-space: nowrap; }
 .strong { font-weight: 700; color: #0f172a; }
 .mono { font-variant-numeric: tabular-nums; }
-.row--batch td { background: #fffbeb; }
+.rolls-cell { white-space: nowrap; min-width: 110px; }
+.rolls-toggle { background: #f1f5f9; border: none; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; color: #334155; display: inline-flex; align-items: center; gap: 6px; }
+.rolls-toggle .pi { font-size: 10px; }
+.roll-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-width: 260px; white-space: normal; }
+.roll-chip { font-size: 11px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 1px 6px; font-variant-numeric: tabular-nums; }
+.roll-chip--hit { background: #dcfce7; border-color: #86efac; font-weight: 700; }
 .row--hit td { background: #dcfce7 !important; }
 .tag { font-size: 11px; font-weight: 600; color: #92400e; background: #fef3c7; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
-.flag-icon { color: #b45309; margin-left: 4px; font-size: 12px; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 11px; color: #64748b; }
 .legend > span { display: inline-flex; align-items: center; gap: 6px; }
-.swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-.swatch--batch { background: #fef3c7; border: 1px solid #fde68a; }
 
 .empty { text-align: center; color: #94a3b8; padding: 22px 10px; }
 .empty--page { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 40px 16px; font-size: 14px; }
