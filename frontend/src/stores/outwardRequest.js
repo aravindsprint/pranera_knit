@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import {
   getOutwardRequestItems, saveOutwardRequest, getOutwardRequest, listOutwardRequests,
   getBuildings, searchWorkOrdersForOutward, searchPurchaseOrdersForOutward,
+  getOutwardPickDefaults, createOutwardRollPickAssignment, syncWarehouses, searchAssignableUsers,
 } from '@/api/frappe'
 
 function todayISO() {
@@ -198,10 +199,97 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     purchaseOrder.value = ''
     meta.value = null
     error.value = ''
+    pickPlan.value = null
+    pickError.value = ''
     clearItems()
   }
 
+  // ── Create Roll Pick Assignment from this request ──────────────────────
+  const pickPlan = ref(null)          // server-built defaults (get_pick_assignment_defaults)
+  const pickForm = ref({})
+  const warehouses = ref([])
+  const users = ref([])
+  const creatingPick = ref(false)
+  const pickError = ref('')
+
+  const canCreatePick = computed(() =>
+    !!name.value && meta.value?.request_status === 'Pending'
+  )
+  const pickFormValid = computed(() => {
+    const f = pickForm.value, p = pickPlan.value
+    if (!p || !f.sourceWarehouse || !f.targetWarehouse || !f.assignedTo) return false
+    if (p.pick_type === 'To Work Order') return Number(f.pickQty) > 0
+    return !!f.subcontractingOrder && p.batch_items.length > 0
+  })
+
+  async function startPick() {
+    pickError.value = ''
+    pickPlan.value = null
+    try {
+      const [plan, wh, us] = await Promise.all([
+        getOutwardPickDefaults(name.value),
+        warehouses.value.length ? warehouses.value : syncWarehouses(),
+        users.value.length ? users.value : searchAssignableUsers(''),
+      ])
+      warehouses.value = wh
+      users.value = us
+      pickPlan.value = plan
+      pickForm.value = {
+        sourceWarehouse: plan.default_source_warehouse || '',
+        targetWarehouse: plan.default_target_warehouse || '',
+        subcontractingOrder: plan.subcontracting_orders[0]?.name || '',
+        pickQty: plan.pick_type === 'To Work Order' ? plan.pick_qty : null,
+        assignedTo: '',
+        remarks: '',
+      }
+    } catch (e) {
+      pickError.value = e.message
+    }
+  }
+
+  function onSubcontractingOrderChange() {
+    const sco = pickPlan.value?.subcontracting_orders.find(s => s.name === pickForm.value.subcontractingOrder)
+    if (sco?.supplier_warehouse) pickForm.value.targetWarehouse = sco.supplier_warehouse
+  }
+
+  async function searchUsers(txt) {
+    try { users.value = await searchAssignableUsers(txt) } catch { /* keep last list */ }
+  }
+
+  async function createPick() {
+    if (!pickFormValid.value) return null
+    creatingPick.value = true
+    pickError.value = ''
+    try {
+      const f = pickForm.value
+      const res = await createOutwardRollPickAssignment({
+        name: name.value,
+        source_warehouse: f.sourceWarehouse,
+        target_warehouse: f.targetWarehouse,
+        assigned_to: f.assignedTo,
+        subcontracting_order: pickPlan.value.pick_type === 'To Subcontracting Order' ? f.subcontractingOrder : undefined,
+        pick_qty: pickPlan.value.pick_type === 'To Work Order' ? Number(f.pickQty) : undefined,
+        remarks: f.remarks || undefined,
+      })
+      applyDoc(res.outward_request)
+      pickPlan.value = null
+      return res.name
+    } catch (e) {
+      pickError.value = e.message
+      return null
+    } finally {
+      creatingPick.value = false
+    }
+  }
+
+  function cancelPick() {
+    pickPlan.value = null
+    pickError.value = ''
+  }
+
   return {
+    pickPlan, pickForm, warehouses, users, creatingPick, pickError, canCreatePick, pickFormValid,
+    startPick, onSubcontractingOrderChange, searchUsers, createPick, cancelPick,
     requests, listFilter, listSearch, loadingList,
     name, date, toBuilding, sourceType, workOrder, purchaseOrder, items, receipts, meta,
     buildings, workOrders, purchaseOrders, buildingOptions,

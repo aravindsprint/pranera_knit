@@ -622,6 +622,20 @@ def _record_scan(doc, roll_no, roll, source_warehouse):
                 "Roll {0}'s batch {1} is not one of the batches specified for this "
                 "Pick Order ({2})"
             ).format(roll_no, roll.batch or _("(no batch)"), ", ".join(sorted(allowed_batches))))
+    elif doc.get("outward_request"):
+        # A free-scan pick raised from an Outward Request moves the Work
+        # Order's REQUIRED items — material other orders produced — so the
+        # "batch this Work Order manufactured" rule below would reject
+        # every roll. The request's own item list is the constraint instead.
+        allowed_items = set(frappe.get_all(
+            "Outward Request Item",
+            filters={"parenttype": "Outward Request", "parent": doc.outward_request},
+            pluck="item_code",
+        ))
+        if roll.item_code not in allowed_items:
+            frappe.throw(_(
+                "Roll {0}'s item {1} is not on Outward Request {2}"
+            ).format(roll_no, roll.item_code, doc.outward_request))
     elif doc.work_order:
         valid_batches = _valid_batches_for_work_order(doc.work_order)
         if not valid_batches:
@@ -893,7 +907,11 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
 
     batch_items = frappe.parse_json(batch_items) if isinstance(batch_items, str) else (batch_items or [])
     mandatory_batch_items_types = ("From Batch", "To Sales Order")
-    optional_batch_items_types = ("To Work Order",)
+    # "To Subcontracting Order": optional too — an Outward Request against
+    # a subcontracting PO passes its batch rows here, which gives the pick
+    # per-UOM targets (Kgs fabric + Pcs collars/cuffs) and restricts scans
+    # to exactly those batches.
+    optional_batch_items_types = ("To Work Order", "To Subcontracting Order")
     uses_batch_items = pick_type in mandatory_batch_items_types or (
         pick_type in optional_batch_items_types and bool(batch_items)
     )
@@ -952,6 +970,15 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
     if outward_request:
         if frappe.db.get_value("Outward Request", outward_request, "request_status") == "Completed":
             frappe.throw(_("Outward Request {0} is already Completed").format(outward_request))
+        active = frappe.get_all(
+            "Roll Pick Assignment",
+            filters={"outward_request": outward_request, "docstatus": 1,
+                     "status": ["!=", "Cancelled"]},
+            pluck="name", limit=1,
+        )
+        if active:
+            frappe.throw(_("Outward Request {0} already has Roll Pick Assignment {1}")
+                         .format(outward_request, active[0]))
         doc.outward_request = outward_request
 
     doc.insert()

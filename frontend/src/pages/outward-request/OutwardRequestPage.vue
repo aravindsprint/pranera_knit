@@ -78,6 +78,15 @@
           <i class="pi pi-link"></i>
           <span>Roll Pick Assignment: {{ store.meta.assignments.map(a => `${a.name} (${a.status})`).join(', ') }}</span>
         </div>
+        <button
+          v-if="store.canCreatePick" class="btn btn-primary btn-full" style="margin-top:14px"
+          @click="store.startPick()"
+        >
+          <i class="pi pi-send"></i> Create Roll Pick Assignment
+        </button>
+        <div v-if="store.pickError && !store.pickPlan" class="error-banner" style="margin-top:10px">
+          <i class="pi pi-exclamation-triangle"></i> {{ store.pickError }}
+        </div>
       </div>
 
       <div class="card">
@@ -196,10 +205,110 @@
     </div>
 
     <transition name="modal-fade">
+      <div v-if="store.pickPlan" class="modal-overlay" @click.self="store.cancelPick()">
+        <div class="sheet">
+          <div class="sheet__head">
+            <h3 class="modal-title" style="margin:0">Create Roll Pick Assignment</h3>
+            <button class="btn-remove" @click="store.cancelPick()"><i class="pi pi-times"></i></button>
+          </div>
+
+          <div class="plan-summary">
+            <span class="pill pill--blue">{{ store.pickPlan.pick_type }}</span>
+            <span class="muted">{{ store.pickPlan.document_name }}</span>
+          </div>
+
+          <template v-if="store.pickPlan.pick_type === 'To Subcontracting Order'">
+            <label class="form-label">Subcontracting Order <span class="req">*</span></label>
+            <select
+              v-model="store.pickForm.subcontractingOrder" class="form-input"
+              @change="store.onSubcontractingOrderChange()"
+            >
+              <option v-for="sco in store.pickPlan.subcontracting_orders" :key="sco.name" :value="sco.name">
+                {{ sco.name }} · {{ sco.status }}
+              </option>
+            </select>
+            <div v-if="!store.pickPlan.subcontracting_orders.length" class="error-banner" style="margin-top:8px">
+              No submitted Subcontracting Order for this PO.
+            </div>
+
+            <label class="form-label" style="margin-top:14px">Batches to pick</label>
+            <div class="plan-rows">
+              <div v-for="b in store.pickPlan.batch_items" :key="b.batch" class="plan-row">
+                <span class="plan-row__main">{{ b.batch }}<small>{{ b.item_code }}</small></span>
+                <span class="plan-row__qty">{{ fmtQty(b.qty) }} {{ b.stock_uom }}</span>
+              </div>
+            </div>
+            <div class="hint-text">
+              <i class="pi pi-info-circle"></i>
+              <span>Workers can only scan these batches. Each UOM must land within ±3% of its total.</span>
+            </div>
+            <div v-if="store.pickPlan.excluded.length" class="hint-text hint-text--warn">
+              <i class="pi pi-exclamation-circle"></i>
+              <span>
+                Not roll-picked (no batch): {{ store.pickPlan.excluded.map(e => `${e.item_code} ${fmtQty(e.qty)} ${e.stock_uom || ''}`).join(', ') }}.
+                Send these separately.
+              </span>
+            </div>
+          </template>
+
+          <template v-else>
+            <label class="form-label">Pick Qty (kg) <span class="req">*</span></label>
+            <input v-model.number="store.pickForm.pickQty" type="number" min="0" step="0.01" class="form-input" />
+            <div class="hint-text">
+              <i class="pi pi-info-circle"></i>
+              <span>Free scan: any roll of this request's items, until the total is within ±3% ({{ tolRange }}).</span>
+            </div>
+            <div v-if="Object.keys(store.pickPlan.non_kgs).length" class="hint-text hint-text--warn">
+              <i class="pi pi-exclamation-circle"></i>
+              <span>
+                Not counted toward the kg target:
+                {{ Object.entries(store.pickPlan.non_kgs).map(([u, q]) => `${fmtQty(q)} ${u}`).join(', ') }}.
+              </span>
+            </div>
+          </template>
+
+          <div class="row-2 row-2--even" style="margin-top:14px">
+            <div>
+              <label class="form-label">Source Warehouse <span class="req">*</span></label>
+              <AutoComplete v-model="store.pickForm.sourceWarehouse" :options="warehouseOptions" placeholder="Search warehouse..." />
+            </div>
+            <div>
+              <label class="form-label">Target Warehouse <span class="req">*</span></label>
+              <AutoComplete v-model="store.pickForm.targetWarehouse" :options="warehouseOptions" placeholder="Search warehouse..." />
+            </div>
+          </div>
+
+          <label class="form-label" style="margin-top:14px">Assigned To <span class="req">*</span></label>
+          <input
+            v-model="assignedToLabel" list="or-user-list" class="form-input"
+            placeholder="Search user..." @input="onUserInput"
+          />
+          <datalist id="or-user-list">
+            <option v-for="u in store.users" :key="u.name" :value="u.full_name">{{ u.name }}</option>
+          </datalist>
+
+          <label class="form-label" style="margin-top:14px">Remarks <span class="optional">(optional)</span></label>
+          <textarea v-model="store.pickForm.remarks" class="form-input" rows="2" :placeholder="`Outward Request ${store.name} → ${store.toBuilding}`"></textarea>
+
+          <div v-if="store.pickError" class="error-banner" style="margin-top:12px">
+            <i class="pi pi-exclamation-triangle"></i> {{ store.pickError }}
+          </div>
+          <button
+            class="btn btn-primary btn-full" style="margin-top:14px"
+            :disabled="!store.pickFormValid || store.creatingPick" @click="createPick"
+          >
+            <i v-if="store.creatingPick" class="pi pi-spin pi-spinner"></i>
+            {{ store.creatingPick ? 'Creating...' : 'Create & Assign' }}
+          </button>
+        </div>
+      </div>
+    </transition>
+
+    <transition name="modal-fade">
       <div v-if="savedName" class="modal-overlay" @click.self="savedName = ''">
         <div class="modal-box">
           <i class="pi pi-check-circle modal-icon"></i>
-          <h3 class="modal-title">Outward Request Saved</h3>
+          <h3 class="modal-title">{{ savedTitle }}</h3>
           <div class="modal-docno">{{ savedName }}</div>
           <button class="btn btn-primary btn-full" @click="savedName = ''">OK</button>
         </div>
@@ -229,6 +338,33 @@ const store = useOutwardRequestStore()
 const route = useRoute()
 const router = useRouter()
 const savedName = ref('')
+const savedTitle = ref('Outward Request Saved')
+const assignedToLabel = ref('')
+
+const warehouseOptions = computed(() =>
+  store.warehouses.map(w => ({ value: w.name, label: w.warehouse_name || w.name }))
+)
+const tolRange = computed(() => {
+  const q = Number(store.pickForm.pickQty) || 0
+  return q ? `${fmtQty(q * 0.97)} – ${fmtQty(q * 1.03)} kg` : '—'
+})
+
+let userTimer = null
+function onUserInput() {
+  const match = store.users.find(u => u.full_name === assignedToLabel.value)
+  store.pickForm.assignedTo = match ? match.name : ''
+  if (match) return
+  clearTimeout(userTimer)
+  userTimer = setTimeout(() => store.searchUsers(assignedToLabel.value), 250)
+}
+
+async function createPick() {
+  const rpa = await store.createPick()
+  if (!rpa) return
+  assignedToLabel.value = ''
+  savedTitle.value = 'Roll Pick Assignment Created'
+  savedName.value = rpa
+}
 
 // ?name=OR/26/00001 opens an existing request, ?new=1 a blank form,
 // neither shows the list — so the header's back button and the browser's
@@ -298,6 +434,7 @@ async function save() {
   const wasNew = !store.name
   const doc = await store.save()
   if (!doc) return
+  savedTitle.value = 'Outward Request Saved'
   savedName.value = doc.name
   if (wasNew) router.replace({ query: { name: doc.name } })
 }
@@ -434,6 +571,22 @@ function fmtQty(n) {
 .modal-icon { font-size: 40px; color: #16a34a; margin-bottom: 10px; display: block; }
 .modal-title { font-size: 17px; font-weight: 700; margin: 0 0 12px; color: #0f172a; }
 .modal-docno { font-size: 15px; font-weight: 700; color: #0f6e56; background: #f0fdf4; border-radius: 8px; padding: 10px 14px; margin-bottom: 18px; word-break: break-all; }
+.sheet {
+  background: #fff; border-radius: 14px; padding: 20px; width: 100%; max-width: 520px;
+  max-height: calc(100vh - 40px); overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+}
+.sheet__head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.plan-summary { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; font-size: 13px; }
+.plan-rows { border: 1px solid #f1f5f9; border-radius: 10px; max-height: 180px; overflow-y: auto; }
+.plan-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 10px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+.plan-row:last-child { border-bottom: none; }
+.plan-row__main { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; font-weight: 600; color: #0f172a; }
+.plan-row__main small { font-weight: 400; color: #64748b; }
+.plan-row__qty { white-space: nowrap; font-weight: 700; color: #166534; }
+.hint-text--warn { color: #92400e; }
+.optional { color: #94a3b8; font-weight: 400; text-transform: none; font-size: 11px; }
+.row-2--even { grid-template-columns: 1fr 1fr; }
+@media (max-width: 480px) { .row-2--even { grid-template-columns: 1fr; } }
 .modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.2s; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
 </style>

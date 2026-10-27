@@ -717,3 +717,9 @@ export const searchWorkOrdersForOutward = (txt) =>
 
 export const searchPurchaseOrdersForOutward = (txt) =>
   call(`${OR_API}.search_purchase_orders`, { txt }).then(r => r.message || [])
+
+export const getOutwardPickDefaults = (name) =>
+  call(`${OR_API}.get_pick_assignment_defaults`, { name }).then(r => r.message)
+
+export const createOutwardRollPickAssignment = (payload) =>
+  call(`${OR_API}.create_roll_pick_assignment`, payload).then(r => r.message)

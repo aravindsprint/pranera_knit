@@ -241,3 +241,135 @@ def search_purchase_orders(txt=None):
         fields=["name", "supplier_name", "status"],
         limit=30, order_by="modified desc",
     )
+
+
+# ── Roll Pick Assignment from a request ───────────────────────────────────
+#
+# Work Order request → "To Work Order", free scan: no batch items, pick_qty
+#   = total Kgs on the request (editable). Scans are limited to the
+#   request's item codes (see _record_scan in pick_order.py) instead of the
+#   usual "batches this WO manufactured" rule, since a request moves the
+#   WO's REQUIRED items. Free-scan picks are checked in a single Kgs bucket
+#   (get_pick_qty_targets_by_uom), so non-Kgs rows don't count toward it.
+#
+# Purchase Order request → "To Subcontracting Order", linked to the PO's
+#   Subcontracting Order (target warehouse defaults to its job-worker
+#   warehouse). Rows WITH a batch become batch_items — per-UOM ±3% targets
+#   and scans restricted to those batches. Rows without a batch (labels,
+#   buttons, cartons…) aren't rolls and can't be scanned, so they're left
+#   out and reported back as `excluded`.
+
+def _assignment_plan(doc):
+    plan = {"outward_request": doc.name, "excluded": [], "batch_items": [], "uom_totals": {}}
+    for r in doc.items:
+        uom = r.stock_uom or "Kgs"
+        plan["uom_totals"][uom] = round(plan["uom_totals"].get(uom, 0.0) + flt(r.qty), 3)
+
+    if doc.work_order:
+        wo = frappe.db.get_value("Work Order", doc.work_order,
+                                 ["project", "wip_warehouse", "source_warehouse"], as_dict=True) or {}
+        plan.update({
+            "pick_type": "To Work Order",
+            "document_name": doc.work_order,
+            "project": wo.get("project"),
+            "pick_qty": plan["uom_totals"].get("Kgs", 0.0),
+            "default_source_warehouse": wo.get("source_warehouse"),
+            "default_target_warehouse": wo.get("wip_warehouse"),
+            "subcontracting_orders": [],
+            "non_kgs": {u: q for u, q in plan["uom_totals"].items() if u != "Kgs"},
+        })
+        return plan
+
+    sco = frappe.get_all(
+        "Subcontracting Order",
+        filters={"purchase_order": doc.purchase_order, "docstatus": 1},
+        fields=["name", "supplier_warehouse", "status"],
+        order_by="creation desc",
+    )
+    merged = {}
+    for r in doc.items:
+        if not r.batch:
+            plan["excluded"].append({"item_code": r.item_code, "qty": flt(r.qty), "stock_uom": r.stock_uom})
+            continue
+        key = r.batch
+        if key in merged:
+            merged[key]["qty"] += flt(r.qty)
+        else:
+            merged[key] = {"batch": r.batch, "item_code": r.item_code,
+                           "qty": flt(r.qty), "stock_uom": r.stock_uom}
+    plan.update({
+        "pick_type": "To Subcontracting Order",
+        "document_name": doc.purchase_order,
+        "project": frappe.db.get_value("Purchase Order", doc.purchase_order, "project"),
+        "batch_items": list(merged.values()),
+        "pick_qty": round(sum(b["qty"] for b in merged.values()), 3),
+        "subcontracting_orders": sco,
+        "default_source_warehouse": None,
+        "default_target_warehouse": sco[0].supplier_warehouse if sco else None,
+        "non_kgs": {},
+    })
+    return plan
+
+
+@frappe.whitelist()
+def get_pick_assignment_defaults(name):
+    doc = frappe.get_doc("Outward Request", name)
+    doc.check_permission("read")
+    return _assignment_plan(doc)
+
+
+@frappe.whitelist()
+def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assigned_to,
+                                subcontracting_order=None, pick_qty=None, remarks=None,
+                                roll_source=None):
+    """Creates + submits a Roll Pick Assignment for this request via the
+    existing pick_order.create_pick_order (same validations, same status
+    flow). Batch rows and pick type come from the saved request, not the
+    caller — only warehouses, assignee, the WO free-scan target and the
+    PO's Subcontracting Order are chosen on the form."""
+    from pranera_knit.api.pick_order import create_pick_order
+
+    doc = frappe.get_doc("Outward Request", name)
+    doc.check_permission("write")
+    if doc.request_status != "Pending":
+        frappe.throw(_("Outward Request {0} is already {1}").format(name, doc.request_status))
+
+    plan = _assignment_plan(doc)
+    if not source_warehouse or not target_warehouse:
+        frappe.throw(_("Source and Target Warehouse are required"))
+
+    args = dict(
+        pick_type=plan["pick_type"],
+        source_warehouse=source_warehouse,
+        target_warehouse=target_warehouse,
+        assigned_to=assigned_to,
+        project=plan.get("project"),
+        remarks=remarks or _("Outward Request {0} → {1}").format(name, doc.to_building),
+        roll_source=roll_source,
+        outward_request=name,
+    )
+
+    if plan["pick_type"] == "To Work Order":
+        target = flt(pick_qty) or plan["pick_qty"]
+        if target <= 0:
+            frappe.throw(_("Enter the Pick Qty (kg) — this request has no Kgs items to default from"))
+        args.update(document_name=plan["document_name"], pick_qty=target)
+    else:
+        valid = {s.name for s in plan["subcontracting_orders"]}
+        if not valid:
+            frappe.throw(_("No submitted Subcontracting Order found for Purchase Order {0}")
+                         .format(doc.purchase_order))
+        subcontracting_order = subcontracting_order or plan["subcontracting_orders"][0].name
+        if subcontracting_order not in valid:
+            frappe.throw(_("Subcontracting Order {0} is not linked to Purchase Order {1}")
+                         .format(subcontracting_order, doc.purchase_order))
+        if not plan["batch_items"]:
+            frappe.throw(_("None of this request's items has a batch, so there is nothing to roll-pick"))
+        args.update(
+            purchase_order=doc.purchase_order,
+            subcontracting_order=subcontracting_order,
+            batch_items=[{"batch": b["batch"], "qty": b["qty"]} for b in plan["batch_items"]],
+        )
+
+    result = create_pick_order(**args)
+    return {"name": result.get("name"), "outward_request": get_outward_request(name)}
