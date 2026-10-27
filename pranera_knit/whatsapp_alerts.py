@@ -1,12 +1,22 @@
 """
 pranera_knit/whatsapp_alerts.py
 WhatsApp copies of the Knit App notifications, sent through the
-frappe_whatsapp app that's already live on this site (the same path the
-CRM lead alerts use: insert an Outgoing "WhatsApp Message" with an
-approved template; frappe_whatsapp calls Meta in before_insert).
+**whatsnext** app — the WhatsApp integration this site actually uses
+(Whatsnext Settings → Meta Cloud API; the CRM lead alerts go out the same
+way). frappe_whatsapp is installed too but no longer sends.
 
-Template: one generic UTILITY template, "knit_app_alert" (created by
-patches/v1_7/add_whatsapp_alert_template.py, which submits it to Meta):
+Sending: whatsnext.whatsnext.api.send_template_message(to, template,
+parameters, reference_doctype, reference_name, automated=1) — the same
+call whatsnext's own notification engine makes from background jobs. It
+creates the Whatsnext Message record, calls Meta and stores the status /
+error on that record, so every alert is visible in the Whatsnext inbox
+and message log. Its app-user check only applies to direct HTTP calls,
+not to internal calls like this one; the job still runs as Administrator
+so template / document permissions of whoever triggered the alert can
+never block the send.
+
+Template: one generic Utility template, "knit_app_alert" (created and
+submitted to Meta by patches/v1_7/add_whatsapp_alert_template.py):
 
     Pranera Knit App alert
     *{{1}}*        ← title, e.g. "New pick assigned"
@@ -14,45 +24,37 @@ patches/v1_7/add_whatsapp_alert_template.py, which submits it to Meta):
     Open in the app: {{3}}   ← link
     This is an automated message from Pranera ERP.
 
-The template doc name can be overridden with site config
-`knit_whatsapp_template`; set `knit_whatsapp_disabled: 1` to switch
-WhatsApp off without touching push. Nothing is sent until the template's
-status is APPROVED (frappe_whatsapp's webhook / "Fetch templates" keeps
-that in sync with Meta).
+Nothing is sent until its approval_status is "Approved". Site config:
+`knit_whatsapp_template` overrides the template name;
+`knit_whatsapp_disabled: 1` switches WhatsApp off without touching push.
 
 Recipients' numbers: the active Employee linked to the user
 (cell_number), else User.mobile_no. Users with neither are skipped.
-Numbers are normalised to 91XXXXXXXXXX for 10-digit Indian mobiles.
 
-Called from pranera_knit.push.send, so every push event also goes out on
-WhatsApp. Runs in the background after commit; every failure is logged to
-the Error Log and never raised.
+Called from pranera_knit.push.send. Runs in the background after commit;
+failures are recorded on the Whatsnext Message (by whatsnext) or in the
+Error Log, never raised.
 """
-import json
 import re
 
 import frappe
 
 TEMPLATE_NAME = "knit_app_alert"
+SEND = "whatsnext.whatsnext.api.send_template_message"
 
 
 def template_name():
-    """WhatsApp Templates doc name. frappe_whatsapp names templates
-    "<template_name>-<language_code>", but the code can be blank at naming
-    time (e.g. "crm_lead_status_update_v2-"), so look it up instead."""
-    if frappe.conf.get("knit_whatsapp_template"):
-        return frappe.conf.get("knit_whatsapp_template")
-    return frappe.db.get_value("WhatsApp Templates", {"template_name": TEMPLATE_NAME}, "name")
+    return frappe.conf.get("knit_whatsapp_template") or TEMPLATE_NAME
 
 
 def is_enabled():
     if frappe.conf.get("knit_whatsapp_disabled"):
         return False
     try:
-        name = template_name()
-        return bool(name) and frappe.db.get_value("WhatsApp Templates", name, "status") == "APPROVED"
+        return frappe.db.get_value("Whatsnext Message Template", template_name(), "approval_status") == "Approved" \
+            and bool(frappe.db.get_single_value("Whatsnext Settings", "meta_enabled"))
     except Exception:
-        return False  # frappe_whatsapp not installed
+        return False  # whatsnext not installed
 
 
 def normalise_mobile(raw):
@@ -105,25 +107,27 @@ def deliver(users, title, body, link, ref=None):
     if not is_enabled():
         return
     numbers = mobiles_for(users)
-    params = json.dumps({"1": _param(title, 60), "2": _param(body, 500), "3": _param(link, 300)})
+    if not numbers:
+        return
+    params = {"1": _param(title, 60), "2": _param(body, 500), "3": _param(link, 300)}
     ref_doctype, ref_name = (ref or [None, None])
-    for user in users:
-        number = numbers.get(user)
-        if not number:
-            continue
-        try:
-            frappe.get_doc({
-                "doctype": "WhatsApp Message",
-                "type": "Outgoing",
-                "to": number,
-                "message_type": "Template",
-                "content_type": "text",
-                "template": template_name(),
-                "body_param": params,
-                "reference_doctype": ref_doctype or "User",
-                "reference_name": ref_name or user,
-            }).insert(ignore_permissions=True)
-            frappe.db.commit()
-        except Exception:
-            frappe.db.rollback()
-            frappe.log_error(title=f"Knit WhatsApp to {user} failed")
+    send_template_message = frappe.get_attr(SEND)
+
+    previous_user = frappe.session.user
+    frappe.set_user("Administrator")
+    try:
+        for user in users:
+            number = numbers.get(user)
+            if not number:
+                continue
+            try:
+                send_template_message(
+                    to=number, template=template_name(), parameters=params,
+                    reference_doctype=ref_doctype, reference_name=ref_name, automated=1,
+                )
+                frappe.db.commit()
+            except Exception:
+                frappe.db.rollback()
+                frappe.log_error(title=f"Knit WhatsApp to {user} failed")
+    finally:
+        frappe.set_user(previous_user)
