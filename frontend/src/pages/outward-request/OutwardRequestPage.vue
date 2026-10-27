@@ -40,6 +40,9 @@
           <span>{{ r.work_order ? 'WO' : 'PO' }} · {{ r.work_order || r.purchase_order }}</span>
           <span>{{ fmtDate(r.date) }}</span>
         </div>
+        <div v-if="r.vehicle_nos && r.vehicle_nos.length" class="req-card__vehicle">
+          <i class="pi pi-truck"></i> {{ r.vehicle_nos.join(', ') }}
+        </div>
         <div class="req-card__foot">
           <span class="muted">{{ r.created_by_name }}</span>
           <span v-if="r.status" class="pill pill--soft" :class="statusClass(r.status)">{{ r.status }}</span>
@@ -73,6 +76,17 @@
           <div v-for="(s, i) in STEPS" :key="s" class="step" :class="{ 'step--done': stepIndex >= i }">
             <span class="step__dot"></span><span class="step__label">{{ s }}</span>
           </div>
+        </div>
+        <div v-if="store.meta.vehicles.length" class="vehicle-box">
+          <div class="form-label" style="margin-bottom:6px">Vehicle</div>
+          <button v-for="v in store.meta.vehicles" :key="v.name" class="vehicle-row" @click="openGateEntry(v.name)">
+            <i class="pi pi-truck"></i>
+            <span class="vehicle-row__main">
+              <span><strong>{{ v.vehicle_no }}</strong> · {{ v.capacity }}</span>
+              <small>{{ v.driver_name }} · {{ v.mobile_no }} · In {{ fmtDateTime(v.arrival_datetime) }}{{ v.departure_datetime ? ' · Out ' + fmtDateTime(v.departure_datetime) : '' }}</small>
+            </span>
+            <span class="pill" :class="v.departure_datetime ? 'pill--grey' : 'pill--green'">{{ v.departure_datetime ? 'Departed' : 'At gate' }}</span>
+          </button>
         </div>
         <div v-if="store.meta.assignments.length" class="hint-text">
           <i class="pi pi-link"></i>
@@ -439,6 +453,9 @@ async function save() {
   if (wasNew) router.replace({ query: { name: doc.name } })
 }
 
+function openGateEntry(name) {
+  router.push({ path: '/knit-app/vehicle-gate-entry', query: { name } })
+}
 function statusClass(s) {
   return { 'Roll Pick Assigned': 'pill--blue', Picked: 'pill--amber', Completed: 'pill--green' }[s] || ''
 }
@@ -550,6 +567,12 @@ function fmtQty(n) {
 .pill--blue { background: #dbeafe; color: #1e40af; }
 .pill--amber { background: #fef3c7; color: #92400e; }
 .pill--green { background: #dcfce7; color: #166534; }
+.req-card__vehicle { font-size: 13px; font-weight: 600; color: #0f6e56; display: flex; gap: 6px; align-items: center; }
+.vehicle-box { margin-top: 14px; }
+.vehicle-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; cursor: pointer; text-align: left; font-family: inherit; font-size: 13px; color: #334155; margin-bottom: 6px; }
+.vehicle-row .pi-truck { color: #0f6e56; }
+.vehicle-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vehicle-row__main small { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
 
 .empty { text-align: center; color: #94a3b8; padding: 28px 12px; font-size: 14px; }
 .empty--inline { padding: 18px 8px; }

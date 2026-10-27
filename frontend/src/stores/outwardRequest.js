@@ -187,6 +187,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       status: doc.status || '',
       request_status: doc.request_status || 'Pending',
       assignments: doc.roll_pick_assignments || [],
+      vehicles: doc.vehicle_gate_entries || [],
     }
   }
 

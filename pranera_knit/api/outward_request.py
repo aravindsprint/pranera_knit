@@ -29,6 +29,8 @@ import frappe
 from frappe import _
 from frappe.utils import flt, today
 
+from pranera_knit.vehicle_gate_entry_events import vehicles_for_outward_requests
+
 LIST_FIELDS = [
     "name", "date", "to_building", "work_order", "purchase_order",
     "created_by", "created_on", "status", "request_status", "modified",
@@ -176,6 +178,7 @@ def get_outward_request(name):
         fields=["name", "status", "assigned_to", "docstatus"],
         order_by="creation asc",
     )
+    out["vehicle_gate_entries"] = vehicles_for_outward_requests([name]).get(name, [])
     return out
 
 
@@ -201,8 +204,10 @@ def list_outward_requests(request_status=None, txt=None, limit=50):
         for u in frappe.get_all("User", filters={"name": ["in", list(names) or [""]]},
                                 fields=["name", "full_name"])
     }
+    vehicles = vehicles_for_outward_requests([r.name for r in rows])
     for r in rows:
         r["created_by_name"] = full_names.get(r.created_by, r.created_by)
+        r["vehicle_nos"] = [v.vehicle_no for v in vehicles.get(r.name, [])]
     return rows
 
 

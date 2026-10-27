@@ -35,8 +35,8 @@
           <button class="drawer-link" @click="navigate('/knit-app/outward-request')">
             <span class="drawer-link__icon">🚚</span><span>Outward Request</span>
           </button>
-          <button class="drawer-link" @click="navigate('/knit-app/vehicle-inward')">
-            <span class="drawer-link__icon">🚛</span><span>Vehicle Inward</span>
+          <button class="drawer-link" @click="navigate('/knit-app/vehicle-gate-entry')">
+            <span class="drawer-link__icon">🚛</span><span>Vehicle Gate Entry</span>
           </button>
 
 

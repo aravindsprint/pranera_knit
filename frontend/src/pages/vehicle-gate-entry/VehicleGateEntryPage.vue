@@ -1,14 +1,14 @@
 <template>
   <div class="page">
     <AppHeader
-      :title="mode === 'list' ? 'Vehicle Inward' : (form.name || 'New Vehicle Inward')"
-      active="vehicle-inward" :username="auth.username" :designation="auth.designation" :show-back="true"
+      :title="mode === 'list' ? 'Vehicle Gate Entry' : (form.name || 'New Vehicle Gate Entry')"
+      active="vehicle-gate-entry" :username="auth.username" :designation="auth.designation" :show-back="true"
     />
 
     <!-- ══════════════════════ LIST ══════════════════════ -->
     <div v-if="mode === 'list'" class="page-content">
       <button class="btn btn-primary btn-full" @click="openNew">
-        <i class="pi pi-plus"></i> New Vehicle Inward
+        <i class="pi pi-plus"></i> New Vehicle Gate Entry
       </button>
 
       <div class="card card--tight">
@@ -35,6 +35,10 @@
         <div class="vi-card__route">
           <i class="pi" :class="r.purpose === 'Pick Up' ? 'pi-arrow-up-right' : 'pi-arrow-down-left'"></i>
           {{ r.purpose === 'Pick Up' ? 'From' : 'To' }} {{ r.from_location || r.to_location }}
+        </div>
+        <div v-if="r.outward_requests && r.outward_requests.length" class="vi-card__or">
+          <i class="pi pi-box"></i>
+          <span>{{ r.outward_requests.join(', ') }}</span>
         </div>
         <div class="vi-card__meta">
           <span>{{ r.driver_name }} · {{ r.mobile_no }}</span>
@@ -121,6 +125,43 @@
         </template>
       </div>
 
+      <div v-if="form.purpose === 'Pick Up'" class="card">
+        <div class="or-head">
+          <label class="form-label" style="margin:0">Outward Requests</label>
+          <span class="muted small">{{ form.outwardRequests.length }} added</span>
+        </div>
+
+        <div v-if="!form.outwardRequests.length" class="or-empty">
+          Add the Outward Requests this vehicle is picking up.
+        </div>
+        <div v-for="(o, i) in form.outwardRequests" :key="o.name" class="or-row">
+          <div class="or-row__main">
+            <div class="or-row__name">{{ o.name }} <span class="pill" :class="docStatusClass(o.request_status)">{{ o.request_status }}</span></div>
+            <div class="or-row__sub">To {{ o.to_building }} · {{ o.work_order ? 'WO ' + o.work_order : 'PO ' + o.purchase_order }} · {{ o.item_count }} item{{ o.item_count === 1 ? '' : 's' }}</div>
+          </div>
+          <button class="btn-remove" title="Remove" @click="form.outwardRequests.splice(i, 1)"><i class="pi pi-times"></i></button>
+        </div>
+
+        <div class="or-search">
+          <i class="pi pi-search"></i>
+          <input
+            v-model="orSearch" class="form-input" placeholder="Search outward request, building, WO or PO..."
+            @input="onOrSearch" @focus="loadOrSuggestions(orSearch)"
+          />
+        </div>
+        <div v-if="orLoading" class="muted small" style="margin-top:8px"><i class="pi pi-spin pi-spinner"></i> Searching...</div>
+        <div v-else-if="availableOrs.length" class="or-results">
+          <button v-for="o in availableOrs.slice(0, 8)" :key="o.name" class="or-result" @click="addOr(o)">
+            <i class="pi pi-plus-circle"></i>
+            <span class="or-result__main">
+              <span><strong>{{ o.name }}</strong> → {{ o.to_building }}</span>
+              <small>{{ o.work_order || o.purchase_order }} · {{ o.status || o.request_status }}</small>
+            </span>
+          </button>
+        </div>
+        <div v-else-if="orSearched" class="muted small" style="margin-top:8px">No other Outward Requests available.</div>
+      </div>
+
       <div v-if="form.name" class="card meta-card">
         <div>
           <div class="form-label">Created By</div>
@@ -135,7 +176,7 @@
       <div class="card">
         <button class="btn btn-primary btn-full" :disabled="!canSave || saving" @click="save">
           <i v-if="saving" class="pi pi-spin pi-spinner"></i>
-          {{ saving ? 'Saving...' : (form.name ? 'Update Vehicle Inward' : 'Save Vehicle Inward') }}
+          {{ saving ? 'Saving...' : (form.name ? 'Update Vehicle Gate Entry' : 'Save Vehicle Gate Entry') }}
         </button>
         <div v-if="!canSave && missing.length" class="hint-text">
           <i class="pi pi-info-circle"></i><span>Still needed: {{ missing.join(', ') }}</span>
@@ -153,7 +194,7 @@
       <div v-if="savedName" class="modal-overlay" @click.self="savedName = ''">
         <div class="modal-box">
           <i class="pi pi-check-circle modal-icon"></i>
-          <h3 class="modal-title">Vehicle Inward Saved</h3>
+          <h3 class="modal-title">Vehicle Gate Entry Saved</h3>
           <div class="modal-docno">{{ savedName }}</div>
           <button class="btn btn-primary btn-full" @click="savedName = ''">OK</button>
         </div>
@@ -167,7 +208,8 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
-  getVehicleInwardOptions, saveVehicleInward, getVehicleInward, markVehicleDeparted, listVehicleInwards,
+  getVehicleGateEntryOptions, saveVehicleGateEntry, getVehicleGateEntry, markVehicleDeparted, listVehicleGateEntries,
+  searchOutwardRequestsForGate,
 } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
 
@@ -203,6 +245,7 @@ function blankForm() {
   return {
     name: '', date: nowLocal().slice(0, 10), vehicle_no: '', driver_name: '', mobile_no: '',
     capacity: '', arrival: nowLocal(), departure: '', purpose: '', location: '', created_by_name: '',
+    outwardRequests: [],
   }
 }
 // Frappe "YYYY-MM-DD HH:MM:SS" <-> <input type="datetime-local"> "YYYY-MM-DDTHH:MM"
@@ -228,12 +271,49 @@ const missing = computed(() => {
 const canSave = computed(() => missing.value.length === 0)
 
 // Switching purpose: keep the chosen location (it moves from From to To),
-// the server clears whichever side doesn't apply.
-watch(() => form.purpose, () => { error.value = '' })
+// the server clears whichever side doesn't apply (and the Outward
+// Requests for a Drop).
+watch(() => form.purpose, (p) => {
+  error.value = ''
+  if (p === 'Pick Up' && !orSearched.value) loadOrSuggestions('')
+})
+
+// ── Outward Requests on a Pick Up ─────────────────────────────────────────
+const orSearch = ref('')
+const orSuggestions = ref([])
+const orLoading = ref(false)
+const orSearched = ref(false)
+const availableOrs = computed(() => {
+  const added = new Set(form.outwardRequests.map(o => o.name))
+  return orSuggestions.value.filter(o => !added.has(o.name))
+})
+async function loadOrSuggestions(txt) {
+  orLoading.value = true
+  try {
+    orSuggestions.value = await searchOutwardRequestsForGate(txt, form.name)
+    orSearched.value = true
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    orLoading.value = false
+  }
+}
+let orTimer = null
+function onOrSearch() {
+  clearTimeout(orTimer)
+  orTimer = setTimeout(() => loadOrSuggestions(orSearch.value), 250)
+}
+function addOr(o) {
+  form.outwardRequests.push(o)
+  orSearch.value = ''
+}
+function docStatusClass(s) {
+  return { Pending: 'pill--grey', Processing: 'pill--amber', Completed: 'pill--green' }[s || 'Pending'] || 'pill--grey'
+}
 
 onMounted(async () => {
   try {
-    const o = await getVehicleInwardOptions()
+    const o = await getVehicleGateEntryOptions()
     options.capacities = o.capacities
     options.locations = o.locations
   } catch (e) { error.value = e.message }
@@ -248,6 +328,8 @@ async function syncWithRoute() {
   } else if (route.query.new) {
     Object.assign(form, blankForm())
     savedDeparture.value = ''
+    orSuggestions.value = []
+    orSearched.value = false
   } else {
     loadList()
   }
@@ -256,7 +338,7 @@ async function syncWithRoute() {
 async function loadList() {
   loadingList.value = true
   try {
-    rows.value = await listVehicleInwards({ txt: listSearch.value, state: listState.value })
+    rows.value = await listVehicleGateEntries({ txt: listSearch.value, state: listState.value })
   } catch (e) {
     error.value = e.message
   } finally {
@@ -280,12 +362,13 @@ function applyDoc(d) {
     departure: toLocal(d.departure_datetime), purpose: d.purpose,
     location: d.purpose === 'Pick Up' ? d.from_location : d.to_location,
     created_by_name: d.created_by_name,
+    outwardRequests: d.outward_requests || [],
   })
   savedDeparture.value = d.departure_datetime || ''
 }
 
 async function open(name) {
-  try { applyDoc(await getVehicleInward(name)) } catch (e) { error.value = e.message }
+  try { applyDoc(await getVehicleGateEntry(name)) } catch (e) { error.value = e.message }
 }
 
 async function save() {
@@ -294,7 +377,7 @@ async function save() {
   error.value = ''
   const wasNew = !form.name
   try {
-    const d = await saveVehicleInward({
+    const d = await saveVehicleGateEntry({
       name: form.name || undefined,
       date: form.date,
       vehicle_no: form.vehicle_no,
@@ -306,6 +389,7 @@ async function save() {
       purpose: form.purpose,
       from_location: form.purpose === 'Pick Up' ? form.location : '',
       to_location: form.purpose === 'Drop' ? form.location : '',
+      outward_requests: form.purpose === 'Pick Up' ? form.outwardRequests.map(o => o.name) : [],
     })
     applyDoc(d)
     savedName.value = d.name
@@ -395,6 +479,29 @@ select.form-input {
 .pill--violet { background: #ede9fe; color: #5b21b6; }
 .pill--green { background: #dcfce7; color: #166534; }
 .pill--grey { background: #f1f5f9; color: #475569; }
+.pill--amber { background: #fef3c7; color: #92400e; }
+.small { font-size: 12px; }
+
+.vi-card__or { font-size: 13px; color: #0f6e56; display: flex; gap: 6px; align-items: flex-start; font-weight: 600; }
+.vi-card__or .pi { margin-top: 2px; font-size: 12px; }
+.or-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.or-empty { font-size: 13px; color: #94a3b8; padding: 6px 0 10px; }
+.or-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 8px; background: #f8fafc; }
+.or-row__main { flex: 1; min-width: 0; }
+.or-row__name { font-weight: 700; color: #0f172a; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.or-row__sub { font-size: 12px; color: #64748b; margin-top: 2px; overflow-wrap: anywhere; }
+.btn-remove { background: none; border: none; color: #94a3b8; cursor: pointer; padding: 4px 6px; font-size: 14px; }
+.btn-remove:hover { color: #dc2626; }
+.or-search { position: relative; margin-top: 4px; }
+.or-search .pi { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #94a3b8; font-size: 13px; }
+.or-search .form-input { padding-left: 34px; }
+.or-results { margin-top: 8px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+.or-result { width: 100%; display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; background: #fff; border: none; border-bottom: 1px solid #f1f5f9; text-align: left; cursor: pointer; font-family: inherit; font-size: 13px; color: #334155; }
+.or-result:last-child { border-bottom: none; }
+.or-result:hover { background: #f0fdf4; }
+.or-result .pi { color: #0f6e56; margin-top: 2px; }
+.or-result__main { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.or-result__main small { color: #64748b; font-size: 12px; }
 
 .empty { text-align: center; color: #94a3b8; padding: 28px 12px; font-size: 14px; }
 
