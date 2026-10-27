@@ -44,6 +44,9 @@
             <button class="ah-link" @click="go('/knit-app/rolls')">
               <span class="ah-link__icon">🧶</span><span>Rolls</span>
             </button>
+            <button class="ah-link" :class="{ 'ah-link--active': active === 'stock' }" @click="go('/knit-app/stock')">
+              <span class="ah-link__icon">🏷️</span><span>Stock</span>
+            </button>
             <button class="ah-link" @click="go('/knit-app/stock-entry')">
               <span class="ah-link__icon">📦</span><span>Stock Entry</span>
             </button>
