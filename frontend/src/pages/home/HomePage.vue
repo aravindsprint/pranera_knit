@@ -66,6 +66,8 @@
           </button>
         </nav>
 
+        <div style="padding:0 12px"><NotificationToggle /></div>
+
         <div class="drawer-themes">
           <div class="drawer-section-label">THEME</div>
           <div class="theme-grid">
@@ -262,6 +264,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import NotificationToggle from '@/components/NotificationToggle.vue'
 import { useHomeStore } from '@/stores/home'
 import { useRollStore } from '@/stores/roll'
 import { useQIStore } from '@/stores/qualityInspection'

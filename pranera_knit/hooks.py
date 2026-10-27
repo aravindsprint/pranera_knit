@@ -61,7 +61,10 @@ doc_events = {
     "Roll Pick Assignment": {
         "validate": "pranera_knit.pick_qty_summary.set_pick_qty_summary",
         # Outward Request status tracking (see outward_request_events.py).
-        "on_submit": "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
+        "on_submit": [
+            "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
+            "pranera_knit.push.on_roll_pick_assignment_submit",
+        ],
         "on_cancel": "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
         "on_update_after_submit": "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
     },
@@ -87,10 +90,12 @@ doc_events = {
     "Outward Request": {
         "validate": "pranera_knit.outward_request_events.validate_outward_request",
         "on_trash": "pranera_knit.outward_request_events.on_trash_outward_request",
+        "after_insert": "pranera_knit.push.on_outward_request_insert",
     },
     # Vehicle Gate Entry — app-owned (patches/v1_6/add_vehicle_gate_entry.py).
     "Vehicle Gate Entry": {
         "validate": "pranera_knit.vehicle_gate_entry_events.validate_vehicle_gate_entry",
+        "on_update": "pranera_knit.push.on_vehicle_gate_entry_update",
     },
 }
 
