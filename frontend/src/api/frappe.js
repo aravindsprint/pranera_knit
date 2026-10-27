@@ -731,3 +731,23 @@ export const getWarehouseStock = (warehouse) =>
 
 export const resolveStockScan = (value) =>
   call('pranera_knit.api.stock.resolve_scan', { value }).then(r => r.message)
+
+// ── Vehicle Inward ───────────────────────────────────────────────────────────
+// pranera_knit/api/vehicle_inward.py (validation: vehicle_inward_events.py)
+const VI_API = 'pranera_knit.api.vehicle_inward'
+
+export const getVehicleInwardOptions = () =>
+  call(`${VI_API}.get_form_options`).then(r => r.message)
+
+export const saveVehicleInward = (payload) =>
+  call(`${VI_API}.save_vehicle_inward`, payload).then(r => r.message)
+
+export const getVehicleInward = (name) =>
+  call(`${VI_API}.get_vehicle_inward`, { name }).then(r => r.message)
+
+export const markVehicleDeparted = (name) =>
+  call(`${VI_API}.mark_departed`, { name }).then(r => r.message)
+
+export const listVehicleInwards = ({ txt, state } = {}) =>
+  call(`${VI_API}.list_vehicle_inwards`, { txt: txt || undefined, state: state || undefined })
+    .then(r => r.message || [])

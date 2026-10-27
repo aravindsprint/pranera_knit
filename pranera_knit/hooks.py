@@ -88,6 +88,10 @@ doc_events = {
         "validate": "pranera_knit.outward_request_events.validate_outward_request",
         "on_trash": "pranera_knit.outward_request_events.on_trash_outward_request",
     },
+    # Vehicle Inward — app-owned (patches/v1_6/add_vehicle_inward.py).
+    "Vehicle Inward": {
+        "validate": "pranera_knit.vehicle_inward_events.validate_vehicle_inward",
+    },
 }
 
 # ── Job Card visibility restriction ───────────────────────────────────────────
