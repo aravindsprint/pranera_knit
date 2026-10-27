@@ -723,3 +723,11 @@ export const getOutwardPickDefaults = (name) =>
 
 export const createOutwardRollPickAssignment = (payload) =>
   call(`${OR_API}.create_roll_pick_assignment`, payload).then(r => r.message)
+
+// ── Stock page ───────────────────────────────────────────────────────────────
+// pranera_knit/api/stock.py — ledger balances per warehouse, split into rolls.
+export const getWarehouseStock = (warehouse) =>
+  call('pranera_knit.api.stock.get_warehouse_stock', { warehouse }).then(r => r.message)
+
+export const resolveStockScan = (value) =>
+  call('pranera_knit.api.stock.resolve_scan', { value }).then(r => r.message)

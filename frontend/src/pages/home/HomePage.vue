@@ -44,6 +44,9 @@
             <button class="drawer-link" @click="navigate('/knit-app/rolls')">
               <span class="drawer-link__icon">🧶</span><span>Rolls</span>
             </button>
+            <button class="drawer-link" @click="navigate('/knit-app/stock')">
+              <span class="drawer-link__icon">🏷️</span><span>Stock</span>
+            </button>
             <button class="drawer-link" @click="navigate('/knit-app/stock-entry')">
               <span class="drawer-link__icon">📦</span><span>Stock Entry</span>
             </button>
