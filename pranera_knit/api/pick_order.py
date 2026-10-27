@@ -861,8 +861,12 @@ def search_assignable_users(txt=None):
 def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to, pick_qty=None,
                        document_name=None, project=None, remarks=None, sales_order=None,
                        batch_items=None, purchase_order=None, subcontracting_order=None,
-                       roll_source=None):
+                       roll_source=None, outward_request=None):
     """Creates + submits a Roll Pick Assignment.
+
+    outward_request: optional — links the Assignment to an Outward
+    Request so that request's Status moves to "Roll Pick Assigned" (and
+    on through Picked / Completed, see outward_request_events.py).
 
     For "From Work Order" / "Manual Roll Pick", pick_qty is the
     supervisor-entered target weight, as before.
@@ -945,6 +949,10 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
         doc.project = project
     if remarks:
         doc.remarks = remarks
+    if outward_request:
+        if frappe.db.get_value("Outward Request", outward_request, "request_status") == "Completed":
+            frappe.throw(_("Outward Request {0} is already Completed").format(outward_request))
+        doc.outward_request = outward_request
 
     doc.insert()
     doc.submit()

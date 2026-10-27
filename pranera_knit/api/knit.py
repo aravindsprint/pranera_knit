@@ -904,6 +904,11 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                 "Roll Pick Assignment", roll_pick_assignment, "status",
                 "Completed" if cint(submit_stock_entry) else "In Progress",
             )
+            # The pick list -> assignment link only exists from this point,
+            # so the Outward Request (if any) can't be resolved from the
+            # on_submit hooks above — refresh it here instead.
+            from pranera_knit.outward_request_events import refresh_for_assignment
+            refresh_for_assignment(roll_pick_assignment)
 
         frappe.db.commit()
 

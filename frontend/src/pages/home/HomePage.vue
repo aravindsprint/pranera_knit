@@ -32,6 +32,9 @@
           <button class="drawer-link" @click="navigate('/knit-app/my-pick-orders')">
             <span class="drawer-link__icon">✅</span><span>My Pick Orders</span>
           </button>
+          <button class="drawer-link" @click="navigate('/knit-app/outward-request')">
+            <span class="drawer-link__icon">🚚</span><span>Outward Request</span>
+          </button>
 
 
           <div class="drawer-section-label" style="margin-top:8px">PRODUCTION DATA</div>

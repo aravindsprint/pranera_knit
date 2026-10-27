@@ -686,3 +686,34 @@ export const getBatchesForItemCode = (itemCode) =>
     limit: 200,
     orderBy: 'creation desc'
   })
+
+// ── Outward Request ──────────────────────────────────────────────────────────
+// Backed by pranera_knit/api/outward_request.py. Status (Roll Pick Assigned →
+// Picked → Completed) is maintained server-side from the linked pick chain —
+// see pranera_knit/outward_request_events.py — so the page only reads it.
+const OR_API = 'pranera_knit.api.outward_request'
+
+export const getOutwardRequestItems = ({ workOrder, purchaseOrder }) =>
+  call(`${OR_API}.get_outward_request_items`, {
+    work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined
+  }).then(r => r.message)
+
+export const saveOutwardRequest = (payload) =>
+  call(`${OR_API}.save_outward_request`, payload).then(r => r.message)
+
+export const getOutwardRequest = (name) =>
+  call(`${OR_API}.get_outward_request`, { name }).then(r => r.message)
+
+export const listOutwardRequests = ({ requestStatus, txt } = {}) =>
+  call(`${OR_API}.list_outward_requests`, {
+    request_status: requestStatus || undefined, txt: txt || undefined
+  }).then(r => r.message || [])
+
+export const getBuildings = () =>
+  call(`${OR_API}.get_buildings`).then(r => r.message || [])
+
+export const searchWorkOrdersForOutward = (txt) =>
+  call(`${OR_API}.search_work_orders`, { txt }).then(r => r.message || [])
+
+export const searchPurchaseOrdersForOutward = (txt) =>
+  call(`${OR_API}.search_purchase_orders`, { txt }).then(r => r.message || [])

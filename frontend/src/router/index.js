@@ -34,6 +34,7 @@ const routes = [
   { path: '/knit-app/dashboard', component: () => import('@/pages/dashboard/DashboardPage.vue') },
   { path: '/knit-app/collar-cuff-dashboard', component: () => import('@/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue') },
   { path: '/knit-app/roll-wise-pick-list', component: () => import('@/pages/roll-wise-pick-list/RollWisePickListPage.vue') },
+  { path: '/knit-app/outward-request', component: () => import('@/pages/outward-request/OutwardRequestPage.vue') },
   { path: '/knit-app/my-pick-orders', component: () => import('@/pages/my-pick-orders/MyPickOrdersPage.vue') },
   { path: '/knit-app/roll-wise-pick-order-execution', component: () => import('@/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue') },
   { path: '/knit-app/production-roll-summary', component: () => import('@/pages/production-roll-summary/ProductionRollSummaryPage.vue') },

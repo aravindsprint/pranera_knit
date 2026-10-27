@@ -31,6 +31,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'my-pick-orders' || active === 'pick-execution' }" @click="go('/knit-app/my-pick-orders')">
             <span class="ah-link__icon">✅</span><span>My Pick Orders</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'outward-request' }" @click="go('/knit-app/outward-request')">
+            <span class="ah-link__icon">🚚</span><span>Outward Request</span>
+          </button>
           
           
 

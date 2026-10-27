@@ -44,8 +44,14 @@ doc_events = {
     # is after a Roll Wise Pick List transfer — scoped to only the Stock
     # Entries that app creates (see roll_wise_pick_list_events.py).
     "Stock Entry": {
-        "on_submit": "pranera_knit.roll_wise_pick_list_events.on_stock_entry_submit",
-        "on_cancel": "pranera_knit.roll_wise_pick_list_events.on_stock_entry_cancel",
+        "on_submit": [
+            "pranera_knit.roll_wise_pick_list_events.on_stock_entry_submit",
+            "pranera_knit.outward_request_events.on_stock_entry_change",
+        ],
+        "on_cancel": [
+            "pranera_knit.roll_wise_pick_list_events.on_stock_entry_cancel",
+            "pranera_knit.outward_request_events.on_stock_entry_change",
+        ],
     },
     # Roll Pick Assignment is owned by the Textiles And Garments app, not
     # this one (see patches/v1_1/add_pick_qty_summary.py) — a doc_event is
@@ -54,6 +60,10 @@ doc_events = {
     # table (and the pick_qty grand total) from batch_items on every save.
     "Roll Pick Assignment": {
         "validate": "pranera_knit.pick_qty_summary.set_pick_qty_summary",
+        # Outward Request status tracking (see outward_request_events.py).
+        "on_submit": "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
+        "on_cancel": "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
+        "on_update_after_submit": "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
     },
     # Roll Wise Pick List is likewise owned by the Textiles And Garments
     # app — keeps the "weight" Custom Field on batch_wise_pick_item rows
@@ -63,8 +73,20 @@ doc_events = {
     # Pick Qty (by UOM) Total Weight column (see pick_qty_summary.py).
     "Roll Wise Pick List": {
         "validate": "pranera_knit.roll_wise_pick_list_events.set_batch_wise_weight",
-        "on_submit": "pranera_knit.pick_qty_summary.refresh_from_pick_list",
-        "on_cancel": "pranera_knit.pick_qty_summary.refresh_from_pick_list",
+        "on_submit": [
+            "pranera_knit.pick_qty_summary.refresh_from_pick_list",
+            "pranera_knit.outward_request_events.on_roll_wise_pick_list_change",
+        ],
+        "on_cancel": [
+            "pranera_knit.pick_qty_summary.refresh_from_pick_list",
+            "pranera_knit.outward_request_events.on_roll_wise_pick_list_change",
+        ],
+    },
+    # Outward Request — app-owned (patches/v1_5/add_outward_request.py).
+    # Status is driven by the pick chain via the hooks above.
+    "Outward Request": {
+        "validate": "pranera_knit.outward_request_events.validate_outward_request",
+        "on_trash": "pranera_knit.outward_request_events.on_trash_outward_request",
     },
 }
 
