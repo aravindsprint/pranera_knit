@@ -112,6 +112,9 @@ def refresh_status(outward_request):
         {"status": status, "request_status": request_status},
         update_modified=True,
     )
+    if (current.status or "") != status:
+        from pranera_knit.push import outward_request_status_changed
+        outward_request_status_changed(outward_request, current.status, status)
 
 
 def refresh_for_assignment(roll_pick_assignment):

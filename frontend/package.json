@@ -11,6 +11,7 @@
     "@vueuse/core": "^10.7.0",
     "axios": "^1.6.0",
     "dexie": "^3.2.0",
+    "firebase": "^10.14.1",
     "html5-qrcode": "^2.3.8",
     "moment": "^2.29.4",
     "pinia": "^2.1.0",

@@ -66,6 +66,8 @@
           </button>
         </nav>
 
+        <div style="padding:0 12px"><NotificationToggle /></div>
+
         <!-- Theme -->
         <div class="ah-themes">
           <div class="ah-section">THEME</div>
@@ -111,6 +113,7 @@
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import NotificationToggle from '@/components/NotificationToggle.vue'
 
 const props = defineProps({
   title:    { type: String, default: '' },
