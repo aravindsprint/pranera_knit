@@ -34,6 +34,9 @@
           <button class="ah-link" :class="{ 'ah-link--active': active === 'outward-request' }" @click="go('/knit-app/outward-request')">
             <span class="ah-link__icon">🚚</span><span>Outward Request</span>
           </button>
+          <button class="ah-link" :class="{ 'ah-link--active': active === 'vehicle-gate-entry' }" @click="go('/knit-app/vehicle-gate-entry')">
+            <span class="ah-link__icon">🚛</span><span>Vehicle Gate Entry</span>
+          </button>
           
           
 

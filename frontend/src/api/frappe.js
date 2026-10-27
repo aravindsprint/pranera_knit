@@ -731,3 +731,27 @@ export const getWarehouseStock = (warehouse) =>
 
 export const resolveStockScan = (value) =>
   call('pranera_knit.api.stock.resolve_scan', { value }).then(r => r.message)
+
+// ── Vehicle Gate Entry ───────────────────────────────────────────────────────────
+// pranera_knit/api/vehicle_gate_entry.py (validation: vehicle_gate_entry_events.py)
+const VGE_API = 'pranera_knit.api.vehicle_gate_entry'
+
+export const getVehicleGateEntryOptions = () =>
+  call(`${VGE_API}.get_form_options`).then(r => r.message)
+
+export const saveVehicleGateEntry = (payload) =>
+  call(`${VGE_API}.save_vehicle_gate_entry`, payload).then(r => r.message)
+
+export const getVehicleGateEntry = (name) =>
+  call(`${VGE_API}.get_vehicle_gate_entry`, { name }).then(r => r.message)
+
+export const markVehicleDeparted = (name) =>
+  call(`${VGE_API}.mark_departed`, { name }).then(r => r.message)
+
+export const listVehicleGateEntries = ({ txt, state } = {}) =>
+  call(`${VGE_API}.list_vehicle_gate_entries`, { txt: txt || undefined, state: state || undefined })
+    .then(r => r.message || [])
+
+export const searchOutwardRequestsForGate = (txt, gateEntry) =>
+  call(`${VGE_API}.search_outward_requests`, { txt: txt || undefined, gate_entry: gateEntry || undefined })
+    .then(r => r.message || [])
