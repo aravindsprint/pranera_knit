@@ -25,6 +25,9 @@ Who gets what (wired in hooks.py / outward_request_events.py):
   * Vehicle Gate Entry: request added  → that request's creator (vehicle at gate)
   * Vehicle Gate Entry: departed       → creators of the requests it carried
 
+Every alert is also sent on WhatsApp (whatsapp_alerts.py) to recipients
+with a mobile number on file, once the WhatsApp template is approved.
+
 Sending never blocks or fails the document save: it's enqueued after
 commit, and every error is logged instead of raised.
 """
@@ -66,10 +69,19 @@ def users_with_roles(roles, exclude=None):
     return [u for u in enabled if u not in skip]
 
 
-def send(users, title, body, path="/knit-app", tag=None):
-    """Queue a push to each user. `path` is the in-app route opened on tap."""
+def send(users, title, body, path="/knit-app", tag=None, ref=None):
+    """Queue a push to each user, plus the same alert on WhatsApp
+    (whatsapp_alerts.py). `path` is the in-app route opened on tap; `ref`
+    is (doctype, name) of the document the alert is about."""
     users = sorted({u for u in (users or []) if u not in SKIP_USERS})
-    if not users or not is_enabled():
+    if not users:
+        return
+    try:
+        from pranera_knit import whatsapp_alerts
+        whatsapp_alerts.send(users, title, body, get_url(path), ref=ref)
+    except Exception:
+        frappe.log_error(title="Knit WhatsApp alert could not be queued")
+    if not is_enabled():
         return
     frappe.enqueue(
         "pranera_knit.push.deliver",
@@ -103,7 +115,7 @@ def on_roll_pick_assignment_submit(doc, method=None):
     if doc.get("outward_request"):
         detail += f" · for {doc.outward_request}"
     send([doc.assigned_to], "New pick assigned", f"{doc.name}: {detail}",
-         "/knit-app/my-pick-orders", tag=f"rpa:{doc.name}")
+         "/knit-app/my-pick-orders", tag=f"rpa:{doc.name}", ref=("Roll Pick Assignment", doc.name))
 
 
 def on_outward_request_insert(doc, method=None):
@@ -111,7 +123,7 @@ def on_outward_request_insert(doc, method=None):
     send(users_with_roles(SUPERVISOR_ROLES, exclude=[doc.created_by]),
          "New Outward Request",
          f"{doc.name} → {doc.to_building} ({source}). Assign a roll pick.",
-         f"/knit-app/outward-request?name={doc.name}", tag=f"or:{doc.name}")
+         f"/knit-app/outward-request?name={doc.name}", tag=f"or:{doc.name}", ref=("Outward Request", doc.name))
 
 
 def outward_request_status_changed(name, old_status, new_status):
@@ -124,11 +136,12 @@ def outward_request_status_changed(name, old_status, new_status):
     path = f"/knit-app/outward-request?name={name}"
     label = new_status or "back to Pending"
     send([req.created_by], f"Outward Request {label}",
-         f"{name} → {req.to_building} is now {label}.", path, tag=f"or:{name}")
+         f"{name} → {req.to_building} is now {label}.", path, tag=f"or:{name}",
+         ref=("Outward Request", name))
     if new_status == "Completed":
         send(users_with_roles(SECURITY_ROLES), "Ready to load",
              f"{name} → {req.to_building} is picked and transferred. Ready for the vehicle.",
-             "/knit-app/vehicle-gate-entry", tag=f"or-ready:{name}")
+             "/knit-app/vehicle-gate-entry", tag=f"or-ready:{name}", ref=("Outward Request", name))
 
 
 def on_vehicle_gate_entry_update(doc, method=None):
@@ -141,7 +154,8 @@ def on_vehicle_gate_entry_update(doc, method=None):
         for name, creator in _creators(added).items():
             send([creator], f"Vehicle at gate: {doc.vehicle_no}",
                  f"{doc.vehicle_no} ({doc.capacity}, {doc.driver_name}) is here to pick up {name}.",
-                 f"/knit-app/outward-request?name={name}", tag=f"vge:{doc.name}:{name}")
+                 f"/knit-app/outward-request?name={name}", tag=f"vge:{doc.name}:{name}",
+                 ref=("Vehicle Gate Entry", doc.name))
 
     departed_now = doc.departure_datetime and not (before and before.departure_datetime)
     if departed_now and current:
@@ -151,7 +165,8 @@ def on_vehicle_gate_entry_update(doc, method=None):
         for creator, names in by_creator.items():
             send([creator], f"Vehicle departed: {doc.vehicle_no}",
                  f"{doc.vehicle_no} left with {', '.join(names)}.",
-                 f"/knit-app/vehicle-gate-entry?name={doc.name}", tag=f"vge-out:{doc.name}")
+                 f"/knit-app/vehicle-gate-entry?name={doc.name}", tag=f"vge-out:{doc.name}",
+                 ref=("Vehicle Gate Entry", doc.name))
 
 
 def _creators(outward_requests):
