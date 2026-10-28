@@ -25,8 +25,11 @@ Who gets what (wired in hooks.py / outward_request_events.py):
   * Vehicle Gate Entry: request added  → that request's creator (vehicle at gate)
   * Vehicle Gate Entry: departed       → creators of the requests it carried
 
-Every alert is also sent on WhatsApp (whatsapp_alerts.py) to recipients
-with a mobile number on file, once the WhatsApp template is approved.
+WhatsApp (whatsapp_alerts.py) is sent ONLY for Roll Pick Assignments, to
+the assigned picker (send(..., whatsapp=True) below). Every other alert is
+push-only. Meta caps how many business-initiated WhatsApp messages one
+person receives (error 131049), so WhatsApp is kept for the one alert a
+picker has to act on.
 
 Sending never blocks or fails the document save: it's enqueued after
 commit, and every error is logged instead of raised.
@@ -69,18 +72,20 @@ def users_with_roles(roles, exclude=None):
     return [u for u in enabled if u not in skip]
 
 
-def send(users, title, body, path="/knit-app", tag=None, ref=None):
-    """Queue a push to each user, plus the same alert on WhatsApp
-    (whatsapp_alerts.py). `path` is the in-app route opened on tap; `ref`
-    is (doctype, name) of the document the alert is about."""
+def send(users, title, body, path="/knit-app", tag=None, ref=None, whatsapp=False):
+    """Queue a push to each user. `path` is the in-app route opened on tap;
+    `ref` is (doctype, name) of the document the alert is about. With
+    whatsapp=True the same alert also goes out on WhatsApp
+    (whatsapp_alerts.py) — used only for the picker's Roll Pick Assignment."""
     users = sorted({u for u in (users or []) if u not in SKIP_USERS})
     if not users:
         return
-    try:
-        from pranera_knit import whatsapp_alerts
-        whatsapp_alerts.send(users, title, body, get_url(path), ref=ref)
-    except Exception:
-        frappe.log_error(title="Knit WhatsApp alert could not be queued")
+    if whatsapp:
+        try:
+            from pranera_knit import whatsapp_alerts
+            whatsapp_alerts.send(users, title, body, get_url(path), ref=ref)
+        except Exception:
+            frappe.log_error(title="Knit WhatsApp alert could not be queued")
     if not is_enabled():
         return
     frappe.enqueue(
@@ -114,8 +119,10 @@ def on_roll_pick_assignment_submit(doc, method=None):
     detail = f"{doc.pick_type}" + (f" · {target:g}" if target else "")
     if doc.get("outward_request"):
         detail += f" · for {doc.outward_request}"
+    # The only alert that also goes out on WhatsApp, and only to the picker.
     send([doc.assigned_to], "New pick assigned", f"{doc.name}: {detail}",
-         "/knit-app/my-pick-orders", tag=f"rpa:{doc.name}", ref=("Roll Pick Assignment", doc.name))
+         "/knit-app/my-pick-orders", tag=f"rpa:{doc.name}", ref=("Roll Pick Assignment", doc.name),
+         whatsapp=True)
 
 
 def on_outward_request_insert(doc, method=None):
