@@ -19,51 +19,15 @@
         </div>
 
         <nav class="drawer-nav">
-          <div class="drawer-section-label">PRODUCTION</div>
-          <button class="drawer-link" @click="navigate('/knit-app/work-order')">
-            <span class="drawer-link__icon">📄</span><span>Work Order</span>
-          </button>
-          <button class="drawer-link drawer-link--active" @click="navigate('/knit-app/home')">
-            <span class="drawer-link__icon">🗂</span><span>Job Cards</span>
-          </button>
-          <button class="drawer-link" @click="navigate('/knit-app/roll-wise-pick-list')">
-            <span class="drawer-link__icon">📦</span><span>Roll-wise Pick List</span>
-          </button>
-          <button class="drawer-link" @click="navigate('/knit-app/my-pick-orders')">
-            <span class="drawer-link__icon">✅</span><span>My Pick Orders</span>
-          </button>
-          <button class="drawer-link" @click="navigate('/knit-app/outward-request')">
-            <span class="drawer-link__icon">🚚</span><span>Outward Request</span>
-          </button>
-          <button class="drawer-link" @click="navigate('/knit-app/vehicle-gate-entry')">
-            <span class="drawer-link__icon">🚛</span><span>Vehicle Gate Entry</span>
-          </button>
-
-
-          <div class="drawer-section-label" style="margin-top:8px">PRODUCTION DATA</div>
-            <button class="drawer-link" @click="navigate('/knit-app/create-rolls')">
-              <span class="drawer-link__icon">✂️</span><span>Create Rolls</span>
+          <template v-for="(g, gi) in menuGroups" :key="g.section">
+            <div class="drawer-section-label" :style="gi ? 'margin-top:8px' : ''">{{ g.section }}</div>
+            <button
+              v-for="p in g.pages" :key="p.key" class="drawer-link"
+              :class="{ 'drawer-link--active': p.key === 'home' }" @click="navigate(p.path)"
+            >
+              <span class="drawer-link__icon">{{ p.icon }}</span><span>{{ p.label }}</span>
             </button>
-            <button class="drawer-link" @click="navigate('/knit-app/rolls')">
-              <span class="drawer-link__icon">🧶</span><span>Rolls</span>
-            </button>
-            <button class="drawer-link" @click="navigate('/knit-app/stock')">
-              <span class="drawer-link__icon">🏷️</span><span>Stock</span>
-            </button>
-            <button class="drawer-link" @click="navigate('/knit-app/stock-entry')">
-              <span class="drawer-link__icon">📦</span><span>Stock Entry</span>
-            </button>
-          <div class="drawer-section-label" style="margin-top:8px">REPORTS</div>
-          <button class="drawer-link" @click="navigate('/knit-app/production-report')">
-            <span class="drawer-link__icon">📋</span><span>Production Report</span>
-          </button>
-          <button class="drawer-link" @click="navigate('/knit-app/process-loss')">
-            <span class="drawer-link__icon">📉</span><span>Process Loss</span>
-          </button>
-          <div class="drawer-section-label" style="margin-top:8px">ANALYTICS</div>
-          <button class="drawer-link" @click="navigate('/knit-app/dashboard')">
-            <span class="drawer-link__icon">📈</span><span>Dashboard</span>
-          </button>
+          </template>
         </nav>
 
         <div style="padding:0 12px"><NotificationToggle /></div>
@@ -183,8 +147,8 @@
     <!-- Bottom Nav -->
     <nav class="home-nav">
       <button class="home-nav__item home-nav__item--active"><span>🗂</span><span>Job Cards</span></button>
-      <button class="home-nav__item" @click="navigate('/knit-app/roll-wise-pick-list')"><span>📦</span><span>Pick List</span></button>
-      <button class="home-nav__item" @click="navigate('/knit-app/dashboard')"><span>📈</span><span>Dashboard</span></button>
+      <button v-if="access.can('roll-wise-pick-list')" class="home-nav__item" @click="navigate('/knit-app/roll-wise-pick-list')"><span>📦</span><span>Pick List</span></button>
+      <button v-if="access.can('dashboard')" class="home-nav__item" @click="navigate('/knit-app/dashboard')"><span>📈</span><span>Dashboard</span></button>
       <button class="home-nav__item" @click="drawerOpen = true"><span>☰</span><span>Menu</span></button>
     </nav>
 
@@ -265,6 +229,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import NotificationToggle from '@/components/NotificationToggle.vue'
+import { groupBySection } from '@/pages'
+import { usePageAccessStore } from '@/stores/pageAccess'
 import { useHomeStore } from '@/stores/home'
 import { useRollStore } from '@/stores/roll'
 import { useQIStore } from '@/stores/qualityInspection'
@@ -278,6 +244,9 @@ watch(() => route.query.work_order, (wo) => {
   if (wo) search.value = wo
 })
 const auth = useAuthStore()
+const access = usePageAccessStore()
+access.ensureLoaded()
+const menuGroups = computed(() => groupBySection(access.visiblePages))
 const homeStore = useHomeStore()
 const rollStore = useRollStore()
 const qiStore = useQIStore()

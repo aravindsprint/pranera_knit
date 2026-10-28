@@ -18,52 +18,16 @@
         </div>
 
         <nav class="ah-nav">
-          <div class="ah-section">PRODUCTION</div>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'work-order' }" @click="go('/knit-app/work-order')">
-            <span class="ah-link__icon">📄</span><span>Work Order</span>
-          </button>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'home' }" @click="go('/knit-app/home')">
-            <span class="ah-link__icon">🗂</span><span>Job Cards</span>
-          </button>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'pick-list' }" @click="go('/knit-app/roll-wise-pick-list')">
-            <span class="ah-link__icon">📦</span><span>Roll-wise Pick List</span>
-          </button>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'my-pick-orders' || active === 'pick-execution' }" @click="go('/knit-app/my-pick-orders')">
-            <span class="ah-link__icon">✅</span><span>My Pick Orders</span>
-          </button>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'outward-request' }" @click="go('/knit-app/outward-request')">
-            <span class="ah-link__icon">🚚</span><span>Outward Request</span>
-          </button>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'vehicle-gate-entry' }" @click="go('/knit-app/vehicle-gate-entry')">
-            <span class="ah-link__icon">🚛</span><span>Vehicle Gate Entry</span>
-          </button>
-          
-          
-
-          <div class="ah-section" style="margin-top:8px">PRODUCTION DATA</div>
-            <button class="ah-link" :class="{ 'ah-link--active': active === 'create-rolls' }" @click="go('/knit-app/create-rolls')">
-              <span class="ah-link__icon">✂️</span><span>Create Rolls</span>
+          <template v-for="(g, gi) in menuGroups" :key="g.section">
+            <div class="ah-section" :style="gi ? 'margin-top:8px' : ''">{{ g.section }}</div>
+            <button
+              v-for="p in g.pages" :key="p.key" class="ah-link"
+              :class="{ 'ah-link--active': active === p.key || (p.active || []).includes(active) }"
+              @click="go(p.path)"
+            >
+              <span class="ah-link__icon">{{ p.icon }}</span><span>{{ p.label }}</span>
             </button>
-            <button class="ah-link" @click="go('/knit-app/rolls')">
-              <span class="ah-link__icon">🧶</span><span>Rolls</span>
-            </button>
-            <button class="ah-link" :class="{ 'ah-link--active': active === 'stock' }" @click="go('/knit-app/stock')">
-              <span class="ah-link__icon">🏷️</span><span>Stock</span>
-            </button>
-            <button class="ah-link" @click="go('/knit-app/stock-entry')">
-              <span class="ah-link__icon">📦</span><span>Stock Entry</span>
-            </button>
-          <div class="ah-section" style="margin-top:8px">REPORTS</div>
-            <button class="ah-link" @click="go('/knit-app/production-report')">
-              <span class="ah-link__icon">📋</span><span>Production Report</span>
-            </button>
-            <button class="ah-link" @click="go('/knit-app/process-loss')">
-              <span class="ah-link__icon">📉</span><span>Process Loss</span>
-            </button>
-            <div class="ah-section" style="margin-top:8px">ANALYTICS</div>
-          <button class="ah-link" :class="{ 'ah-link--active': active === 'dashboard' }" @click="go('/knit-app/dashboard')">
-            <span class="ah-link__icon">📈</span><span>Dashboard</span>
-          </button>
+          </template>
         </nav>
 
         <div style="padding:0 12px"><NotificationToggle /></div>
@@ -114,6 +78,8 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import NotificationToggle from '@/components/NotificationToggle.vue'
+import { groupBySection } from '@/pages'
+import { usePageAccessStore } from '@/stores/pageAccess'
 
 const props = defineProps({
   title:    { type: String, default: '' },
@@ -126,6 +92,9 @@ const props = defineProps({
 
 const router     = useRouter()
 const auth       = useAuthStore()
+const access = usePageAccessStore()
+access.ensureLoaded()
+const menuGroups = computed(() => groupBySection(access.visiblePages))
 const drawerOpen = ref(false)
 const currentTheme = ref(localStorage.getItem('KNIT_THEME') || 'green')
 
