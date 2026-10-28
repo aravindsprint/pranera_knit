@@ -93,6 +93,10 @@ doc_events = {
         "after_insert": "pranera_knit.push.on_outward_request_insert",
     },
     # Vehicle Gate Entry — app-owned (patches/v1_6/add_vehicle_gate_entry.py).
+    # Knit App Page — app-owned (patches/v1_10); see page_access.py.
+    "Knit App Page": {
+        "validate": "pranera_knit.page_access.set_allowed_roles",
+    },
     "Vehicle Gate Entry": {
         "validate": "pranera_knit.vehicle_gate_entry_events.validate_vehicle_gate_entry",
         "on_update": "pranera_knit.push.on_vehicle_gate_entry_update",
