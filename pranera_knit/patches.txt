@@ -8,3 +8,4 @@ pranera_knit.patches.v1_4.add_qi_roll_source
 pranera_knit.patches.v1_5.add_outward_request
 pranera_knit.patches.v1_6.add_vehicle_gate_entry
 pranera_knit.patches.v1_7.add_whatsapp_alert_template
+pranera_knit.patches.v1_8.add_vge_expected_arrival
