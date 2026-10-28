@@ -378,3 +378,21 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
 
     result = create_pick_order(**args)
     return {"name": result.get("name"), "outward_request": get_outward_request(name)}
+
+
+@frappe.whitelist()
+def search_batches(item_code, txt=None):
+    """Batch dropdown on an Outward Request item row: enabled batches of
+    this item only, in-stock first (batch_qty is ERPNext's maintained total
+    across warehouses), then newest."""
+    if not item_code:
+        return []
+    filters = {"item": item_code, "disabled": 0}
+    if txt:
+        filters["name"] = ["like", f"%{txt}%"]
+    return frappe.get_all(
+        "Batch", filters=filters,
+        fields=["name", "batch_qty", "stock_uom", "expiry_date"],
+        order_by="(batch_qty > 0) desc, creation desc",
+        limit_page_length=30,
+    )

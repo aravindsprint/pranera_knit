@@ -177,18 +177,27 @@
           <div class="items__header">
             <span>Item Code</span><span>Batch</span><span class="num">Qty</span><span>UOM</span><span></span>
           </div>
-          <div v-for="(row, i) in store.items" :key="i" class="item-row">
+          <div v-for="(row, i) in store.items" :key="row._key || i" class="item-row">
             <span class="item-row__code">{{ row.item_code }}</span>
-            <input v-model="row.batch" class="form-input form-input--sm" placeholder="—" :disabled="!store.isEditable" />
+            <BatchSelect
+              v-model="row.batch" :item-code="row.item_code" :disabled="!store.isEditable"
+              class="item-row__batch" placeholder="Select batch…"
+            />
             <input
               v-model.number="row.qty" type="number" min="0" step="0.001"
-              class="form-input form-input--sm num" :disabled="!store.isEditable"
+              class="form-input form-input--sm num item-row__qty" :disabled="!store.isEditable"
             />
             <span class="item-row__uom">{{ row.stock_uom }}</span>
-            <button v-if="store.isEditable" class="btn-remove" title="Remove row" @click="store.removeItem(i)">
-              <i class="pi pi-times"></i>
-            </button>
-            <span v-else></span>
+            <span class="item-row__actions">
+              <template v-if="store.isEditable">
+                <button class="btn-row" title="Duplicate row" @click="store.duplicateItem(i)">
+                  <i class="pi pi-copy"></i>
+                </button>
+                <button class="btn-row btn-row--remove" title="Remove row" @click="store.removeItem(i)">
+                  <i class="pi pi-times"></i>
+                </button>
+              </template>
+            </span>
           </div>
           <div class="totals">
             <span v-for="(qty, uom) in store.totalsByUom" :key="uom" class="total-chip">
@@ -338,6 +347,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useOutwardRequestStore } from '@/stores/outwardRequest'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
+import BatchSelect from '@/components/BatchSelect.vue'
 
 const FILTERS = [
   { label: 'All', value: '' },
@@ -515,7 +525,7 @@ function fmtQty(n) {
 
 .items-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .items__header, .item-row {
-  display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.4fr) 90px 52px 26px;
+  display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.6fr) 90px 52px 60px;
   gap: 8px; align-items: center;
 }
 .items__header { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8; padding: 0 0 6px; border-bottom: 1px solid #f1f5f9; }
@@ -524,15 +534,22 @@ function fmtQty(n) {
 .item-row__uom { font-size: 12px; color: #64748b; }
 @media (max-width: 520px) {
   .items__header { display: none; }
-  .item-row { grid-template-columns: minmax(0, 1fr) 84px 26px; grid-template-areas: "code code rm" "batch qty uom"; row-gap: 6px; }
+  .item-row { grid-template-columns: minmax(0, 1fr) 84px 44px; grid-template-areas: "code code actions" "batch qty uom"; row-gap: 6px; }
   .item-row__code { grid-area: code; }
-  .item-row > input:first-of-type { grid-area: batch; }
-  .item-row > input.num { grid-area: qty; }
+  .item-row__batch { grid-area: batch; }
+  .item-row__qty { grid-area: qty; }
   .item-row__uom { grid-area: uom; }
-  .item-row > .btn-remove, .item-row > span:last-child { grid-area: rm; }
+  .item-row__actions { grid-area: actions; }
 }
 .btn-remove { background: none; border: none; color: #94a3b8; cursor: pointer; padding: 4px; font-size: 13px; }
 .btn-remove:hover { color: #dc2626; }
+.item-row__actions { display: flex; justify-content: flex-end; gap: 2px; }
+.btn-row {
+  background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 13px;
+  width: 28px; height: 28px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
+}
+.btn-row:hover { background: #f1f5f9; color: #0f6e56; }
+.btn-row--remove:hover { color: #dc2626; background: #fef2f2; }
 
 .totals { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; justify-content: flex-end; }
 .total-chip { background: #f0fdf4; color: #166534; font-weight: 700; font-size: 13px; padding: 5px 10px; border-radius: 999px; }

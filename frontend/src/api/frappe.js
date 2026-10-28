@@ -755,3 +755,6 @@ export const listVehicleGateEntries = ({ txt, state } = {}) =>
 export const searchOutwardRequestsForGate = (txt, gateEntry) =>
   call(`${VGE_API}.search_outward_requests`, { txt: txt || undefined, gate_entry: gateEntry || undefined })
     .then(r => r.message || [])
+
+export const searchBatchesForItem = (itemCode, txt) =>
+  call(`${OR_API}.search_batches`, { item_code: itemCode, txt: txt || undefined }).then(r => r.message || [])

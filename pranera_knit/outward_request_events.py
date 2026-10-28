@@ -44,6 +44,11 @@ def validate_outward_request(doc, method=None):
     for row in doc.items:
         if flt(row.qty) <= 0:
             frappe.throw(_("Row {0}: Qty must be greater than zero").format(row.idx))
+        if row.batch:
+            batch_item = frappe.db.get_value("Batch", row.batch, "item")
+            if batch_item and batch_item != row.item_code:
+                frappe.throw(_("Row {0}: Batch {1} belongs to item {2}, not {3}")
+                             .format(row.idx, row.batch, batch_item, row.item_code))
 
     if doc.is_new():
         doc.created_by = doc.created_by or frappe.session.user
