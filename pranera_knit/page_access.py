@@ -53,3 +53,10 @@ def denied_pages(user=None):
         if r.role:
             required.setdefault(r.parent, set()).add(r.role)
     return sorted(page for page, need in required.items() if not (need & roles))
+
+
+def set_allowed_roles(doc, method=None):
+    """Knit App Page validate hook: keep the read-only Allowed Roles text in
+    step with the Roles table, so the Desk list view can show who has access."""
+    roles = [r.role for r in doc.get("roles") or [] if r.role]
+    doc.allowed_roles = ", ".join(dict.fromkeys(roles)) or "Everyone"
