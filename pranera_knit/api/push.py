@@ -23,5 +23,5 @@ def send_test_notification():
         frappe.throw("Push Notification Relay is not enabled on this site")
     send([frappe.session.user], "Knit App notifications are on",
          "You'll get alerts for picks, outward requests and vehicles here.",
-         "/knit-app/home", tag="test")
+         "/knit-app/home", tag="test", whatsapp=True)
     return {"queued": True}
