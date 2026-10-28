@@ -12,6 +12,11 @@ function todayISO() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// Stable per-row keys so duplicating / removing rows never shifts one row's
+// batch dropdown state onto another row.
+let keySeq = 0
+const nextKey = () => `r${++keySeq}`
+
 export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   // ── List ────────────────────────────────────────────────────────────────
   const requests = ref([])
@@ -119,7 +124,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
           ? { workOrder: workOrder.value }
           : { purchaseOrder: purchaseOrder.value }
       )
-      items.value = (res.items || []).map(r => ({ ...r }))
+      items.value = (res.items || []).map(r => ({ ...r, _key: nextKey() }))
       receipts.value = res.receipts || []
       fetchedFor.value = documentName.value
     } catch (e) {
@@ -131,6 +136,13 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   }
 
   function removeItem(i) { items.value.splice(i, 1) }
+
+  // Copy of row i inserted right below it — e.g. to split one item's qty
+  // across two batches.
+  function duplicateItem(i) {
+    const row = items.value[i]
+    if (row) items.value.splice(i + 1, 0, { ...row, _key: nextKey() })
+  }
 
   async function save() {
     if (!canSave.value) return null
@@ -178,6 +190,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     purchaseOrder.value = doc.purchase_order || ''
     fetchedFor.value = doc.purchase_order || doc.work_order || ''
     items.value = (doc.items || []).map(r => ({
+      _key: nextKey(),
       item_code: r.item_code, batch: r.batch || '', qty: r.qty, stock_uom: r.stock_uom || ''
     }))
     meta.value = {
@@ -297,6 +310,6 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     fetching, saving, error, fetchedFor,
     documentName, isEditable, totalsByUom, canSave,
     loadList, loadLookups, searchWorkOrders, searchPurchaseOrders,
-    setSourceType, clearItems, fetchItems, removeItem, save, open, reset,
+    setSourceType, clearItems, fetchItems, removeItem, duplicateItem, save, open, reset,
   }
 })
