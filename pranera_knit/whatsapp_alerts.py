@@ -40,6 +40,10 @@ import re
 import frappe
 
 TEMPLATE_NAME = "knit_app_alert"
+# Utility template for the picker's Roll Pick Assignment alert (patch v1_9):
+#   Hello {{1}}, Pick order {{2}} has been assigned to you. Details: {{3}}
+#   Please complete the pick in the Knit App: {{4}}
+PICK_TEMPLATE = "knit_pick_assigned"
 SEND = "whatsnext.whatsnext.api.send_template_message"
 
 
@@ -47,14 +51,24 @@ def template_name():
     return frappe.conf.get("knit_whatsapp_template") or TEMPLATE_NAME
 
 
-def is_enabled():
+def _approved(template):
+    try:
+        return frappe.db.get_value("Whatsnext Message Template", template, "approval_status") == "Approved"
+    except Exception:
+        return False  # whatsnext not installed
+
+
+def is_enabled(pick=None):
+    """True when some approved template can carry this alert: the pick
+    template for a pick alert, else the generic knit_app_alert."""
     if frappe.conf.get("knit_whatsapp_disabled"):
         return False
     try:
-        return frappe.db.get_value("Whatsnext Message Template", template_name(), "approval_status") == "Approved" \
-            and bool(frappe.db.get_single_value("Whatsnext Settings", "meta_enabled"))
+        if not frappe.db.get_single_value("Whatsnext Settings", "meta_enabled"):
+            return False
     except Exception:
-        return False  # whatsnext not installed
+        return False
+    return (bool(pick) and _approved(PICK_TEMPLATE)) or _approved(template_name())
 
 
 def normalise_mobile(raw):
@@ -92,24 +106,35 @@ def _param(text, limit):
     return text[:limit] or "-"
 
 
-def send(users, title, body, link, ref=None):
-    if not users or not is_enabled():
+def send(users, title, body, link, ref=None, pick=None):
+    """pick: {"name": <Roll Pick Assignment>, "detail": <one line>} — sends
+    with the knit_pick_assigned Utility template (once Approved) instead of
+    the generic knit_app_alert."""
+    if not users or not is_enabled(pick):
         return
     frappe.enqueue(
         "pranera_knit.whatsapp_alerts.deliver",
         queue="short",
         enqueue_after_commit=True,
         users=sorted(set(users)), title=title, body=body, link=link, ref=list(ref) if ref else None,
+        pick=pick,
     )
 
 
-def deliver(users, title, body, link, ref=None):
-    if not is_enabled():
+def _first_name(user):
+    full = frappe.db.get_value("User", user, "full_name") or ""
+    return (full.split() or ["there"])[0]
+
+
+def deliver(users, title, body, link, ref=None, pick=None):
+    if not is_enabled(pick):
         return
     numbers = mobiles_for(users)
     if not numbers:
         return
-    params = {"1": _param(title, 60), "2": _param(body, 500), "3": _param(link, 300)}
+    use_pick = bool(pick) and _approved(PICK_TEMPLATE)
+    template = PICK_TEMPLATE if use_pick else template_name()
+    generic = {"1": _param(title, 60), "2": _param(body, 500), "3": _param(link, 300)}
     ref_doctype, ref_name = (ref or [None, None])
     send_template_message = frappe.get_attr(SEND)
 
@@ -120,9 +145,15 @@ def deliver(users, title, body, link, ref=None):
             number = numbers.get(user)
             if not number:
                 continue
+            params = generic if not use_pick else {
+                "1": _param(_first_name(user), 40),
+                "2": _param(pick.get("name"), 60),
+                "3": _param(pick.get("detail"), 300),
+                "4": _param(link, 300),
+            }
             try:
                 send_template_message(
-                    to=number, template=template_name(), parameters=params,
+                    to=number, template=template, parameters=params,
                     reference_doctype=ref_doctype, reference_name=ref_name, automated=1,
                 )
                 frappe.db.commit()

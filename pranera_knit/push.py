@@ -19,9 +19,9 @@ which enabled Knit App notifications may also get Frappe HR notifications
 
 Who gets what (wired in hooks.py / outward_request_events.py):
   * Roll Pick Assignment submitted     → the user it's assigned to
-  * Outward Request created            → Knitting Supervisor
+  * Outward Request created            → "NAP Warehouse User" role
   * Outward Request status changes     → the request's creator
-  * Outward Request Completed          → Security (ready to load)
+  * Outward Request Completed          → "NAP Security" role (ready to load)
   * Vehicle Gate Entry: request added  → that request's creator (vehicle at gate)
   * Vehicle Gate Entry: departed       → creators of the requests it carried
 
@@ -41,8 +41,8 @@ DEFAULT_PROJECT = "hrms"
 ICON = "/assets/pranera_knit/knit_app/icons/icon-192.png"
 SKIP_USERS = {"Administrator", "Guest", None, ""}
 
-SUPERVISOR_ROLES = ("Knitting Supervisor",)
-SECURITY_ROLES = ("Security",)
+OUTWARD_REQUEST_ROLES = ("NAP Warehouse User",)
+SECURITY_ROLES = ("NAP Security",)
 
 
 def project_name():
@@ -72,7 +72,7 @@ def users_with_roles(roles, exclude=None):
     return [u for u in enabled if u not in skip]
 
 
-def send(users, title, body, path="/knit-app", tag=None, ref=None, whatsapp=False):
+def send(users, title, body, path="/knit-app", tag=None, ref=None, whatsapp=False, pick=None):
     """Queue a push to each user. `path` is the in-app route opened on tap;
     `ref` is (doctype, name) of the document the alert is about. With
     whatsapp=True the same alert also goes out on WhatsApp
@@ -83,7 +83,7 @@ def send(users, title, body, path="/knit-app", tag=None, ref=None, whatsapp=Fals
     if whatsapp:
         try:
             from pranera_knit import whatsapp_alerts
-            whatsapp_alerts.send(users, title, body, get_url(path), ref=ref)
+            whatsapp_alerts.send(users, title, body, get_url(path), ref=ref, pick=pick)
         except Exception:
             frappe.log_error(title="Knit WhatsApp alert could not be queued")
     if not is_enabled():
@@ -116,18 +116,25 @@ def on_roll_pick_assignment_submit(doc, method=None):
     if not doc.get("assigned_to"):
         return
     target = doc.get("pick_qty")
-    detail = f"{doc.pick_type}" + (f" · {target:g}" if target else "")
+    against = doc.get("work_order") or doc.get("sales_order") or doc.get("subcontracting_order") or ""
+    parts = [f"{doc.pick_type} {against}".strip()]
+    if target:
+        parts.append(f"{target:g} kg")
+    if doc.get("source_warehouse"):
+        parts.append(f"from {doc.source_warehouse}")
     if doc.get("outward_request"):
-        detail += f" · for {doc.outward_request}"
-    # The only alert that also goes out on WhatsApp, and only to the picker.
+        parts.append(f"for {doc.outward_request}")
+    detail = ", ".join(parts)
+    # The only alert that also goes out on WhatsApp, and only to the picker,
+    # using the specific Utility template knit_pick_assigned.
     send([doc.assigned_to], "New pick assigned", f"{doc.name}: {detail}",
          "/knit-app/my-pick-orders", tag=f"rpa:{doc.name}", ref=("Roll Pick Assignment", doc.name),
-         whatsapp=True)
+         whatsapp=True, pick={"name": doc.name, "detail": detail})
 
 
 def on_outward_request_insert(doc, method=None):
     source = f"WO {doc.work_order}" if doc.work_order else f"PO {doc.purchase_order}"
-    send(users_with_roles(SUPERVISOR_ROLES, exclude=[doc.created_by]),
+    send(users_with_roles(OUTWARD_REQUEST_ROLES, exclude=[doc.created_by]),
          "New Outward Request",
          f"{doc.name} → {doc.to_building} ({source}). Assign a roll pick.",
          f"/knit-app/outward-request?name={doc.name}", tag=f"or:{doc.name}", ref=("Outward Request", doc.name))
