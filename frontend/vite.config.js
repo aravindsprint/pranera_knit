@@ -76,15 +76,23 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: path.resolve(__dirname, '../pranera_knit/public/knit_app'),
     emptyOutDir: true,
+    // Writes .vite/manifest.json; www/knit_app.py reads it to find the
+    // current hashed entry script + stylesheet for the /knit-app page.
+    manifest: true,
     rollupOptions: {
       input: path.resolve(__dirname, 'index.html'),
       output: {
-        entryFileNames: 'index.js',
+        // Every file gets a content hash. The entry used to be a fixed
+        // "index.js" loaded as "index.js?v=..." by the server page, while
+        // the lazy page chunks import it as "../index.js" (no query). The
+        // browser treats those as two different modules, so opening any
+        // lazy page (Outward Request, Stock, Dashboard, ...) ran the whole
+        // app a second time and a fresh copy mounted over it, showing Job
+        // Cards with the new URL. Hashed names need no ?v= and give every
+        // deploy new URLs, so phones never keep a stale bundle either.
+        entryFileNames: 'index-[hash].js',
         chunkFileNames: 'chunks/[name]-[hash].js',
-        assetFileNames: (info) => {
-          if (info.name?.endsWith('.css')) return 'index.css'
-          return 'assets/[name]-[hash][extname]'
-        }
+        assetFileNames: 'assets/[name]-[hash][extname]',
       }
     }
   },
