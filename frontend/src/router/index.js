@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isLoggedIn } from '@/api/frappe'
+import { pageKeyForPath } from '@/pages'
+import { usePageAccessStore } from '@/stores/pageAccess'
 
 // ── Eager (statically bundled) imports ──────────────────────────────────────
 // These are the pages an operator must be able to reach OFFLINE. Importing them
@@ -58,13 +60,28 @@ const router = createRouter({
 // window.__FRAPPE_SESSION__.user is set synchronously in main.js from the
 // user_id cookie before the router is created, so this check is safe to run
 // on the very first navigation with no async wait.
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const loggedIn = isLoggedIn()
   if (to.path !== '/knit-app/login' && !loggedIn) {
     return { path: '/knit-app/login', query: { redirect: to.fullPath } }
   }
   if (to.path === '/knit-app/login' && loggedIn) {
     return { path: '/knit-app/home' }
+  }
+
+  // Role-based page access (Desk → Knit App Page). Waits for the access
+  // list at most a few seconds; the cached copy covers slow / no network.
+  const key = loggedIn && pageKeyForPath(to.path)
+  if (key) {
+    const access = usePageAccessStore()
+    await Promise.race([access.ensureLoaded(), new Promise(r => setTimeout(r, 4000))])
+    if (!access.can(key)) {
+      // Home is where login and "/" land: send people without Job Cards
+      // access to the first page they can open instead of an error.
+      const first = access.visiblePages[0]
+      if (to.path === '/knit-app/home' && first) return { path: first.path }
+      return { path: '/knit-app/no-access', query: { page: key } }
+    }
   }
   return true
 })

@@ -10,3 +10,4 @@ pranera_knit.patches.v1_6.add_vehicle_gate_entry
 pranera_knit.patches.v1_7.add_whatsapp_alert_template
 pranera_knit.patches.v1_8.add_vge_expected_arrival
 pranera_knit.patches.v1_9.add_nap_roles_and_pick_template
+pranera_knit.patches.v1_10.add_knit_app_page_access
