@@ -113,7 +113,7 @@ def vehicles_for_outward_requests(names):
             "Vehicle Gate Entry",
             filters={"name": ["in", list({r.parent for r in rows})]},
             fields=["name", "vehicle_no", "driver_name", "mobile_no", "capacity",
-                    "arrival_datetime", "departure_datetime"],
+                    "expected_arrival_datetime", "arrival_datetime", "departure_datetime"],
         )
     }
     out = {}

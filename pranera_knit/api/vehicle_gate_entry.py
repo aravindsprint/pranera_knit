@@ -14,11 +14,11 @@ from frappe.utils import today
 from pranera_knit.vehicle_gate_entry_events import LOCATION_EXTRAS
 
 EDITABLE = ("date", "vehicle_no", "driver_name", "mobile_no", "capacity",
-            "arrival_datetime", "departure_datetime", "purpose",
+            "expected_arrival_datetime", "arrival_datetime", "departure_datetime", "purpose",
             "from_location", "to_location")
 
 LIST_FIELDS = ["name", "date", "vehicle_no", "driver_name", "mobile_no", "capacity",
-               "arrival_datetime", "departure_datetime", "purpose",
+               "expected_arrival_datetime", "arrival_datetime", "departure_datetime", "purpose",
                "from_location", "to_location", "created_by"]
 
 

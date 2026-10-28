@@ -45,7 +45,9 @@
           <span>{{ r.capacity }}</span>
         </div>
         <div class="vi-card__foot">
-          <span class="muted">In {{ fmtDateTime(r.arrival_datetime) }}</span>
+          <span class="muted">
+            <template v-if="r.expected_arrival_datetime">Exp {{ fmtDateTime(r.expected_arrival_datetime) }} · </template>In {{ fmtDateTime(r.arrival_datetime) }}
+          </span>
           <span v-if="r.departure_datetime" class="muted">Out {{ fmtDateTime(r.departure_datetime) }}</span>
           <button v-else class="btn-depart" :disabled="departing === r.name" @click.stop="depart(r.name)">
             <i class="pi" :class="departing === r.name ? 'pi-spin pi-spinner' : 'pi-sign-out'"></i> Mark Departed
@@ -85,6 +87,15 @@
       </div>
 
       <div class="card">
+        <div class="grid-2" style="margin-bottom:14px">
+          <div>
+            <label class="form-label">Expected Arrival Date and Time</label>
+            <input v-model="form.expected" type="datetime-local" class="form-input" />
+          </div>
+          <div class="expected-note" v-if="arrivalDelta">
+            <span class="pill" :class="arrivalDelta.late ? 'pill--amber' : 'pill--green'">{{ arrivalDelta.text }}</span>
+          </div>
+        </div>
         <div class="grid-2">
           <div>
             <label class="form-label">Arrival Date and Time <span class="req">*</span></label>
@@ -244,7 +255,7 @@ function nowLocal() {
 function blankForm() {
   return {
     name: '', date: nowLocal().slice(0, 10), vehicle_no: '', driver_name: '', mobile_no: '',
-    capacity: '', arrival: nowLocal(), departure: '', purpose: '', location: '', created_by_name: '',
+    capacity: '', expected: '', arrival: nowLocal(), departure: '', purpose: '', location: '', created_by_name: '',
     outwardRequests: [],
   }
 }
@@ -269,6 +280,17 @@ const missing = computed(() => {
   return m
 })
 const canSave = computed(() => missing.value.length === 0)
+
+// "On time" / "45 min late" / "1 h 10 min early" — arrival vs expected.
+const arrivalDelta = computed(() => {
+  if (!form.expected || !form.arrival) return null
+  const mins = Math.round((new Date(form.arrival) - new Date(form.expected)) / 60000)
+  if (Number.isNaN(mins)) return null
+  if (Math.abs(mins) < 5) return { text: 'On time', late: false }
+  const a = Math.abs(mins), h = Math.floor(a / 60), m = a % 60
+  const span = (h ? `${h} h ` : '') + (m ? `${m} min` : '').trim()
+  return { text: `${span.trim()} ${mins > 0 ? 'late' : 'early'}`, late: mins > 0 }
+})
 
 // Switching purpose: keep the chosen location (it moves from From to To),
 // the server clears whichever side doesn't apply (and the Outward
@@ -358,7 +380,8 @@ function openExisting(name) { router.push({ query: { name } }) }
 function applyDoc(d) {
   Object.assign(form, {
     name: d.name, date: d.date, vehicle_no: d.vehicle_no, driver_name: d.driver_name,
-    mobile_no: d.mobile_no, capacity: d.capacity, arrival: toLocal(d.arrival_datetime),
+    mobile_no: d.mobile_no, capacity: d.capacity, expected: toLocal(d.expected_arrival_datetime),
+    arrival: toLocal(d.arrival_datetime),
     departure: toLocal(d.departure_datetime), purpose: d.purpose,
     location: d.purpose === 'Pick Up' ? d.from_location : d.to_location,
     created_by_name: d.created_by_name,
@@ -384,6 +407,7 @@ async function save() {
       driver_name: form.driver_name.trim(),
       mobile_no: form.mobile_no,
       capacity: form.capacity,
+      expected_arrival_datetime: toFrappe(form.expected) || '',
       arrival_datetime: toFrappe(form.arrival),
       departure_datetime: toFrappe(form.departure) || '',
       purpose: form.purpose,
@@ -456,6 +480,7 @@ select.form-input {
 }
 .segmented__btn--active { background: #fff; color: var(--app-primary, #0f6e56); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 
+.expected-note { display: flex; align-items: flex-end; padding-bottom: 10px; }
 .meta-card { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .hint-text { font-size: 12px; color: #64748b; margin-top: 8px; display: flex; gap: 6px; align-items: flex-start; }
 .hint-text i { margin-top: 1px; }
