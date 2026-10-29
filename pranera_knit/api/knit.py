@@ -808,18 +808,12 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
             for key, b in batch_wise.items()
         }
 
-        # Roll-level warehouse: fill each split in scan order.
-        roll_warehouse = {}
-        for key, splits in batch_splits.items():
-            remaining = [[wh, q] for wh, q in splits]
-            idx = 0
-            for i, r in enumerate(rolls):
-                if (r.get("batch_no"), r.get("item_code")) != key:
-                    continue
-                while idx < len(remaining) - 1 and remaining[idx][1] <= 0.0005:
-                    idx += 1
-                roll_warehouse[i] = remaining[idx][0]
-                remaining[idx][1] -= float(r.get("qty") or 0)
+        # The split is applied to the Stock Entry ONLY. The Roll Wise Pick
+        # List keeps every row on the selected warehouse, as before: a
+        # Server Script on it ("Recompute Batch Wise Pick Item from Rolls")
+        # requires batch-wise totals to equal roll-wise totals per
+        # warehouse, and whole rolls can't be split to match exact kg
+        # amounts per warehouse.
 
         is_batch_transfer = all(
             r.get("roll_no") == r.get("batch_no") for r in rolls
@@ -831,21 +825,20 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         pick_list.warehouse    = source_warehouse
         pick_list.batch        = primary_batch
 
-        for key, b in batch_wise.items():
-            for wh, q in batch_splits[key]:
-                pick_list.append("batch_wise_pick_item", {
-                    "item_code": b["item_code"],
-                    "warehouse": wh,
-                    "batch":     b["batch"],
-                    "qty":       q,
-                    "uom":       b["uom"],
-                })
+        for b in batch_wise.values():
+            pick_list.append("batch_wise_pick_item", {
+                "item_code": b["item_code"],
+                "warehouse": b["warehouse"],
+                "batch":     b["batch"],
+                "qty":       b["qty"],
+                "uom":       b["uom"],
+            })
 
         if not is_batch_transfer:
-            for i, r in enumerate(rolls):
+            for r in rolls:
                 row = {
                     "item_code": r.get("item_code"),
-                    "warehouse": roll_warehouse.get(i) or _warehouse_for_batch(r.get("batch_no")),
+                    "warehouse": _warehouse_for_batch(r.get("batch_no")),
                     "batch":     r.get("batch_no"),
                     "roll_no":   r.get("roll_no"),
                     "qty":       float(r.get("qty") or 0),
