@@ -36,7 +36,8 @@
             {{ fmt(b.batch_qty) }} {{ b.stock_uom || '' }}
           </span>
         </div>
-        <div v-if="!options.length" class="bs-empty">
+        <div v-if="loadError" class="bs-empty bs-error"><i class="pi pi-exclamation-triangle"></i> Couldn't load batches: {{ loadError }}</div>
+        <div v-else-if="!options.length" class="bs-empty">
           No batches for this item{{ query ? ` matching "${query}"` : '' }}.
         </div>
       </template>
@@ -66,6 +67,7 @@ const query = ref(props.modelValue || '')
 const open = ref(false)
 const loading = ref(false)
 const options = ref([])
+const loadError = ref('')
 const highlighted = ref(-1)
 let timer = null
 let seq = 0
@@ -75,13 +77,14 @@ watch(() => props.modelValue, (v) => { if (!open.value) query.value = v || '' })
 async function load(txt) {
   const mine = ++seq
   loading.value = true
+  loadError.value = ''
   try {
     const rows = await searchBatchesForItem(props.itemCode, txt)
     if (mine !== seq) return
     options.value = rows
     highlighted.value = rows.length ? 0 : -1
-  } catch {
-    if (mine === seq) options.value = []
+  } catch (e) {
+    if (mine === seq) { options.value = []; loadError.value = e?.message || 'server error' }
   } finally {
     if (mine === seq) loading.value = false
   }
@@ -153,4 +156,5 @@ onBeforeUnmount(() => clearTimeout(timer))
 .bs-option__qty { font-size: 12px; font-weight: 600; color: #166534; white-space: nowrap; }
 .bs-option__qty--zero { color: #94a3b8; font-weight: 400; }
 .bs-empty { padding: 10px; font-size: 12px; color: #94a3b8; }
+.bs-error { color: #dc2626; }
 </style>

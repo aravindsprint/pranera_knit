@@ -387,12 +387,19 @@ def search_batches(item_code, txt=None):
     across warehouses), then newest."""
     if not item_code:
         return []
-    filters = {"item": item_code, "disabled": 0}
+    frappe.has_permission("Batch", "read", throw=True)
+    # Plain SQL: Frappe v15's get_all rejects expressions such as
+    # "(batch_qty > 0) desc" in order_by ("Illegal SQL Query"), which made
+    # the dropdown come back empty.
+    conditions, values = ["item = %(item)s", "disabled = 0"], {"item": item_code}
     if txt:
-        filters["name"] = ["like", f"%{txt}%"]
-    return frappe.get_all(
-        "Batch", filters=filters,
-        fields=["name", "batch_qty", "stock_uom", "expiry_date"],
-        order_by="(batch_qty > 0) desc, creation desc",
-        limit_page_length=30,
+        conditions.append("name like %(txt)s")
+        values["txt"] = f"%{txt}%"
+    return frappe.db.sql(
+        f"""select name, batch_qty, stock_uom, expiry_date
+        from `tabBatch`
+        where {" and ".join(conditions)}
+        order by (batch_qty > 0) desc, creation desc
+        limit 30""",
+        values, as_dict=True,
     )
