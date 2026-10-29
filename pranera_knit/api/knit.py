@@ -582,6 +582,60 @@ def get_pick_qty_targets_by_uom(assignment_doc):
     return targets
 
 
+def _batch_qty_in_warehouse(batch_no, warehouse, item_code=None):
+    """Current stock of one batch in one warehouse (ERPNext's own
+    batch-qty logic, so Serial and Batch Bundle entries are counted)."""
+    from erpnext.stock.doctype.batch.batch import get_batch_qty
+    try:
+        qty = get_batch_qty(batch_no=batch_no, warehouse=warehouse, item_code=item_code)
+    except TypeError:  # older signature without item_code
+        qty = get_batch_qty(batch_no=batch_no, warehouse=warehouse)
+    if isinstance(qty, list):
+        qty = sum(flt(r.get("qty")) for r in qty if r.get("warehouse") == warehouse)
+    return flt(qty)
+
+
+def _split_batch_across_warehouses(item_code, batch_no, qty, preferred_warehouse, plan_warehouses):
+    """Splits `qty` of one batch into [(warehouse, qty), ...] so no row
+    takes more than that warehouse actually holds.
+
+    Order of preference: the Source Warehouse the worker selected first,
+    then the Assignment's Batch Items warehouses for this batch, in plan
+    order. Only those warehouses are considered — material is never pulled
+    silently from some unrelated warehouse that happens to hold the batch.
+
+    When everything fits in the selected warehouse (the normal case), this
+    returns a single row, i.e. exactly the old behaviour."""
+    qty = flt(qty, 3)
+    if not batch_no or qty <= 0:
+        return [(preferred_warehouse, qty)]
+
+    candidates = [preferred_warehouse] + [w for w in plan_warehouses if w and w != preferred_warehouse]
+    if len(candidates) == 1:
+        return [(preferred_warehouse, qty)]
+
+    splits, remaining, available = [], qty, {}
+    for wh in candidates:
+        if remaining <= 0.0005:
+            break
+        available[wh] = _batch_qty_in_warehouse(batch_no, wh, item_code)
+        take = flt(min(remaining, available[wh]), 3)
+        if take > 0:
+            splits.append((wh, take))
+            remaining = flt(remaining - take, 3)
+
+    if remaining > 0.0005:
+        frappe.throw(_(
+            "Batch {0} only has {1} in the planned warehouses ({2}), but {3} was picked."
+        ).format(
+            batch_no,
+            flt(sum(available.values()), 3),
+            ", ".join(f"{wh}: {flt(q, 3)}" for wh, q in available.items()),
+            qty,
+        ))
+    return splits
+
+
 @frappe.whitelist()
 def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
                                source_warehouse=None, target_warehouse=None,
@@ -711,6 +765,22 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         def _warehouse_for_batch(batch_no):
             return batch_warehouse_overrides.get(batch_no) or source_warehouse
 
+        # Batch Items warehouses, in plan order — where the supervisor saw
+        # each batch's stock when the Assignment was made. Used only to know
+        # where to spill over to when the selected warehouse doesn't hold
+        # enough of a batch (see _split_batch_across_warehouses).
+        plan_warehouses = {}
+        if roll_pick_assignment:
+            for bi in frappe.get_all(
+                "Roll Pick Batch Item",
+                filters={"parenttype": "Roll Pick Assignment", "parent": roll_pick_assignment},
+                fields=["batch", "warehouse"], order_by="idx asc",
+            ):
+                if bi.batch and bi.warehouse:
+                    plan_warehouses.setdefault(bi.batch, [])
+                    if bi.warehouse not in plan_warehouses[bi.batch]:
+                        plan_warehouses[bi.batch].append(bi.warehouse)
+
         # ── STEP 1: Roll Wise Pick List ─────────────────────────────────────
         batch_wise = {}
         for roll in rolls:
@@ -724,6 +794,33 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
             })
             b["qty"] += float(roll.get("qty") or 0)
 
+        # One batch can sit in more than one warehouse (e.g. RPA-1033: the
+        # same batch planned as 504.66 kg in D01 + 1205.90 kg in FF/A01).
+        # Moving the whole picked qty out of the single selected warehouse
+        # then fails stock validation, so split each (batch, item) across
+        # the warehouses that actually hold it: [(warehouse, qty), ...].
+        batch_splits = {
+            key: _split_batch_across_warehouses(
+                b["item_code"], b["batch"], b["qty"],
+                _warehouse_for_batch(b["batch"]),
+                plan_warehouses.get(b["batch"]) or [],
+            )
+            for key, b in batch_wise.items()
+        }
+
+        # Roll-level warehouse: fill each split in scan order.
+        roll_warehouse = {}
+        for key, splits in batch_splits.items():
+            remaining = [[wh, q] for wh, q in splits]
+            idx = 0
+            for i, r in enumerate(rolls):
+                if (r.get("batch_no"), r.get("item_code")) != key:
+                    continue
+                while idx < len(remaining) - 1 and remaining[idx][1] <= 0.0005:
+                    idx += 1
+                roll_warehouse[i] = remaining[idx][0]
+                remaining[idx][1] -= float(r.get("qty") or 0)
+
         is_batch_transfer = all(
             r.get("roll_no") == r.get("batch_no") for r in rolls
         )
@@ -734,20 +831,21 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         pick_list.warehouse    = source_warehouse
         pick_list.batch        = primary_batch
 
-        for b in batch_wise.values():
-            pick_list.append("batch_wise_pick_item", {
-                "item_code": b["item_code"],
-                "warehouse": b["warehouse"],
-                "batch":     b["batch"],
-                "qty":       b["qty"],
-                "uom":       b["uom"],
-            })
+        for key, b in batch_wise.items():
+            for wh, q in batch_splits[key]:
+                pick_list.append("batch_wise_pick_item", {
+                    "item_code": b["item_code"],
+                    "warehouse": wh,
+                    "batch":     b["batch"],
+                    "qty":       q,
+                    "uom":       b["uom"],
+                })
 
         if not is_batch_transfer:
-            for r in rolls:
+            for i, r in enumerate(rolls):
                 row = {
                     "item_code": r.get("item_code"),
-                    "warehouse": _warehouse_for_batch(r.get("batch_no")),
+                    "warehouse": roll_warehouse.get(i) or _warehouse_for_batch(r.get("batch_no")),
                     "batch":     r.get("batch_no"),
                     "roll_no":   r.get("roll_no"),
                     "qty":       float(r.get("qty") or 0),
@@ -772,18 +870,18 @@ def create_roll_picking_entry(pick_type=None, document_name=None, document=None,
         pick_list.submit()
 
         # ── STEP 2: Stock Entry ──────────────────────────────────────────────
+        # One row per (item, batch, source warehouse) — see batch_splits.
         stock_entry_items = {}
-        for r in rolls:
-            key = (r.get("item_code"), r.get("batch_no"))
-            se_item = stock_entry_items.setdefault(key, {
-                "item_code":   r.get("item_code"),
-                "s_warehouse": _warehouse_for_batch(r.get("batch_no")),
-                "t_warehouse": target_warehouse,
-                "batch_no":    r.get("batch_no"),
-                "qty":         0.0,
-                "uom":         r.get("uom"),
-            })
-            se_item["qty"] += float(r.get("qty") or 0)
+        for key, b in batch_wise.items():
+            for wh, q in batch_splits[key]:
+                stock_entry_items[(b["item_code"], b["batch"], wh)] = {
+                    "item_code":   b["item_code"],
+                    "s_warehouse": wh,
+                    "t_warehouse": target_warehouse,
+                    "batch_no":    b["batch"],
+                    "qty":         q,
+                    "uom":         b["uom"],
+                }
 
         if pick_type == "To Work Order":
             naming_series = "MT/26/"
