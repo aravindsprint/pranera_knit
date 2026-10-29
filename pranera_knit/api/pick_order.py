@@ -405,6 +405,7 @@ def _batch_items_detail(doc):
             "batch": r.batch,
             "item_code": r.get("item_code") or r.get("item") or info.get("item"),
             "uom": r.get("stock_uom") or info.get("stock_uom") or "Kgs",
+            "warehouse": r.get("warehouse"),
             "qty": r.qty,
         })
     return out
