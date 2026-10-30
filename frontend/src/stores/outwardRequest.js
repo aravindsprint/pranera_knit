@@ -232,7 +232,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   const pickFormValid = computed(() => {
     const f = pickForm.value, p = pickPlan.value
     if (!p || !f.sourceWarehouse || !f.targetWarehouse || !f.assignedTo) return false
-    if (p.pick_type === 'To Work Order') return Number(f.pickQty) > 0
+    if (p.pick_type === 'To Work Order') return p.batch_items.length > 0 || Number(f.pickQty) > 0
     return !!f.subcontractingOrder && p.batch_items.length > 0
   })
 
@@ -282,7 +282,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
         target_warehouse: f.targetWarehouse,
         assigned_to: f.assignedTo,
         subcontracting_order: pickPlan.value.pick_type === 'To Subcontracting Order' ? f.subcontractingOrder : undefined,
-        pick_qty: pickPlan.value.pick_type === 'To Work Order' ? Number(f.pickQty) : undefined,
+        pick_qty: pickPlan.value.pick_type === 'To Work Order' && !pickPlan.value.batch_items.length ? Number(f.pickQty) : undefined,
         remarks: f.remarks || undefined,
       })
       applyDoc(res.outward_request)

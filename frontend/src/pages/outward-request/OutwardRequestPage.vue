@@ -253,8 +253,10 @@
             <div v-if="!store.pickPlan.subcontracting_orders.length" class="error-banner" style="margin-top:8px">
               No submitted Subcontracting Order for this PO.
             </div>
+          </template>
 
-            <label class="form-label" style="margin-top:14px">Batches to pick</label>
+          <template v-if="store.pickPlan.pick_type === 'To Subcontracting Order' || store.pickPlan.batch_items.length">
+            <label class="form-label" :style="store.pickPlan.pick_type === 'To Subcontracting Order' ? 'margin-top:14px' : ''">Batches to pick</label>
             <div class="plan-rows">
               <div v-for="b in store.pickPlan.batch_items" :key="b.batch" class="plan-row">
                 <span class="plan-row__main">{{ b.batch }}<small>{{ b.item_code }}</small></span>

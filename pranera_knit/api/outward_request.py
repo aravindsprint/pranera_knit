@@ -250,7 +250,11 @@ def search_purchase_orders(txt=None):
 
 # ── Roll Pick Assignment from a request ───────────────────────────────────
 #
-# Work Order request → "To Work Order", free scan: no batch items, pick_qty
+# Work Order request → "To Work Order". When rows carry batches, those
+#   become batch_items (same as a PO request below): per-UOM ±3% targets,
+#   so Pcs collars/cuffs are picked and checked too, and scans are limited
+#   to those batches; rows without a batch are reported as `excluded`.
+#   Only when NO row has a batch is it a free scan: pick_qty
 #   = total Kgs on the request (editable). Scans are limited to the
 #   request's item codes (see _record_scan in pick_order.py) instead of the
 #   usual "batches this WO manufactured" rule, since a request moves the
@@ -270,6 +274,20 @@ def _assignment_plan(doc):
         uom = r.stock_uom or "Kgs"
         plan["uom_totals"][uom] = round(plan["uom_totals"].get(uom, 0.0) + flt(r.qty), 3)
 
+    # Rows WITH a batch become planned batches (one per batch, qty summed);
+    # rows without one can't be roll-picked and are reported as excluded.
+    merged = {}
+    excluded = []
+    for r in doc.items:
+        if not r.batch:
+            excluded.append({"item_code": r.item_code, "qty": flt(r.qty), "stock_uom": r.stock_uom})
+            continue
+        if r.batch in merged:
+            merged[r.batch]["qty"] += flt(r.qty)
+        else:
+            merged[r.batch] = {"batch": r.batch, "item_code": r.item_code,
+                               "qty": flt(r.qty), "stock_uom": r.stock_uom}
+
     if doc.work_order:
         wo = frappe.db.get_value("Work Order", doc.work_order,
                                  ["project", "wip_warehouse", "source_warehouse"], as_dict=True) or {}
@@ -277,12 +295,26 @@ def _assignment_plan(doc):
             "pick_type": "To Work Order",
             "document_name": doc.work_order,
             "project": wo.get("project"),
-            "pick_qty": plan["uom_totals"].get("Kgs", 0.0),
             "default_source_warehouse": wo.get("source_warehouse"),
             "default_target_warehouse": wo.get("wip_warehouse"),
             "subcontracting_orders": [],
-            "non_kgs": {u: q for u, q in plan["uom_totals"].items() if u != "Kgs"},
         })
+        if merged:
+            # Batched rows (Kgs fabric AND Pcs collars/cuffs) become the
+            # Assignment's Batch Items: each UOM gets its own ±3% target and
+            # scans are restricted to these batches.
+            plan.update({
+                "batch_items": list(merged.values()),
+                "pick_qty": round(sum(b["qty"] for b in merged.values()), 3),
+                "excluded": excluded,
+                "non_kgs": {},
+            })
+        else:
+            # No batches at all: free scan against a single kg target.
+            plan.update({
+                "pick_qty": plan["uom_totals"].get("Kgs", 0.0),
+                "non_kgs": {u: q for u, q in plan["uom_totals"].items() if u != "Kgs"},
+            })
         return plan
 
     sco = frappe.get_all(
@@ -291,17 +323,7 @@ def _assignment_plan(doc):
         fields=["name", "supplier_warehouse", "status"],
         order_by="creation desc",
     )
-    merged = {}
-    for r in doc.items:
-        if not r.batch:
-            plan["excluded"].append({"item_code": r.item_code, "qty": flt(r.qty), "stock_uom": r.stock_uom})
-            continue
-        key = r.batch
-        if key in merged:
-            merged[key]["qty"] += flt(r.qty)
-        else:
-            merged[key] = {"batch": r.batch, "item_code": r.item_code,
-                           "qty": flt(r.qty), "stock_uom": r.stock_uom}
+    plan["excluded"] = excluded
     plan.update({
         "pick_type": "To Subcontracting Order",
         "document_name": doc.purchase_order,
@@ -354,7 +376,12 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
         outward_request=name,
     )
 
-    if plan["pick_type"] == "To Work Order":
+    if plan["pick_type"] == "To Work Order" and plan["batch_items"]:
+        args.update(
+            document_name=plan["document_name"],
+            batch_items=[{"batch": b["batch"], "qty": b["qty"]} for b in plan["batch_items"]],
+        )
+    elif plan["pick_type"] == "To Work Order":
         target = flt(pick_qty) or plan["pick_qty"]
         if target <= 0:
             frappe.throw(_("Enter the Pick Qty (kg) — this request has no Kgs items to default from"))
