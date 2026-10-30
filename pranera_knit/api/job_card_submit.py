@@ -18,8 +18,8 @@ had to post a Material Receipt by hand (MR/26/..., Job Card set) and retry.
 Now the shortfall is worked out before the Manufacture entry is built, and
 one Material Receipt (series MR/26/) is created and submitted for it:
 item, exact short qty, target = the WIP warehouse, batch = the batch being
-consumed, Job Card = this job card, rate = that batch's current valuation
-rate in the WIP. The Manufacture entry is then posted in the same request.
+consumed, Job Card = this job card, rate = the batch's purchase rate (never
+negative, see _batch_rate). The Manufacture entry is then posted in the same request.
 The audit team gets an email for every such receipt (AUDIT_EMAILS).
 
 Everything runs in one transaction under the Job Card row lock: if any
@@ -501,40 +501,47 @@ class _BatchAllocator:
 
 
 def _batch_rate(item_code, batch_no, warehouse):
-    """Valuation rate for the top-up: the batch's latest rate in the WIP,
-    else the item's latest rate in the WIP, else the Item's valuation rate."""
-    rate = None
+    """Rate for an automatic top-up. Never a running average: ERPNext's
+    moving-average valuation_rate on a ledger row can drift below zero in
+    a WIP warehouse (YRSCC025/GRIEGE showed -0.011 in WIP - FK10 after
+    MF/26/27337), which made the receipt fail with "Value cannot be negative
+    for Basic Rate" (PO-JOB22508). In order:
+      1. the batch's purchase / subcontracting receipt rate
+      2. any positive incoming rate the batch was received at
+      3. the item's latest positive valuation rate, any warehouse
+      4. the Item master valuation rate
+    Never negative; 0 only if nothing else exists."""
     if batch_no:
-        rate = frappe.db.sql(
-            """
-            SELECT sle.valuation_rate FROM `tabStock Ledger Entry` sle
-            JOIN `tabSerial and Batch Entry` sbe ON sbe.parent = sle.serial_and_batch_bundle
-            WHERE sle.is_cancelled = 0 AND sle.item_code = %(item)s AND sbe.batch_no = %(batch)s
-            ORDER BY sle.posting_datetime DESC, sle.creation DESC LIMIT 1
-            """,
-            {"item": item_code, "batch": batch_no},
-        )
-        rate = rate[0][0] if rate else None
-        if not rate:
-            rate = frappe.db.sql(
-                """
-                SELECT valuation_rate FROM `tabStock Ledger Entry`
-                WHERE is_cancelled = 0 AND item_code = %(item)s AND batch_no = %(batch)s
-                ORDER BY posting_datetime DESC, creation DESC LIMIT 1
+        for voucher_filter in (
+            "AND sbb.voucher_type IN ('Purchase Receipt', 'Subcontracting Receipt')",
+            "",
+        ):
+            r = frappe.db.sql(
+                f"""
+                SELECT sbe.incoming_rate
+                FROM `tabSerial and Batch Entry` sbe
+                JOIN `tabSerial and Batch Bundle` sbb ON sbb.name = sbe.parent
+                WHERE sbe.batch_no = %(batch)s AND sbb.item_code = %(item)s
+                  AND sbb.docstatus = 1 AND sbb.is_cancelled = 0
+                  AND sbb.type_of_transaction = 'Inward' AND sbe.incoming_rate > 0
+                  {voucher_filter}
+                ORDER BY sbb.posting_datetime DESC, sbb.creation DESC LIMIT 1
                 """,
                 {"item": item_code, "batch": batch_no},
             )
-            rate = rate[0][0] if rate else None
-    if not rate:
-        rate = frappe.db.get_value(
-            "Stock Ledger Entry",
-            {"item_code": item_code, "warehouse": warehouse, "is_cancelled": 0},
-            "valuation_rate",
-            order_by="posting_datetime desc, creation desc",
-        )
-    if not rate:
-        rate = frappe.db.get_value("Item", item_code, "valuation_rate")
-    return flt(rate)
+            if r and flt(r[0][0]) > 0:
+                return flt(r[0][0])
+    r = frappe.db.sql(
+        """
+        SELECT valuation_rate FROM `tabStock Ledger Entry`
+        WHERE is_cancelled = 0 AND item_code = %(item)s AND valuation_rate > 0
+        ORDER BY posting_datetime DESC, creation DESC LIMIT 1
+        """,
+        {"item": item_code},
+    )
+    if r and flt(r[0][0]) > 0:
+        return flt(r[0][0])
+    return max(flt(frappe.db.get_value("Item", item_code, "valuation_rate")), 0.0)
 
 
 def _create_topup_receipt(jobcard, work_order, company, wip, topups):
