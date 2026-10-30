@@ -161,4 +161,8 @@ override_whitelisted_methods = {
     # Replaces the "knit-save-roll-data" Server Script: same behaviour, but
     # refuses to overwrite a roll that belongs to a different job card.
     "knit_save_roll_data": "pranera_knit.api.knit.save_roll_data",
+    # Replaces the "knit_submit_roll_packing_list_v2" Server Script (Job Card
+    # submit): same behaviour, plus an automatic MR/26/ top-up instead of a
+    # negative-stock failure, with an email to the audit team.
+    "knit_submit_roll_packing_list_v2": "pranera_knit.api.job_card_submit.submit_roll_packing_list_v2",
 }
