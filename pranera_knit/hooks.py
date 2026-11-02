@@ -47,6 +47,8 @@ doc_events = {
         "on_submit": [
             "pranera_knit.roll_wise_pick_list_events.on_stock_entry_submit",
             "pranera_knit.outward_request_events.on_stock_entry_change",
+            # Auto-create + email Work Order Process Loss when the WO completes
+            "pranera_knit.process_loss.on_stock_entry_submit",
         ],
         "on_cancel": [
             "pranera_knit.roll_wise_pick_list_events.on_stock_entry_cancel",
