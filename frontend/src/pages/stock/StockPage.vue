@@ -142,7 +142,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useAuthStore } from '@/stores/auth'
-import { syncWarehouses, getWarehouseStock, resolveStockScan } from '@/api/frappe'
+import { syncNapWarehouses, getWarehouseStock, resolveStockScan } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
 
@@ -184,7 +184,7 @@ const warehouseOptions = computed(() =>
 )
 
 onMounted(async () => {
-  try { warehouses.value = await syncWarehouses() } catch (e) { error.value = e.message }
+  try { warehouses.value = await syncNapWarehouses() } catch (e) { error.value = e.message }
 })
 
 function onWarehousePicked(val) {
