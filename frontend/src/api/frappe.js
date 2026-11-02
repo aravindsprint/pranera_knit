@@ -382,6 +382,12 @@ export const syncWorkOrders = () =>
 export const syncBatches    = () => getAllList('Batch',     { fields: ['name', 'item', 'expiry_date', 'modified'], pageSize: 500, orderBy: 'modified desc' })
 export const syncWarehouses = () => getAllList('Warehouse', { fields: ['name', 'warehouse_name', 'modified'],      pageSize: 500, orderBy: 'name asc' })
 
+// NAP building warehouses only (leaf, enabled) — Stock page dropdown.
+export const syncNapWarehouses = () => getAllList('Warehouse', {
+  filters: [['Warehouse', 'name', 'like', 'NAP%'], ['Warehouse', 'is_group', '=', 0], ['Warehouse', 'disabled', '=', 0]],
+  fields: ['name', 'warehouse_name', 'modified'], pageSize: 500, orderBy: 'name asc',
+})
+
 // Stock Entries (parent doctype — listable via /api/resource)
 export const syncStockEntries = () =>
   getAllList('Stock Entry', {
