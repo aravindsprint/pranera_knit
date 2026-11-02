@@ -1,7 +1,9 @@
 # pranera_knit/pranera_knit/process_loss.py
 #
 # Auto-create a "Work Order Process Loss" (PL/.####) when a Work Order is
-# completed, submit it, and email the report (HTML table + PDF) to recipients.
+# finished (Completed, or produced >= 95% of WO qty), submit it, and email the
+# report (HTML table + PDF) to recipients. If more Manufacture entries arrive
+# later, the auto-created PL is cancelled, re-issued and re-emailed.
 #
 # Trigger: Stock Entry (Manufacture) on_submit -> background job after commit.
 #
@@ -39,16 +41,35 @@ def on_stock_entry_submit(doc, method=None):
 # ---------------------------------------------------------------------------
 # Background job
 # ---------------------------------------------------------------------------
+AUTO_MARKER = "Auto-created by pranera_knit on Work Order completion"
+DEFAULT_MIN_PRODUCED_PCT = 95
+
+
+def _is_finished(wo):
+    """A WO counts as finished once it is Completed, or once produced_qty
+    reaches `process_loss_min_produced_pct` (site config, default 95) of the
+    WO qty - knitting routinely closes a little under the ordered qty."""
+    if wo.status == "Completed":
+        return True
+    pct = flt(frappe.conf.get("process_loss_min_produced_pct") or DEFAULT_MIN_PRODUCED_PCT)
+    return flt(wo.qty) > 0 and flt(wo.produced_qty) >= flt(wo.qty) * pct / 100
+
+
 def create_and_email(work_order, force=False):
     try:
         wo = frappe.get_doc("Work Order", work_order)
         if wo.docstatus != 1:
             return
-        if wo.status != "Completed" and not force:
-            return  # partial manufacture - wait for the final entry
+        if not force and not _is_finished(wo):
+            return  # still below the produced-% threshold
 
-        if not force and _already_has_process_loss(work_order):
-            return
+        existing = _existing_process_losses(work_order)
+        old = None
+        if existing and not force:
+            manual = [p for p in existing if not _is_auto(p)]
+            if manual:
+                return  # someone already made one by hand - leave it alone
+            old = existing[0]  # our own earlier auto PL
 
         pl = _build_process_loss(wo)
         if not pl.work_order_process_loss_details:
@@ -58,20 +79,58 @@ def create_and_email(work_order, force=False):
             )
             return
 
+        updated = False
+        if old:
+            # More Manufacture entries came in after the first report.
+            # Re-issue only if the numbers actually changed.
+            if _summary(frappe.get_doc(LOSS_DOCTYPE, old)) == _summary(pl):
+                return
+            old_doc = frappe.get_doc(LOSS_DOCTYPE, old)
+            old_doc.flags.ignore_permissions = True
+            if old_doc.docstatus == 1:
+                old_doc.cancel()
+            else:
+                old_doc.delete(ignore_permissions=True)
+                old = None
+            pl.amended_from = old
+            updated = True
+
         pl.flags.ignore_permissions = True
         pl.insert()
         pl.submit()
+        pl.add_comment("Info", AUTO_MARKER)
 
-        _send_email(pl, wo)
+        _send_email(pl, wo, updated=updated)
     except Exception:
         frappe.log_error(title=f"Process Loss auto-create failed: {work_order}")
         raise
 
 
-def _already_has_process_loss(work_order):
+def _existing_process_losses(work_order):
+    """Non-cancelled PL names linked to this WO, newest first."""
+    return frappe.db.sql_list(
+        """
+        select distinct p.name
+        from `tabWork Order Process Loss` p
+        join `tabWork Orders` w on w.parent = p.name and w.parenttype = %(dt)s
+        where w.work_order = %(wo)s and p.docstatus < 2
+        order by p.creation desc
+        """,
+        {"wo": work_order, "dt": LOSS_DOCTYPE},
+    )
+
+
+def _is_auto(pl_name):
     return frappe.db.exists(
-        "Work Orders",
-        {"parenttype": LOSS_DOCTYPE, "work_order": work_order, "docstatus": ("<", 2)},
+        "Comment",
+        {"reference_doctype": LOSS_DOCTYPE, "reference_name": pl_name, "content": AUTO_MARKER},
+    )
+
+
+def _summary(pl):
+    return sorted(
+        (d.item_code, flt(d.sent_qty, 3), flt(d.return_qty, 3), flt(d.received_qty, 3))
+        for d in pl.work_order_process_loss_details
     )
 
 
@@ -232,7 +291,7 @@ def _get_recipients(wo):
     return recipients
 
 
-def _send_email(pl, wo):
+def _send_email(pl, wo, updated=False):
     recipients = _get_recipients(wo)
     if not recipients:
         frappe.log_error(
@@ -263,10 +322,20 @@ def _send_email(pl, wo):
     tot_pct = flt(tot_loss / tot_sent * 100, 2) if tot_sent else 0
     pl_link = frappe.utils.get_url_to_form(LOSS_DOCTYPE, pl.name)
     wo_link = frappe.utils.get_url_to_form("Work Order", wo.name)
+    produced_pct = flt(flt(wo.produced_qty) / flt(wo.qty) * 100, 1) if flt(wo.qty) else 0
+    update_note = ""
+    if updated:
+        cancelled = f" ({pl.amended_from} cancelled)" if pl.amended_from else ""
+        update_note = (
+            "<p><b>Updated:</b> more production was posted after the earlier report"
+            + cancelled + ".</p>"
+        )
 
     message = f"""
     <p>Process loss report for Work Order <a href="{wo_link}">{wo.name}</a>
-    ({wo.production_item}, produced {flt(wo.produced_qty, 3)} of {flt(wo.qty, 3)} {wo.stock_uom}).</p>
+    ({wo.production_item}, produced {flt(wo.produced_qty, 3)} of {flt(wo.qty, 3)} {wo.stock_uom},
+    {produced_pct}%).</p>
+    {update_note}
     <table style="border-collapse:collapse;font-size:13px">
         <tr style="background:#f3f3f3">
             <th style="{TD}">Item</th><th style="{TD}">UOM</th>
@@ -298,7 +367,7 @@ def _send_email(pl, wo):
 
     frappe.sendmail(
         recipients=recipients,
-        subject=f"Process Loss {tot_pct}% - {wo.name} ({wo.production_item})",
+        subject=f"{'[Updated] ' if updated else ''}Process Loss {tot_pct}% - {wo.name} ({wo.production_item})",
         message=message,
         attachments=attachments,
         reference_doctype=LOSS_DOCTYPE,
