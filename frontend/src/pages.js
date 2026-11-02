@@ -6,6 +6,7 @@ export const PAGES = [
   { key: 'home',                label: 'Job Cards',           icon: '🗂', path: '/knit-app/home',                section: 'PRODUCTION' },
   { key: 'roll-wise-pick-list', label: 'Roll-wise Pick List', icon: '📦', path: '/knit-app/roll-wise-pick-list', section: 'PRODUCTION', active: ['pick-list'] },
   { key: 'my-pick-orders',      label: 'My Pick Orders',      icon: '✅', path: '/knit-app/my-pick-orders',      section: 'PRODUCTION', active: ['pick-execution'] },
+  { key: 'create-pick-order',   label: 'Create Pick Order',   icon: '📝', path: '/knit-app/create-pick-order',   section: 'PRODUCTION' },
   { key: 'outward-request',     label: 'Outward Request',     icon: '🚚', path: '/knit-app/outward-request',     section: 'PRODUCTION' },
   { key: 'vehicle-gate-entry',  label: 'Vehicle Gate Entry',  icon: '🚛', path: '/knit-app/vehicle-gate-entry',  section: 'PRODUCTION' },
   { key: 'spares-issue',        label: 'Needle / Sinker Issue', icon: '🪡', path: '/knit-app/spares-issue',      section: 'PRODUCTION' },
