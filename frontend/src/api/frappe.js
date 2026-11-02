@@ -758,3 +758,26 @@ export const searchOutwardRequestsForGate = (txt, gateEntry) =>
 
 export const searchBatchesForItem = (itemCode, txt) =>
   call(`${OR_API}.search_batches`, { item_code: itemCode, txt: txt || undefined }).then(r => r.message || [])
+
+// ── Needle / Sinker Issue ────────────────────────────────────────────────────
+// pranera_knit/api/spares_issue.py — issues spares to a machine as a submitted
+// Asset Repair (stock consumption); ERPNext posts the Material Issue.
+const SPARES_API = 'pranera_knit.api.spares_issue'
+
+export const getSparesIssueSetup = () =>
+  call(`${SPARES_API}.get_setup`).then(r => r.message)
+
+export const getSpareStock = (warehouse) =>
+  call(`${SPARES_API}.get_spare_stock`, { warehouse: warehouse || undefined }).then(r => r.message)
+
+export const searchMachineAssets = (txt) =>
+  call(`${SPARES_API}.search_assets`, { txt: txt || undefined }).then(r => r.message || [])
+
+export const linkMachineAsset = (workstation, asset) =>
+  call(`${SPARES_API}.link_asset`, { workstation, asset }).then(r => r.message)
+
+export const getRecentSpareIssues = (workstation) =>
+  call(`${SPARES_API}.get_recent_issues`, { workstation: workstation || undefined }).then(r => r.message)
+
+export const issueSpares = (payload) =>
+  call(`${SPARES_API}.issue_spares`, payload).then(r => r.message)

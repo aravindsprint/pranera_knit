@@ -44,6 +44,9 @@ doc_events = {
     # is after a Roll Wise Pick List transfer — scoped to only the Stock
     # Entries that app creates (see roll_wise_pick_list_events.py).
     "Stock Entry": {
+        # Needle / Sinker Issue page: the Material Issue ERPNext creates for
+        # an app-raised Asset Repair gets the MI/<yy>/ series.
+        "before_insert": "pranera_knit.spares_issue_events.set_material_issue_series",
         "on_submit": [
             "pranera_knit.roll_wise_pick_list_events.on_stock_entry_submit",
             "pranera_knit.outward_request_events.on_stock_entry_change",
@@ -133,6 +136,9 @@ fixtures = [
                     "Work Order Item-custom_before_qty",
                     "Work Order Item-custom_after_qty",
                     "Work Order Item-custom_actual_consumed_qty",
+                    # Needle / Sinker Issue page (api/spares_issue.py)
+                    "Workstation-custom_asset",
+                    "Asset Repair-custom_workstation",
                 ],
             ],
         ],
