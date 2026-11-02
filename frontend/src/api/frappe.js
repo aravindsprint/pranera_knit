@@ -588,9 +588,13 @@ export const getMyPickOrders = () =>
 export const getPickOrderDetail = (name) =>
   call('pranera_knit.api.pick_order.get_pick_order_detail', { name }).then(r => r.message)
 
-export const scanPickOrderRoll = (pickOrder, rollNo, sourceWarehouse) =>
+// chosenBatch: the batch the worker picked after the server answered
+// { needs_batch_choice: true, candidates } (roll's batch was repacked into
+// several batches). Omit on a normal scan.
+export const scanPickOrderRoll = (pickOrder, rollNo, sourceWarehouse, chosenBatch = null) =>
   call('pranera_knit.api.pick_order.scan_pick_order_roll', {
-    pick_order: pickOrder, roll_no: rollNo, source_warehouse: sourceWarehouse
+    pick_order: pickOrder, roll_no: rollNo, source_warehouse: sourceWarehouse,
+    ...(chosenBatch ? { chosen_batch: chosenBatch } : {})
   }).then(r => r.message)
 
 // Add these 4 exports to frontend/src/api/frappe.js, right after the

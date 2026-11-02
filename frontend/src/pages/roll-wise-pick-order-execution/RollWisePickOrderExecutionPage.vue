@@ -231,6 +231,46 @@
         </div>
       </transition>
 
+      <!-- Repacked batch picker — the roll's batch was repacked into several
+           batches and the server can't tell which one it's in -->
+      <transition name="modal-fade">
+        <div v-if="batchChoice" class="modal-overlay" @click.self="cancelBatchChoice">
+          <div class="modal-box batch-pick-box">
+            <h3 class="modal-title">Select Batch — Roll {{ batchChoice.roll_no }}</h3>
+            <p class="modal-msg">{{ batchChoice.message }}</p>
+            <div class="bc-list">
+              <label v-for="c in batchChoice.candidates" :key="c.batch" class="bc-row"
+                     :class="{ 'bc-row--sel': selectedBatch === c.batch }">
+                <input type="radio" name="repack-batch" :value="c.batch" v-model="selectedBatch" />
+                <div class="bc-body">
+                  <div class="bc-batch">{{ c.batch }}</div>
+                  <div class="bc-item">{{ c.item_code || '—' }}</div>
+                  <div class="bc-meta">
+                    <span v-if="c.on_pick_order" class="bc-tag bc-tag--plan">Pick Order batch</span>
+                    <span v-else class="bc-tag">Repacked<span v-if="c.repack"> · {{ c.repack }}</span></span>
+                    <span v-if="c.qty_in_warehouse !== null && c.qty_in_warehouse !== undefined"
+                          :class="{ 'bc-zero': !(c.qty_in_warehouse > 0) }">
+                      In {{ batchChoice.source_warehouse }}: {{ fmt(c.qty_in_warehouse) }}
+                    </span>
+                  </div>
+                </div>
+              </label>
+            </div>
+            <div v-if="batchChoiceError" class="error-banner" style="margin-top:10px">
+              <i class="pi pi-exclamation-triangle"></i> {{ batchChoiceError }}
+            </div>
+            <div class="submit-btn-row">
+              <button class="btn btn-outline btn-full" @click="cancelBatchChoice" :disabled="batchChoiceSaving">Cancel</button>
+              <button class="btn btn-primary btn-full" @click="confirmBatchChoice"
+                      :disabled="!selectedBatch || batchChoiceSaving">
+                <i v-if="batchChoiceSaving" class="pi pi-spin pi-spinner"></i>
+                {{ batchChoiceSaving ? 'Saving...' : 'Use this batch' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </transition>
+
       <!-- Submission success pop-up -->
       <transition name="modal-fade">
         <div v-if="showSuccessModal" class="modal-overlay" @click.self="closeSuccessModal">
@@ -371,9 +411,54 @@ async function onCameraScanSuccess(decodedText) {
   showScannerModal.value = false
   scanError.value = ''
   try {
-    await store.scanRoll(decodedText)
+    const res = await store.scanRoll(decodedText)
+    if (res?.needs_batch_choice) openBatchChoice(decodedText, res)
   } catch (err) {
     scanError.value = err.message
+  }
+}
+
+// ── Repacked batch picker ────────────────────────────────────────────────
+const batchChoice = ref(null)        // server payload: { roll_no, message, candidates, source_warehouse }
+const selectedBatch = ref('')
+const batchChoiceError = ref('')
+const batchChoiceSaving = ref(false)
+let pendingScan = ''
+
+function openBatchChoice(raw, payload) {
+  pendingScan = raw
+  batchChoice.value = payload
+  batchChoiceError.value = ''
+  // Preselect only when exactly one candidate actually has stock here.
+  const withStock = (payload.candidates || []).filter(c => c.qty_in_warehouse > 0)
+  selectedBatch.value = withStock.length === 1 ? withStock[0].batch : ''
+}
+
+function cancelBatchChoice() {
+  if (batchChoiceSaving.value) return
+  batchChoice.value = null
+  selectedBatch.value = ''
+  pendingScan = ''
+}
+
+async function confirmBatchChoice() {
+  if (!selectedBatch.value) return
+  batchChoiceSaving.value = true
+  batchChoiceError.value = ''
+  try {
+    const res = await store.scanRoll(pendingScan, selectedBatch.value)
+    if (res?.needs_batch_choice) {
+      // Another ambiguous repack further down the chain — ask again.
+      openBatchChoice(pendingScan, res)
+      return
+    }
+    batchChoice.value = null
+    selectedBatch.value = ''
+    pendingScan = ''
+  } catch (err) {
+    batchChoiceError.value = err.message
+  } finally {
+    batchChoiceSaving.value = false
   }
 }
 
@@ -512,4 +597,22 @@ function closeSuccessModal() {
 .bp-total { font-weight: 700; font-size: 14px; color: #0f172a; white-space: nowrap; }
 .bp-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: #64748b; margin-top: 4px; }
 .bp-flag { color: #b45309; font-weight: 600; }
+
+/* Repacked batch picker */
+.batch-pick-box { max-width: 440px; text-align: left; padding: 22px 18px; max-height: 88vh; overflow-y: auto; }
+.batch-pick-box .modal-title, .batch-pick-box .modal-msg { text-align: left; overflow-wrap: anywhere; }
+.bc-list { display: flex; flex-direction: column; gap: 8px; }
+.bc-row {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+  border: 1.5px solid #e2e8f0; border-radius: 10px; cursor: pointer;
+}
+.bc-row input { margin-top: 3px; accent-color: #0f6e56; flex-shrink: 0; }
+.bc-row--sel { border-color: #0f6e56; background: #f0fdf4; }
+.bc-body { flex: 1; min-width: 0; }
+.bc-batch { font-weight: 700; font-size: 13px; color: #0f172a; overflow-wrap: anywhere; }
+.bc-item { font-size: 12px; color: #475569; overflow-wrap: anywhere; }
+.bc-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; color: #64748b; margin-top: 4px; }
+.bc-tag { background: #f1f5f9; color: #475569; border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+.bc-tag--plan { background: #dcfce7; color: #166534; }
+.bc-zero { color: #b45309; }
 </style>
