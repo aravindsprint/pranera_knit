@@ -87,6 +87,18 @@ from pranera_knit.api.knit import create_roll_picking_entry, get_batch_warehouse
 TOLERANCE_PCT = 0.03
 
 
+class BatchChoiceRequired(frappe.ValidationError):
+    """A roll's batch was repacked into several batches and the server can't
+    tell which one the roll is in. Instead of failing the scan, the
+    candidates go back to the Knit App so the worker picks the batch and
+    the scan is retried with chosen_batch (see scan_pick_order_roll)."""
+
+    def __init__(self, message, roll_no, candidates):
+        super().__init__(message)
+        self.roll_no = roll_no
+        self.candidates = candidates
+
+
 def _assert_assigned_to_me(doc):
     if doc.assigned_to != frappe.session.user:
         frappe.throw(_("This Pick Order is not assigned to you"), frappe.PermissionError)
@@ -293,7 +305,7 @@ def _repack_related_batches(batch, max_hops=6):
     return family
 
 
-def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8):
+def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8, chosen_batch=None):
     """(batch, item_code) a roll sits in after its LAST repack.
 
     From `batch`, take the most recent submitted Repack that consumed it AND
@@ -304,9 +316,13 @@ def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8):
     ever being in them. Repeat from that output until nothing later applies.
 
     If the last repack has several same-article outputs, the one on the
-    Pick Order wins; otherwise it stops and asks rather than guessing."""
+    Pick Order wins; otherwise the worker's chosen_batch decides (one of the
+    outputs, or the batch that was repacked — i.e. this roll wasn't part of
+    it). With neither, BatchChoiceRequired goes back to the app with every
+    candidate so the worker can pick."""
     seen = {batch}
     path = [(batch, item_code)]
+    stop = False
     for _hop in range(max_hops):
         repacks = frappe.db.sql(
             """
@@ -350,20 +366,41 @@ def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8):
             outs = sorted(o for o in outs if o[0] not in seen)
             if not outs:
                 continue
+            if len(outs) > 1 and chosen_batch:
+                if chosen_batch == batch:
+                    # Worker says the roll is still in the batch that was
+                    # repacked — it wasn't part of this repack.
+                    stop = True
+                    break
+                picked = [o for o in outs if o[0] == chosen_batch]
+                if picked:
+                    outs = picked
             if len(outs) > 1 and allowed_batches:
                 outs = [o for o in outs if o[0] in allowed_batches] or outs
             if len(outs) > 1:
-                frappe.throw(_(
-                    "Roll {0}: batch {1} was repacked by {2} into more than one batch ({3}) "
-                    "— can't tell which one this roll is in. Add the right batch to the Pick Order."
-                ).format(roll_no, batch, se.name, ", ".join(b for b, _i in outs)))
+                raise BatchChoiceRequired(
+                    _(
+                        "Roll {0}: batch {1} was repacked by {2} into more than one batch ({3}) "
+                        "— select the batch this roll is in."
+                    ).format(roll_no, batch, se.name, ", ".join(b for b, _i in outs)),
+                    roll_no,
+                    _batch_candidates(
+                        [p for p in path if allowed_batches and p[0] in allowed_batches]
+                        + [(batch, item_code)] + outs,
+                        allowed_batches, se.name,
+                    ),
+                )
             nxt = outs[0]
             break
-        if not nxt:
+        if stop or not nxt:
             break
         batch, item_code = nxt
         seen.add(batch)
         path.append((batch, item_code))
+
+    # The worker's explicit choice wins over the plan.
+    if chosen_batch and any(p[0] == chosen_batch for p in path):
+        return path[-1]
 
     # If the Pick Order explicitly plans an earlier batch of this chain (not
     # the latest), honour the plan: use the latest batch that is on it.
@@ -374,7 +411,26 @@ def _latest_repack(roll_no, batch, item_code, allowed_batches=None, max_hops=8):
     return path[-1]
 
 
-def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
+def _batch_candidates(pairs, allowed_batches=None, repack=None):
+    """[(batch, item_code)] -> de-duplicated candidate dicts for the app's
+    batch picker, Pick Order batches first."""
+    allowed_batches = allowed_batches or ()
+    out, seen = [], set()
+    for b, item in pairs:
+        if not b or b in seen:
+            continue
+        seen.add(b)
+        out.append({
+            "batch": b,
+            "item_code": item or frappe.db.get_value("Batch", b, "item"),
+            "on_pick_order": b in allowed_batches,
+            "repack": repack,
+        })
+    out.sort(key=lambda c: not c["on_pick_order"])
+    return out
+
+
+def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None, chosen_batch=None):
     """Finds an old roll in a submitted QI Report Details' Roll Details.
 
     QI roll numbers are not unique across reports, so the batch printed on
@@ -431,10 +487,22 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
     # batch's item, so the Stock Entry moves the right batch + item.
     row.qi_batch = row.batch
     row.qi_item_code = row.item_code
-    latest_batch, latest_item = _latest_repack(roll_no, row.batch, row.item_code, allowed_batches)
+    latest_batch, latest_item = _latest_repack(
+        roll_no, row.batch, row.item_code, allowed_batches, chosen_batch=chosen_batch
+    )
     if latest_batch != row.batch:
         row.batch, row.item_code = latest_batch, latest_item
-    if allowed_batches and row.batch not in allowed_batches:
+    if chosen_batch:
+        # Only a batch from this roll's own repack family can be chosen.
+        if row.batch != chosen_batch:
+            if chosen_batch not in _repack_related_batches(row.qi_batch):
+                frappe.throw(_(
+                    "Batch {0} is not part of roll {1}'s repack chain (QI batch {2})"
+                ).format(chosen_batch, roll_no, row.qi_batch))
+            row.batch = chosen_batch
+            row.item_code = frappe.db.get_value("Batch", chosen_batch, "item") or row.item_code
+        row.batch_chosen = True
+    elif allowed_batches and row.batch not in allowed_batches:
         candidates = sorted(_repack_related_batches(row.batch) & set(allowed_batches))
         if batch_from_qr in candidates:
             candidates = [batch_from_qr]
@@ -442,10 +510,14 @@ def _get_qi_roll(roll_no, batch_from_qr, allowed_batches=None):
             row.batch = candidates[0]
             row.item_code = frappe.db.get_value("Batch", row.batch, "item") or row.item_code
         elif len(candidates) > 1:
-            frappe.throw(_(
-                "Roll {0} (QI batch {1}) was repacked into more than one batch on this "
-                "Pick Order ({2}) — can't tell which one this roll is in"
-            ).format(roll_no, row.batch, ", ".join(candidates)))
+            raise BatchChoiceRequired(
+                _(
+                    "Roll {0} (QI batch {1}) was repacked into more than one batch on this "
+                    "Pick Order ({2}) — select the batch this roll is in."
+                ).format(roll_no, row.batch, ", ".join(candidates)),
+                roll_no,
+                _batch_candidates([(c, None) for c in candidates], allowed_batches),
+            )
         # no candidates: leave as-is; _record_scan reports the batch mismatch
 
     uom = row.stock_uom or "Kgs"
@@ -537,6 +609,13 @@ def get_pick_order_detail(name):
         for uom, target in targets_by_uom.items()
     ]
 
+    planned_map = _planned_batch_map(
+        doc,
+        [r.batch_no for r in (doc.scanned_rolls or [])] + [r.batch for r in already_rolls],
+    )
+    for r in already_rolls:
+        r["planned_batch"] = planned_map.get(r.batch)
+
     scanned_rolls = [
         {
             "roll_no": r.roll_no,
@@ -547,6 +626,7 @@ def get_pick_order_detail(name):
             "uom": r.uom,
             "roll_weight": r.roll_weight,
             "qi_report": r.get("qi_report"),
+            "planned_batch": planned_map.get(r.batch_no),
         }
         for r in (doc.scanned_rolls or [])
     ]
@@ -657,7 +737,7 @@ def update_pick_order_execution(pick_order, source_warehouse=None, target_wareho
 
 
 @frappe.whitelist()
-def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
+def scan_pick_order_roll(pick_order, roll_no, source_warehouse, chosen_batch=None):
     """Validates a freely-scanned roll against this Assignment's rules —
     NOT a pre-assigned list (there isn't one): Project match against the
     target Work Order (for "To Work Order" picks) and batch match. The
@@ -669,7 +749,12 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     scanned_rolls child table — this is the persistence layer: nothing
     lives only in the browser anymore, so a worker who closes the app
     before submitting can reopen the same Assignment and pick up exactly
-    where they left off."""
+    where they left off.
+
+    If the roll's batch was repacked into several batches and the server
+    can't tell which one it's in, nothing is recorded: the response is
+    {"needs_batch_choice": True, "candidates": [...]} and the app asks the
+    worker to pick one, then calls again with chosen_batch."""
     doc = frappe.get_doc("Roll Pick Assignment", pick_order)
     _assert_assigned_to_me(doc)
 
@@ -686,7 +771,10 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     if roll_source == QI_SOURCE:
         allowed = {r.batch for r in (doc.batch_items or []) if r.batch}
         _assert_not_stale_client_qi_scan(roll_no, batch_from_qr, allowed)
-        roll = _get_qi_roll(roll_no, batch_from_qr, allowed)
+        try:
+            roll = _get_qi_roll(roll_no, batch_from_qr, allowed, chosen_batch=chosen_batch or None)
+        except BatchChoiceRequired as e:
+            return _batch_choice_response(e, source_warehouse)
         return _record_scan(doc, roll_no, roll, source_warehouse)
 
     roll = frappe.db.get_value(
@@ -759,6 +847,45 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse):
     return _record_scan(doc, roll_no, roll, source_warehouse)
 
 
+def _batch_choice_response(e, source_warehouse):
+    """BatchChoiceRequired -> the payload the app's batch picker shows, with
+    each candidate's current stock in the selected Source Warehouse."""
+    from pranera_knit.api.knit import _batch_qty_in_warehouse
+
+    for c in e.candidates:
+        try:
+            c["qty_in_warehouse"] = flt(
+                _batch_qty_in_warehouse(c["batch"], source_warehouse, c.get("item_code")), 3
+            )
+        except Exception:
+            c["qty_in_warehouse"] = None
+    return {
+        "needs_batch_choice": True,
+        "roll_no": e.roll_no,
+        "message": str(e),
+        "source_warehouse": source_warehouse,
+        "candidates": e.candidates,
+    }
+
+
+def _planned_batch_map(doc, batches):
+    """{scanned batch: Pick Order batch} for batches that aren't on the Pick
+    Order themselves but are a repack of exactly one batch that is (a batch
+    the worker chose in the picker). Lets the app count those rolls against
+    the planned batch's progress row."""
+    allowed = {r.batch for r in (doc.batch_items or []) if r.batch}
+    out = {}
+    if not allowed:
+        return out
+    for b in set(batches):
+        if not b or b in allowed:
+            continue
+        hit = sorted(_repack_related_batches(b) & allowed)
+        if len(hit) == 1:
+            out[b] = hit[0]
+    return out
+
+
 def _is_received_external_roll(roll):
     """True when the roll came from a Subcontracting / Purchase Order and
     its batch has been received against a submitted, non-cancelled
@@ -821,7 +948,11 @@ def _record_scan(doc, roll_no, roll, source_warehouse):
     # item code sitting in the warehouse.
     if doc.batch_items:
         allowed_batches = {r.batch for r in doc.batch_items if r.batch}
-        if not roll.batch or roll.batch not in allowed_batches:
+        chosen_repack_ok = (
+            roll.get("batch_chosen") and roll.batch
+            and (_repack_related_batches(roll.batch) & allowed_batches)
+        )
+        if not chosen_repack_ok and (not roll.batch or roll.batch not in allowed_batches):
             frappe.throw(_(
                 "Roll {0}'s batch {1} is not one of the batches specified for this "
                 "Pick Order ({2})"
@@ -905,6 +1036,7 @@ def _record_scan(doc, roll_no, roll, source_warehouse):
         "uom": roll.stock_uom or "Kgs",
         "roll_weight": roll.roll_weight,
         "qi_report": qi_report,
+        "planned_batch": _planned_batch_map(doc, [roll.batch]).get(roll.batch),
     }
 
     doc.append("scanned_rolls", {

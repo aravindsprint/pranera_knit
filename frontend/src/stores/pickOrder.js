@@ -119,8 +119,20 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
       p[field] += Number(qty) || 0
       p.rolls += 1
     }
-    for (const r of (order.value.already_picked_rolls || [])) add(r.batch, r.item_code, r.uom, 'alreadyQty', r.qty)
-    for (const r of scannedRolls.value) add(r.batch_no, r.item_code, r.uom, 'sessionQty', r.qty)
+    // A roll the worker assigned to a repacked batch (batch picker) counts
+    // against the Pick Order batch it was repacked from (planned_batch).
+    const plannedItem = {}
+    for (const b of (order.value.batch_items || [])) {
+      if (b.batch && b.item_code && !plannedItem[b.batch]) plannedItem[b.batch] = b.item_code
+    }
+    const viaPlan = (batch, item, plannedBatch) =>
+      plannedBatch ? [plannedBatch, plannedItem[plannedBatch] || item] : [batch, item]
+    for (const r of (order.value.already_picked_rolls || [])) {
+      add(...viaPlan(r.batch, r.item_code, r.planned_batch), r.uom, 'alreadyQty', r.qty)
+    }
+    for (const r of scannedRolls.value) {
+      add(...viaPlan(r.batch_no, r.item_code, r.planned_batch), r.uom, 'sessionQty', r.qty)
+    }
 
     // The same batch + item can be planned on several lines (one per
     // warehouse holding it, e.g. RPA-1033). Merge those into one target
@@ -215,7 +227,11 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
   // picks, and dedupe against both prior submitted sessions and this
   // in-progress one). Also blocks an obvious duplicate within this local
   // list before even calling the server.
-  async function scanRoll(scannedValue) {
+  // Returns the recorded roll, or — when the roll's batch was repacked into
+  // several batches — the server's { needs_batch_choice, candidates }
+  // payload, without recording anything. The page then shows the batch
+  // picker and calls scanRoll again with chosenBatch.
+  async function scanRoll(scannedValue, chosenBatch = null) {
     if (!order.value) throw new Error('No Pick Order loaded')
     if (!sourceWarehouse.value) throw new Error('Select a Source Warehouse first')
 
@@ -231,7 +247,8 @@ export const usePickOrderStore = defineStore('pickOrder', () => {
       throw new Error(`Roll ${rollNo} has already been scanned this session`)
     }
 
-    const result = await scanPickOrderRoll(order.value.name, raw, sourceWarehouse.value)
+    const result = await scanPickOrderRoll(order.value.name, raw, sourceWarehouse.value, chosenBatch)
+    if (result?.needs_batch_choice) return result
     scannedRolls.value = [...scannedRolls.value, result]
     return result
   }
