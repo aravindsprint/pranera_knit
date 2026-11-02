@@ -36,9 +36,15 @@ doctype_js = {
 # Keep those Server Scripts disabled (not deleted) as a reference backup.
 doc_events = {
     "Job Card": {
+        # Needle / sinker life: recount production for the machine (spares_life.py)
+        "on_submit": "pranera_knit.spares_life.on_job_card_submit",
         "before_cancel": "pranera_knit.job_card_events.on_before_cancel",
         "after_cancel":  "pranera_knit.job_card_events.on_after_cancel",
         "after_insert":  "pranera_knit.job_card_events.on_after_insert",
+    },
+    # Spare Items table (needle / sinker restriction + life) edited in Desk
+    "Workstation": {
+        "validate": "pranera_knit.spares_life.on_workstation_validate",
     },
     # Keeps each Roll's `warehouse` field in sync with where it actually
     # is after a Roll Wise Pick List transfer — scoped to only the Stock
@@ -173,4 +179,12 @@ override_whitelisted_methods = {
     # submit): same behaviour, plus an automatic MR/26/ top-up instead of a
     # negative-stock failure, with an email to the audit team.
     "knit_submit_roll_packing_list_v2": "pranera_knit.api.job_card_submit.submit_roll_packing_list_v2",
+}
+
+# Daily needle / sinker life sweep: recount production per machine and send the
+# 90% / max alerts that were missed by the Job Card hook (spares_life.py).
+scheduler_events = {
+    "daily": [
+        "pranera_knit.spares_life.check_all",
+    ],
 }

@@ -767,6 +767,9 @@ const SPARES_API = 'pranera_knit.api.spares_issue'
 export const getSparesIssueSetup = () =>
   call(`${SPARES_API}.get_setup`).then(r => r.message)
 
+export const getSparesMachine = (workstation) =>
+  call(`${SPARES_API}.get_machine`, { workstation }).then(r => r.message)
+
 export const getSpareStock = (warehouse) =>
   call(`${SPARES_API}.get_spare_stock`, { warehouse: warehouse || undefined }).then(r => r.message)
 

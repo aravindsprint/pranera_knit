@@ -15,7 +15,7 @@
 
         <!-- ── Success banner ── -->
         <div v-if="result" class="card result">
-          <div class="result__head"><i class="pi pi-check-circle"></i> Issued to {{ result.workstation }}</div>
+          <div class="result__head"><i class="pi pi-check-circle"></i> {{ result.issue_type === 'Full Set Change' ? 'Full set changed on' : 'Issued to' }} {{ result.workstation }}</div>
           <div class="result__docs">
             <div><span class="muted">Asset Repair</span> <b>{{ result.asset_repair }}</b></div>
             <div v-if="result.stock_entry"><span class="muted">Material Issue</span> <b>{{ result.stock_entry }}</b></div>
@@ -58,6 +58,31 @@
                 </button>
               </div>
             </div>
+
+            <!-- Needle / sinker life (tracked items only) -->
+            <div v-if="lifeItems.length" class="life">
+              <div class="form-label">Needle life since last full set</div>
+              <div v-for="l in lifeItems" :key="l.item_code" class="life__row">
+                <div class="life__top">
+                  <span class="life__code">{{ shortCode(l.item_code) }}</span>
+                  <span v-if="l.produced == null" class="muted small">Not started</span>
+                  <span v-else class="life__val" :class="'life__val--' + (l.level || 'ok').toLowerCase()">
+                    {{ fmtQty(l.produced) }} / {{ fmtQty(l.max_production) }} kg · {{ Math.round(l.pct) }}%
+                  </span>
+                </div>
+                <div v-if="l.produced != null" class="life__bar">
+                  <div class="life__fill" :class="'life__fill--' + (l.level || 'ok').toLowerCase()" :style="{ width: Math.min(l.pct, 100) + '%' }"></div>
+                </div>
+                <div class="muted small">
+                  <template v-if="l.last_full_set_on">Since {{ fmtDate(l.last_full_set_on) }} · </template>
+                  Full set {{ l.set_qty }} pcs · store {{ fmtQty(l.qty) }}
+                  <b v-if="l.set_qty && l.qty < l.set_qty" class="short">short {{ l.set_qty - l.qty }}</b>
+                </div>
+              </div>
+              <div v-if="lifeItems.some(l => l.produced == null)" class="muted small">
+                "Not started": record a Full Set Change here, or enter Last Full Set Change in Workstation → Spare Items.
+              </div>
+            </div>
           </div>
         </div>
 
@@ -65,13 +90,27 @@
         <div class="card" :class="{ 'card--dim': !machineRow }">
           <div class="section-title section-title--row">
             <span>2 · Needles / Sinkers</span>
-            <button class="btn-icon" :disabled="stockLoading" title="Refresh stock" @click="loadStock">
+            <button class="btn-icon" :disabled="stockLoading || !machine" title="Refresh stock" @click="loadMachine">
               <i class="pi" :class="stockLoading ? 'pi-spin pi-spinner' : 'pi-refresh'"></i>
             </button>
           </div>
-          <div class="muted small src">From {{ setup.source_warehouse }}</div>
+          <div class="muted small src">From {{ setup.source_warehouse }}<span v-if="machine"> · only items allowed on {{ machine }}</span></div>
 
-          <div v-if="frequentItems.length" class="frequent">
+          <div v-if="machine && machineData && machineData.can_full_set" class="segmented mode">
+            <button v-for="t in setup.issue_types" :key="t" class="segmented__btn" :class="{ 'segmented__btn--active': issueType === t }" @click="setIssueType(t)">
+              {{ t === 'Full Set Change' ? 'Full Set Change' : 'Broken / Bent' }}
+            </button>
+          </div>
+          <div v-if="issueType === 'Full Set Change'" class="alert alert-info small-alert">
+            <i class="pi pi-info-circle"></i> Replaces the whole set — the life count for the items you issue restarts at 0 kg.
+          </div>
+
+          <div v-if="!machine" class="muted empty">Select a machine to see the needles / sinkers allowed on it.</div>
+          <div v-else-if="machineData && !machineData.mapped" class="alert alert-warning">
+            <i class="pi pi-exclamation-circle"></i> No needles / sinkers are set up for {{ machine }}. Ask the knitting team to fill Workstation → Spare Items.
+          </div>
+
+          <div v-if="frequentItems.length && issueType !== 'Full Set Change'" class="frequent">
             <div class="form-label">Often used on {{ machine }}</div>
             <div class="frequent__chips">
               <button v-for="code in frequentItems" :key="code" class="chip chip--btn" :disabled="!stockByCode[code]" @click="addItem(code)">
@@ -80,7 +119,7 @@
             </div>
           </div>
 
-          <div class="filters">
+          <div v-if="stock.length > 4" class="filters">
             <input v-model="search" class="form-input" type="search" placeholder="Search needle no., item code…" />
             <div class="segmented">
               <button v-for="k in ['All', 'Needle', 'Sinker']" :key="k" class="segmented__btn" :class="{ 'segmented__btn--active': kind === k }" @click="kind = k">{{ k }}</button>
@@ -88,17 +127,21 @@
           </div>
 
           <div v-if="stockError" class="alert alert-error"><i class="pi pi-exclamation-triangle"></i> {{ stockError }}</div>
-          <div v-else-if="!filteredStock.length && !stockLoading" class="muted empty">No matching needles / sinkers in stock.</div>
+          <div v-else-if="machine && machineData?.mapped && !filteredStock.length && !stockLoading" class="muted empty">No matching needles / sinkers.</div>
 
           <div class="stock-list">
-            <div v-for="it in filteredStock" :key="it.item_code" class="stock-row" :class="{ 'stock-row--in': cart[it.item_code] }">
+            <div v-for="it in filteredStock" :key="it.item_code" class="stock-row" :class="{ 'stock-row--in': cart[it.item_code], 'stock-row--out': !it.qty }">
               <div class="stock-row__main" @click="addItem(it.item_code)">
                 <div class="stock-row__top">
                   <span class="kind" :class="'kind--' + it.kind.toLowerCase()">{{ it.kind }}</span>
                   <span class="stock-row__code">{{ shortCode(it.item_code) }}</span>
                   <span v-if="it.has_batch_no" class="kind kind--batch">Batch</span>
+                  <span v-if="it.level" class="kind" :class="'kind--' + it.level.toLowerCase()">{{ it.level === 'Max' ? 'Life over' : 'Life ' + Math.round(it.pct) + '%' }}</span>
                 </div>
                 <div class="stock-row__name">{{ it.item_name }}</div>
+                <div v-if="issueType === 'Full Set Change' && it.set_qty" class="stock-row__set" :class="{ short: it.qty < it.set_qty }">
+                  Full set {{ it.set_qty }} pcs<span v-if="it.qty < it.set_qty"> · store short by {{ it.set_qty - it.qty }}</span>
+                </div>
               </div>
               <div class="stock-row__side">
                 <div class="stock-row__qty">{{ fmtQty(it.qty) }} <small>{{ it.stock_uom }}</small></div>
@@ -107,7 +150,7 @@
                   <input v-model.number="cart[it.item_code]" type="number" inputmode="numeric" min="1" :max="it.qty" @blur="clampQty(it.item_code)" />
                   <button @click="step(it.item_code, 1)"><i class="pi pi-plus"></i></button>
                 </div>
-                <button v-else class="btn btn-outline btn-add" :disabled="!machineRow" @click="addItem(it.item_code)">Add</button>
+                <button v-else class="btn btn-outline btn-add" :disabled="!machineRow || !it.qty" @click="addItem(it.item_code)">{{ it.qty ? 'Add' : 'No stock' }}</button>
               </div>
             </div>
           </div>
@@ -115,8 +158,8 @@
 
         <!-- ── 3. Reason + submit ── -->
         <div class="card" :class="{ 'card--dim': !cartRows.length }">
-          <div class="section-title">3 · Reason</div>
-          <div class="reasons">
+          <div class="section-title">3 · {{ issueType === 'Full Set Change' ? 'Confirm' : 'Reason' }}</div>
+          <div v-if="issueType !== 'Full Set Change'" class="reasons">
             <button v-for="r in setup.reasons" :key="r" class="chip chip--btn" :class="{ 'chip--active': reason === r }" @click="reason = r">{{ r }}</button>
           </div>
           <label class="form-label" style="margin-top:12px">Remarks</label>
@@ -134,7 +177,7 @@
           <div v-if="submitError" class="alert alert-error" style="margin-top:12px"><i class="pi pi-exclamation-triangle"></i> {{ submitError }}</div>
 
           <button class="btn btn-primary btn-full btn-lg" style="margin-top:14px" :disabled="!canSubmit" @click="confirming = true">
-            <i class="pi pi-send"></i> Issue to {{ machine || 'machine' }}
+            <i class="pi pi-send"></i> {{ issueType === 'Full Set Change' ? 'Change full set on' : 'Issue to' }} {{ machine || 'machine' }}
           </button>
           <div v-if="blockReason" class="muted small center" style="margin-top:8px">{{ blockReason }}</div>
         </div>
@@ -146,7 +189,7 @@
           <div v-else-if="!recent.length" class="muted small">No needle / sinker issues recorded for this machine yet.</div>
           <div v-for="r in recent" :key="r.name" class="recent">
             <div class="recent__top">
-              <b>{{ r.name }}</b>
+              <b>{{ r.name }} <span v-if="r.issue_type === 'Full Set Change'" class="chip chip--set">Full set</span></b>
               <span class="muted small">{{ fmtDate(r.completion_date) }}</span>
             </div>
             <div class="recent__items">
@@ -161,8 +204,8 @@
     <!-- ── Confirm sheet ── -->
     <div v-if="confirming" class="sheet-backdrop" @click.self="confirming = false">
       <div class="sheet">
-        <div class="sheet__title">Issue to {{ machine }}?</div>
-        <div class="muted small">Asset {{ machineRow?.asset }} · {{ reason }}</div>
+        <div class="sheet__title">{{ issueType === 'Full Set Change' ? 'Full set change on' : 'Issue to' }} {{ machine }}?</div>
+        <div class="muted small">Asset {{ machineRow?.asset }} · {{ issueType === 'Full Set Change' ? 'life count restarts at 0 kg' : reason }}</div>
         <div class="sheet__list">
           <div v-for="r in cartRows" :key="r.item_code" class="summary__row">
             <span>{{ shortCode(r.item_code) }}</span><b>{{ r.qty }} pcs</b>
@@ -185,7 +228,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
-  getSparesIssueSetup, getSpareStock, searchMachineAssets, linkMachineAsset,
+  getSparesIssueSetup, getSparesMachine, searchMachineAssets, linkMachineAsset,
   getRecentSpareIssues, issueSpares,
 } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
@@ -194,7 +237,7 @@ import AutoComplete from '@/components/AutoComplete.vue'
 const auth = useAuthStore()
 const route = useRoute()
 
-const setup = reactive({ machines: [], reasons: [], source_warehouse: '', can_change_asset: false, can_issue: false })
+const setup = reactive({ machines: [], reasons: [], issue_types: [], source_warehouse: '', can_change_asset: false, can_issue: false })
 const setupLoading = ref(true)
 const setupError = ref('')
 
@@ -204,7 +247,13 @@ const assetPick = ref('')
 const changingAsset = ref(false)
 const linking = ref(false)
 
-const stock = ref([])
+const machineData = ref(null)
+const issueType = ref('Broken / Bent Replacement')
+const stock = computed(() => {
+  const items = machineData.value?.items || []
+  return issueType.value === 'Full Set Change' ? items.filter(i => i.track_life) : items
+})
+const lifeItems = computed(() => (machineData.value?.items || []).filter(i => i.track_life))
 const stockLoading = ref(false)
 const stockError = ref('')
 const search = ref('')
@@ -251,7 +300,7 @@ const blockReason = computed(() => {
   if (!cartRows.value.length) return 'Add at least one needle / sinker.'
   if (cartRows.value.some(r => r.qty > (stockByCode.value[r.item_code]?.qty || 0) || r.qty !== Math.floor(r.qty)))
     return 'A quantity is more than the stock, or not a whole number.'
-  if (!reason.value) return 'Pick a reason.'
+  if (issueType.value !== 'Full Set Change' && !reason.value) return 'Pick a reason.'
   return ''
 })
 const canSubmit = computed(() => !blockReason.value && !submitting.value)
@@ -266,22 +315,34 @@ onMounted(async () => {
   } finally {
     setupLoading.value = false
   }
-  loadStock()
   searchMachineAssets().then(a => { assets.value = a }).catch(() => {})
   const q = String(route.query.machine || '').toUpperCase()
   if (q && setup.machines.some(m => m.workstation === q)) { machine.value = q; onMachinePicked(q) }
 })
 
-async function loadStock() {
+async function loadMachine() {
+  if (!machine.value) { machineData.value = null; return }
+  const ws = machine.value
   stockLoading.value = true
   stockError.value = ''
   try {
-    stock.value = (await getSpareStock(setup.source_warehouse)).items || []
+    const d = await getSparesMachine(ws)
+    if (machine.value === ws) {
+      machineData.value = d
+      if (!d.can_full_set) issueType.value = 'Broken / Bent Replacement'
+      Object.keys(cart).forEach(k => { if (!d.items.some(i => i.item_code === k)) delete cart[k] })
+    }
   } catch (e) {
     stockError.value = e.message
   } finally {
     stockLoading.value = false
   }
+}
+
+function setIssueType(t) {
+  if (issueType.value === t) return
+  issueType.value = t
+  Object.keys(cart).forEach(k => delete cart[k])
 }
 
 async function loadRecent() {
@@ -300,6 +361,10 @@ async function loadRecent() {
 }
 
 function onMachinePicked() {
+  machineData.value = null
+  issueType.value = 'Broken / Bent Replacement'
+  Object.keys(cart).forEach(k => delete cart[k])
+  loadMachine()
   changingAsset.value = false
   assetPick.value = ''
   submitError.value = ''
@@ -333,8 +398,10 @@ async function doLinkAsset() {
 
 // ── cart ──
 function addItem(code) {
-  if (!machineRow.value || !stockByCode.value[code]) return
-  if (!cart[code]) cart[code] = 1
+  const it = stockByCode.value[code]
+  if (!machineRow.value || !it || !it.qty) return
+  if (cart[code]) return
+  cart[code] = issueType.value === 'Full Set Change' && it.set_qty ? Math.min(it.set_qty, it.qty) : 1
 }
 function removeItem(code) { delete cart[code] }
 function step(code, d) {
@@ -359,7 +426,8 @@ async function submit() {
       workstation: machineRow.value.workstation,
       asset: machineRow.value.asset,
       items: cartRows.value.map(r => ({ item_code: r.item_code, qty: r.qty })),
-      reason: reason.value,
+      reason: issueType.value === 'Full Set Change' ? undefined : reason.value,
+      issue_type: issueType.value,
       remarks: remarks.value || undefined,
     })
     result.value = r
@@ -367,7 +435,8 @@ async function submit() {
     remarks.value = ''
     confirming.value = false
     window.scrollTo({ top: 0, behavior: 'smooth' })
-    loadStock()
+    issueType.value = 'Broken / Bent Replacement'
+    loadMachine()
     loadRecent()
   } catch (e) {
     submitError.value = e.message
@@ -427,6 +496,26 @@ function fmtDate(d) {
 .asset__actions { display: flex; gap: 8px; justify-content: flex-end; }
 
 .frequent { margin-bottom: 12px; }
+.mode { margin-bottom: 10px; }
+.small-alert { font-size: 12px; padding: 8px 12px; }
+.life { display: flex; flex-direction: column; gap: 10px; border-top: 1px dashed var(--slate-200); padding-top: 10px; }
+.life__row { display: flex; flex-direction: column; gap: 4px; }
+.life__top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.life__code { font-weight: 700; font-size: 13px; }
+.life__val { font-size: 12px; font-weight: 700; color: var(--emerald-700); white-space: nowrap; }
+.life__val--warning { color: var(--amber-600); }
+.life__val--max { color: var(--red-600); }
+.life__bar { height: 6px; background: var(--slate-100); border-radius: 999px; overflow: hidden; }
+.life__fill { height: 100%; background: var(--emerald-700); border-radius: 999px; }
+.life__fill--warning { background: var(--amber-600); }
+.life__fill--max { background: var(--red-600); }
+.short { color: var(--red-600); }
+.stock-row--out { opacity: 0.55; }
+.stock-row__set { font-size: 12px; font-weight: 600; color: var(--green-700); margin-top: 3px; }
+.stock-row__set.short { color: var(--red-600); }
+.kind--warning { background: var(--amber-100); color: var(--amber-600); }
+.kind--max { background: var(--red-100); color: var(--red-600); }
+.chip--set { background: var(--blue-100); color: var(--blue-600); font-size: 10px; padding: 2px 8px; margin-left: 6px; }
 .frequent__chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .filters { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .segmented { display: flex; background: var(--slate-100); border-radius: var(--radius-md); padding: 3px; }

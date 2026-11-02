@@ -30,6 +30,13 @@ readable message instead of a half-way PermissionError.
 Batch-tracked needles: no Serial and Batch Bundle is set on the consumed
 rows; Stock Settings "auto create serial and batch bundle for outward"
 (FIFO) picks the batches when the Material Issue is submitted.
+
+Restriction + life (pranera_knit/spares_life.py): a machine can only be
+issued the needles / sinkers in its Workstation "Spare Items" table. Two
+issue types:
+  * Broken / Bent Replacement — a few pieces; the life count carries on.
+  * Full Set Change — only items with Track Life (SJ / IL machines); resets
+    that item's life count (Last Full Set Change = now, alerts re-armed).
 """
 import json
 import re
@@ -38,6 +45,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, flt, get_datetime, now_datetime
 
+from pranera_knit import spares_life
 from pranera_knit.page_access import denied_pages
 
 PAGE_KEY = "spares-issue"
@@ -52,6 +60,9 @@ MACHINE_ASSET_CATEGORIES = (
     "PLANT & MACHINERY/FLAT BED KNITTING MACHINE",
 )
 MANAGER_ROLES = {"System Manager", "Manufacturing Manager", "Stock Manager"}
+ISSUE_BROKEN = "Broken / Bent Replacement"
+ISSUE_FULL_SET = "Full Set Change"
+ISSUE_TYPES = [ISSUE_BROKEN, ISSUE_FULL_SET]
 REASONS = [
     "Needle breakage",
     "Sinker breakage",
@@ -141,9 +152,63 @@ def get_setup():
         "source_warehouse": SOURCE_WAREHOUSE,
         "machines": _machine_rows(),
         "reasons": REASONS,
+        "issue_types": ISSUE_TYPES,
+        "warn_pct": spares_life.warn_pct(),
         "can_change_asset": _is_manager(),
         "can_issue": bool(frappe.has_permission("Stock Entry", "create")
                           and frappe.has_permission("Stock Entry", "submit")),
+    }
+
+
+@frappe.whitelist()
+def get_machine(workstation, warehouse=None):
+    """The needles / sinkers this machine may be issued (its Spare Items table),
+    with spare-store stock and life status for the tracked ones."""
+    _check_page_access()
+    if not MACHINE_RE.match(workstation or "") or not frappe.db.exists("Workstation", workstation):
+        frappe.throw(_("Workstation {0} not found").format(workstation))
+    warehouse = warehouse or SOURCE_WAREHOUSE
+    rows = spares_life.spare_rows(workstation)
+    life = {st["item_code"]: st for st in spares_life.life_status(workstation, rows)}
+    codes = [r.item_code for r in rows]
+    items = {}
+    if codes:
+        for i in frappe.get_all("Item", filters={"name": ["in", codes]},
+                                fields=["name", "item_name", "stock_uom", "has_batch_no", "disabled"]):
+            items[i.name] = i
+    bins = {}
+    if codes:
+        for b in frappe.get_all("Bin", filters={"warehouse": warehouse, "item_code": ["in", codes]},
+                                fields=["item_code", "actual_qty", "valuation_rate"]):
+            bins[b.item_code] = b
+    out = []
+    for r in rows:
+        it = items.get(r.item_code) or frappe._dict()
+        b = bins.get(r.item_code) or frappe._dict()
+        lf = life.get(r.item_code) or {}
+        out.append({
+            "item_code": r.item_code,
+            "item_name": it.item_name,
+            "stock_uom": it.stock_uom or "Pcs",
+            "has_batch_no": cint(it.has_batch_no),
+            "disabled": cint(it.disabled),
+            "kind": _kind(r.item_code),
+            "qty": max(flt(b.actual_qty), 0),
+            "valuation_rate": flt(b.valuation_rate, 4),
+            "set_qty": cint(r.set_qty),
+            "track_life": cint(r.track_life),
+            "max_production": flt(lf.get("max_production") or r.max_production),
+            "last_full_set_on": r.last_full_set_on,
+            "produced": lf.get("produced"),
+            "pct": lf.get("pct"),
+            "level": lf.get("level") or "",
+        })
+    return {
+        "workstation": workstation,
+        "warehouse": warehouse,
+        "mapped": bool(rows),
+        "can_full_set": any(cint(r.track_life) for r in rows),
+        "items": out,
     }
 
 
@@ -226,6 +291,8 @@ def get_recent_issues(workstation=None, limit=15):
             filters["asset"] = asset
     fields = ["name", "asset", "asset_name", "completion_date", "description",
               "total_repair_cost", "owner"]
+    if _has_custom_field("Asset Repair", "custom_issue_type"):
+        fields.append("custom_issue_type")
     if has_ws:
         fields.append("custom_workstation")
     repairs = frappe.get_all("Asset Repair", filters=filters, fields=fields,
@@ -251,6 +318,7 @@ def get_recent_issues(workstation=None, limit=15):
         r["stock_entry"] = stock_entries.get(r.name)
         r["issued_by"] = user_names[r.owner]
         r["workstation"] = r.get("custom_workstation")
+        r["issue_type"] = r.get("custom_issue_type") or ISSUE_BROKEN
 
     frequent = []
     if workstation:
@@ -266,7 +334,7 @@ def get_recent_issues(workstation=None, limit=15):
 
 @frappe.whitelist()
 def issue_spares(workstation, items, asset=None, reason=None, remarks=None, failure_date=None,
-                 warehouse=None):
+                 warehouse=None, issue_type=None):
     """Create + submit an Asset Repair (stock consumption) for the machine.
 
     items: JSON list of {item_code, qty}
@@ -309,6 +377,21 @@ def issue_spares(workstation, items, asset=None, reason=None, remarks=None, fail
     if not merged:
         frappe.throw(_("Add at least one needle / sinker with a quantity"))
 
+    issue_type = issue_type or ISSUE_BROKEN
+    if issue_type not in ISSUE_TYPES:
+        frappe.throw(_("Unknown issue type {0}").format(issue_type))
+    allowed = {r.item_code: r for r in spares_life.spare_rows(workstation)}
+    if not allowed:
+        frappe.throw(_("No needles / sinkers are set up for {0}. Ask the knitting team to fill "
+                       "Workstation → Spare Items first.").format(workstation))
+    for code in merged:
+        if code not in allowed:
+            frappe.throw(_("{0} is not allowed on {1}. Only the needles / sinkers in its Spare Items "
+                           "table can be issued.").format(code, workstation))
+        if issue_type == ISSUE_FULL_SET and not cint(allowed[code].track_life):
+            frappe.throw(_("{0} on {1} is not a full-set item (Track Life is off) — use {2}.")
+                         .format(code, workstation, ISSUE_BROKEN))
+
     stock = {r.item_code: r for r in _stock_rows(warehouse)}
     for code, qty in merged.items():
         if qty != int(qty):
@@ -323,7 +406,10 @@ def issue_spares(workstation, items, asset=None, reason=None, remarks=None, fail
     if when > now:
         when = now
     reason = reason if reason in REASONS else (reason or "Needle / sinker replacement")
-    lines = [f"{reason} on {workstation}"]
+    if issue_type == ISSUE_FULL_SET:
+        reason = ISSUE_FULL_SET
+    lines = [f"{issue_type}: {reason} on {workstation}" if issue_type != ISSUE_FULL_SET
+             else f"{ISSUE_FULL_SET} on {workstation}"]
     if remarks:
         lines.append(remarks.strip())
     lines.append("Issued from Knit App by " + (frappe.db.get_value("User", frappe.session.user, "full_name")
@@ -349,6 +435,8 @@ def issue_spares(workstation, items, asset=None, reason=None, remarks=None, fail
     })
     if _has_custom_field("Asset Repair", "custom_workstation"):
         repair.custom_workstation = workstation
+    if _has_custom_field("Asset Repair", "custom_issue_type"):
+        repair.custom_issue_type = issue_type
 
     # Lets the Stock Entry before_insert hook give the Material Issue the
     # MI/<yy>/ series (see spares_issue_events.py).
@@ -360,8 +448,12 @@ def issue_spares(workstation, items, asset=None, reason=None, remarks=None, fail
     finally:
         frappe.flags.knit_spares_issue = False
 
+    if issue_type == ISSUE_FULL_SET:
+        spares_life.mark_full_set(workstation, list(merged), repair.completion_date, repair.name)
+
     stock_entry = frappe.db.get_value("Stock Entry", {"asset_repair": repair.name, "docstatus": 1}, "name")
     return {
+        "issue_type": issue_type,
         "asset_repair": repair.name,
         "stock_entry": stock_entry,
         "total_value": flt(repair.total_repair_cost, 2),
