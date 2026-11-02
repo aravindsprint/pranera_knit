@@ -25,6 +25,7 @@ PAGES = [
     ("home", "Job Cards", "/knit-app/home", "Production"),
     ("roll-wise-pick-list", "Roll-wise Pick List", "/knit-app/roll-wise-pick-list", "Production"),
     ("my-pick-orders", "My Pick Orders", "/knit-app/my-pick-orders", "Production"),
+    ("create-pick-order", "Create Pick Order", "/knit-app/create-pick-order", "Production"),
     ("outward-request", "Outward Request", "/knit-app/outward-request", "Production"),
     ("vehicle-gate-entry", "Vehicle Gate Entry", "/knit-app/vehicle-gate-entry", "Production"),
     ("spares-issue", "Needle / Sinker Issue", "/knit-app/spares-issue", "Production"),

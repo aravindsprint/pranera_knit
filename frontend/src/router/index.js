@@ -40,6 +40,7 @@ const routes = [
   { path: '/knit-app/vehicle-gate-entry', component: () => import('@/pages/vehicle-gate-entry/VehicleGateEntryPage.vue') },
   { path: '/knit-app/outward-request', component: () => import('@/pages/outward-request/OutwardRequestPage.vue') },
   { path: '/knit-app/spares-issue', component: () => import('@/pages/spares-issue/SparesIssuePage.vue') },
+  { path: '/knit-app/create-pick-order', component: () => import('@/pages/create-pick-order/CreatePickOrderPage.vue') },
   { path: '/knit-app/my-pick-orders', component: () => import('@/pages/my-pick-orders/MyPickOrdersPage.vue') },
   { path: '/knit-app/roll-wise-pick-order-execution', component: () => import('@/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue') },
   { path: '/knit-app/production-roll-summary', component: () => import('@/pages/production-roll-summary/ProductionRollSummaryPage.vue') },
