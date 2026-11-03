@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import {
-  syncWarehouses, searchWorkOrdersForPickOrder, searchSalesOrdersForPickOrder,
+  getPickOrderWarehouses, searchWorkOrdersForPickOrder, searchSalesOrdersForPickOrder,
   searchBatchesForPickOrder, searchAssignableUsers, createPickOrder,
 } from '@/api/frappe'
 
@@ -29,7 +29,11 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   // set_pick_qty_from_batch_items() on the Roll Pick Assignment doctype.
   const batchItems = ref([{ batch: '', qty: null }])
 
-  const warehouses = ref([])
+  // Source: the user's building only; target: every warehouse (see
+  // get_pick_order_warehouses). { label, value } for <AutoComplete>.
+  const sourceWarehouses = ref([])
+  const targetWarehouses = ref([])
+  const userBuilding = ref('')
   const workOrders = ref([])
   const salesOrders = ref([])
   const batches = ref([])
@@ -77,8 +81,11 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
     loadingLookups.value = true
     error.value = ''
     try {
-      const [wh, wo] = await Promise.all([syncWarehouses(), searchWorkOrdersForPickOrder('')])
-      warehouses.value = wh
+      const [wh, wo] = await Promise.all([getPickOrderWarehouses(), searchWorkOrdersForPickOrder('')])
+      const opt = n => ({ label: n, value: n })
+      sourceWarehouses.value = (wh.source || []).map(opt)
+      targetWarehouses.value = (wh.target || []).map(opt)
+      userBuilding.value = wh.building || ''
       workOrders.value = wo
     } catch (err) {
       error.value = err.message
@@ -172,7 +179,7 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   return {
     pickType, documentName, salesOrder, sourceWarehouse, targetWarehouse, pickQty, assignedTo, remarks, rollSource,
     batchItems, batchItemsTotal, restrictToBatches,
-    warehouses, workOrders, salesOrders, batches, users,
+    sourceWarehouses, targetWarehouses, userBuilding, workOrders, salesOrders, batches, users,
     loadingLookups, submitting, error,
     needsDocument, needsSalesOrder, needsBatchItems, offersBatchRestriction, canSubmit,
     loadLookups, searchUsers, searchSalesOrders, searchBatches,

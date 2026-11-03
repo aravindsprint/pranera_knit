@@ -75,3 +75,21 @@ def building_warehouses_for_batch(doctype, txt, searchfield, start, page_len, fi
         },
     )
     return [(name, str(flt(qty, 3)) if flt(qty) > 0 else "0") for name, qty in rows]
+
+
+@frappe.whitelist()
+def get_pick_order_warehouses():
+    """Knit App Create Pick Order warehouse lists: `source` = leaf, enabled
+    warehouses of the user's building; `target` = every leaf, enabled
+    warehouse (a pick can land in another building, e.g. a subcontractor's
+    job-work warehouse)."""
+    building = user_building()
+    all_wh = frappe.get_all(
+        "Warehouse",
+        filters={"is_group": 0, "disabled": 0},
+        fields=["name", "building"],
+        order_by="name asc",
+        limit_page_length=0,
+    )
+    source = [w.name for w in all_wh if not building or w.building == building]
+    return {"building": building, "source": source, "target": [w.name for w in all_wh]}
