@@ -61,20 +61,22 @@
 
       <div class="card">
         <label class="form-label">Source Warehouse <span class="req">*</span></label>
-        <select v-model="store.sourceWarehouse" class="form-input">
-          <option value="" disabled>Select warehouse</option>
-          <option v-for="w in store.warehouses" :key="w.name" :value="w.name">{{ w.warehouse_name || w.name }}</option>
-        </select>
+        <AutoComplete
+          v-model="store.sourceWarehouse"
+          :options="store.sourceWarehouses"
+          placeholder="Search warehouse..."
+        />
         <div class="hint-text">
           <i class="pi pi-info-circle"></i>
-          <span>This is a starting default — the worker can adjust it in the app if needed before scanning.</span>
+          <span><template v-if="store.userBuilding">Warehouses of your building ({{ store.userBuilding }}). </template>This is a starting default — the worker can adjust it in the app if needed before scanning.</span>
         </div>
 
         <label class="form-label" style="margin-top:14px">Target Warehouse <span class="req">*</span></label>
-        <select v-model="store.targetWarehouse" class="form-input">
-          <option value="" disabled>Select warehouse</option>
-          <option v-for="w in store.warehouses" :key="w.name" :value="w.name">{{ w.warehouse_name || w.name }}</option>
-        </select>
+        <AutoComplete
+          v-model="store.targetWarehouse"
+          :options="store.targetWarehouses"
+          placeholder="Search warehouse..."
+        />
       </div>
 
       <div class="card" v-if="store.needsBatchItems">
@@ -156,6 +158,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useCreatePickOrderStore } from '@/stores/createPickOrder'
 import AppHeader from '@/components/AppHeader.vue'
+import AutoComplete from '@/components/AutoComplete.vue'
 
 const auth = useAuthStore()
 const store = useCreatePickOrderStore()
