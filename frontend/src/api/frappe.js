@@ -645,6 +645,16 @@ export const searchBatchesForPickOrder = (txt) =>
 export const searchAssignableUsers = (txt) =>
   call('pranera_knit.api.pick_order.search_assignable_users', { txt }).then(r => r.message || [])
 
+// { building, source: [...], target: [...] } — source limited to the user's
+// Assigned Building (all for System Managers / users without one).
+export const getPickOrderWarehouses = () =>
+  call('pranera_knit.api.warehouse_query.get_pick_order_warehouses').then(r => r.message)
+
+// Batch Items row on Create Pick Order: { item, stock_uom, building,
+// warehouses: [{ warehouse, qty }] } — the user's building, stock first.
+export const getBatchPickInfo = (batch) =>
+  call('pranera_knit.api.warehouse_query.get_batch_pick_info', { batch }).then(r => r.message)
+
 export const createPickOrder = (payload) =>
   call('pranera_knit.api.pick_order.create_pick_order', payload).then(r => r.message)
 

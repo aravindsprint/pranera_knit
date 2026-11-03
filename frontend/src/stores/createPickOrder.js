@@ -1,9 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import {
-  syncWarehouses, searchWorkOrdersForPickOrder, searchSalesOrdersForPickOrder,
-  searchBatchesForPickOrder, searchAssignableUsers, createPickOrder,
+  getPickOrderWarehouses, searchWorkOrdersForPickOrder, searchSalesOrdersForPickOrder,
+  searchBatchesForPickOrder, searchAssignableUsers, createPickOrder, getBatchPickInfo,
 } from '@/api/frappe'
+
+// One Batch Items row. item / uom / whOptions come from getBatchPickInfo
+// once a batch is chosen; warehouse is the planning hint saved on the row.
+function newBatchRow() {
+  return { batch: '', qty: null, warehouse: '', item: '', uom: '', whOptions: [], infoFor: '', loading: false, error: '' }
+}
 
 export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   const pickType = ref('')
@@ -27,9 +33,13 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   // restrictToBatches is on) build pick_qty from these rows instead of a
   // manually-entered target — mirrors the batch_items child table +
   // set_pick_qty_from_batch_items() on the Roll Pick Assignment doctype.
-  const batchItems = ref([{ batch: '', qty: null }])
+  const batchItems = ref([newBatchRow()])
 
-  const warehouses = ref([])
+  // Source: the user's building only; target: every warehouse (see
+  // get_pick_order_warehouses). { label, value } for <AutoComplete>.
+  const sourceWarehouses = ref([])
+  const targetWarehouses = ref([])
+  const userBuilding = ref('')
   const workOrders = ref([])
   const salesOrders = ref([])
   const batches = ref([])
@@ -77,13 +87,51 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
     loadingLookups.value = true
     error.value = ''
     try {
-      const [wh, wo] = await Promise.all([syncWarehouses(), searchWorkOrdersForPickOrder('')])
-      warehouses.value = wh
+      const [wh, wo] = await Promise.all([getPickOrderWarehouses(), searchWorkOrdersForPickOrder('')])
+      const opt = n => ({ label: n, value: n })
+      sourceWarehouses.value = (wh.source || []).map(opt)
+      targetWarehouses.value = (wh.target || []).map(opt)
+      userBuilding.value = wh.building || ''
       workOrders.value = wo
     } catch (err) {
       error.value = err.message
     } finally {
       loadingLookups.value = false
+    }
+  }
+
+  // Fills a row's item, UOM and warehouse options for its batch, and
+  // defaults the warehouse: the Source Warehouse when it holds this batch,
+  // else the warehouse holding the most of it, else the Source Warehouse.
+  async function loadBatchInfo(row) {
+    const batch = (row.batch || '').trim()
+    if (!batch || batch === row.infoFor) return
+    row.loading = true
+    row.error = ''
+    try {
+      const info = await getBatchPickInfo(batch)
+      if ((row.batch || '').trim() !== batch) return   // changed meanwhile
+      row.infoFor = batch
+      row.item = info.item || ''
+      row.uom = info.stock_uom || ''
+      const fmtQty = q => (Number(q) || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })
+      row.whOptions = (info.warehouses || []).map(w => ({
+        value: w.warehouse,
+        label: w.qty > 0 ? `${w.warehouse} · ${fmtQty(w.qty)} ${row.uom}` : w.warehouse,
+      }))
+      const held = (info.warehouses || []).filter(w => w.qty > 0)
+      if (!row.warehouse || !row.whOptions.some(o => o.value === row.warehouse)) {
+        row.warehouse = held.find(w => w.warehouse === sourceWarehouse.value)?.warehouse
+          || held[0]?.warehouse || sourceWarehouse.value || ''
+      }
+    } catch (err) {
+      row.infoFor = ''
+      row.item = ''
+      row.uom = ''
+      row.whOptions = []
+      row.error = err.message
+    } finally {
+      row.loading = false
     }
   }
 
@@ -112,12 +160,12 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
   }
 
   function addBatchItemRow() {
-    batchItems.value = [...batchItems.value, { batch: '', qty: null }]
+    batchItems.value = [...batchItems.value, newBatchRow()]
   }
 
   function removeBatchItemRow(index) {
     if (batchItems.value.length === 1) {
-      batchItems.value = [{ batch: '', qty: null }]
+      batchItems.value = [newBatchRow()]
       return
     }
     batchItems.value = batchItems.value.filter((_, i) => i !== index)
@@ -139,7 +187,7 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
         target_warehouse: targetWarehouse.value,
         pick_qty: needsBatchItems.value ? batchItemsTotal.value : Number(pickQty.value),
         batch_items: needsBatchItems.value
-          ? batchItems.value.filter(r => r.batch && Number(r.qty) > 0).map(r => ({ batch: r.batch, qty: Number(r.qty) }))
+          ? batchItems.value.filter(r => r.batch && Number(r.qty) > 0).map(r => ({ batch: r.batch, qty: Number(r.qty), warehouse: r.warehouse || null }))
           : null,
         assigned_to: assignedTo.value,
         remarks: remarks.value || null,
@@ -164,15 +212,15 @@ export const useCreatePickOrderStore = defineStore('createPickOrder', () => {
     assignedTo.value = ''
     remarks.value = ''
     rollSource.value = 'Roll'
-    batchItems.value = [{ batch: '', qty: null }]
+    batchItems.value = [newBatchRow()]
     restrictToBatches.value = false
     error.value = ''
   }
 
   return {
     pickType, documentName, salesOrder, sourceWarehouse, targetWarehouse, pickQty, assignedTo, remarks, rollSource,
-    batchItems, batchItemsTotal, restrictToBatches,
-    warehouses, workOrders, salesOrders, batches, users,
+    batchItems, batchItemsTotal, restrictToBatches, loadBatchInfo,
+    sourceWarehouses, targetWarehouses, userBuilding, workOrders, salesOrders, batches, users,
     loadingLookups, submitting, error,
     needsDocument, needsSalesOrder, needsBatchItems, offersBatchRestriction, canSubmit,
     loadLookups, searchUsers, searchSalesOrders, searchBatches,
