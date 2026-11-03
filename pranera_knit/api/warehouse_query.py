@@ -4,26 +4,38 @@ Link-field query for Roll Pick Assignment → Batch Items → Warehouse,
 attached by public/js/roll_pick_assignment_warehouse.js.
 
 Replaces the Textiles And Garments app's get_warehouses_for_batch in that
-dropdown (which lists only warehouses already holding the row's batch,
-from any building) with every NAP warehouse:
+dropdown (which lists only warehouses already holding the row's batch, from
+any building) with the warehouses of the logged-in user's building:
 
-  * only leaf, enabled warehouses whose name starts with "NAP"
-  * the row's batch qty in each one is the description line, as before
-    (same Stock Ledger + Serial and Batch Entry balance)
+  * leaf, enabled warehouses whose Building (Warehouse.building) is the
+    user's Assigned Building (User.assigned_building)
+  * users with no Assigned Building, and System Managers, see every
+    warehouse — nobody is left with an empty dropdown
+  * the row's batch qty in each warehouse is the description line, as
+    before (same Stock Ledger + Serial and Batch Entry balance)
   * warehouses holding the batch come first (most stock first), then the
-    rest of the NAP warehouses alphabetically, so a supervisor can still
-    plan a pick from a NAP warehouse the batch hasn't reached yet
+    rest alphabetically, so a supervisor can still plan a pick from a
+    warehouse the batch hasn't reached yet
 """
 import frappe
 from frappe.utils import cint, flt
 
-WAREHOUSE_PREFIX = "NAP"
+BYPASS_ROLES = {"System Manager"}
+
+
+def user_building(user=None):
+    """The user's Assigned Building, or None when they see every building."""
+    user = user or frappe.session.user
+    if BYPASS_ROLES & set(frappe.get_roles(user)):
+        return None
+    return frappe.db.get_value("User", user, "assigned_building") or None
 
 
 @frappe.whitelist()
-def nap_warehouses_for_batch(doctype, txt, searchfield, start, page_len, filters):
+def building_warehouses_for_batch(doctype, txt, searchfield, start, page_len, filters):
     filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or {})
     batch_no = filters.get("batch") or ""
+    building = user_building()
 
     rows = frappe.db.sql(
         """
@@ -47,16 +59,16 @@ def nap_warehouses_for_batch(doctype, txt, searchfield, start, page_len, filters
             ) combined
             group by warehouse
         ) b on b.warehouse = w.name
-        where w.name like %(prefix)s
-            and w.is_group = 0
+        where w.is_group = 0
             and w.disabled = 0
+            and (%(building)s = '' or w.building = %(building)s)
             and w.name like %(txt)s
         order by (ifnull(b.qty, 0) > 0) desc, ifnull(b.qty, 0) desc, w.name
         limit %(page_len)s offset %(start)s
         """,
         {
             "batch_no": batch_no,
-            "prefix": WAREHOUSE_PREFIX + "%",
+            "building": building or "",
             "txt": f"%{txt}%" if txt else "%",
             "start": cint(start),
             "page_len": cint(page_len) or 20,
