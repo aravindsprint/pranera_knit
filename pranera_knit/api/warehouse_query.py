@@ -31,14 +31,13 @@ def user_building(user=None):
     return frappe.db.get_value("User", user, "assigned_building") or None
 
 
-@frappe.whitelist()
-def building_warehouses_for_batch(doctype, txt, searchfield, start, page_len, filters):
-    filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or {})
-    batch_no = filters.get("batch") or ""
-    building = user_building()
-
-    rows = frappe.db.sql(
-        """
+def _warehouse_batch_rows(batch_no, building=None, txt="", start=0, page_len=0):
+    """[(warehouse, batch qty)] for leaf, enabled warehouses — of `building`
+    when given — warehouses holding the batch first (most stock first), then
+    the rest alphabetically. page_len 0 = no limit."""
+    limit = "limit %(page_len)s offset %(start)s" if cint(page_len) else ""
+    return frappe.db.sql(
+        f"""
         select w.name, ifnull(b.qty, 0) as qty
         from `tabWarehouse` w
         left join (
@@ -64,17 +63,46 @@ def building_warehouses_for_batch(doctype, txt, searchfield, start, page_len, fi
             and (%(building)s = '' or w.building = %(building)s)
             and w.name like %(txt)s
         order by (ifnull(b.qty, 0) > 0) desc, ifnull(b.qty, 0) desc, w.name
-        limit %(page_len)s offset %(start)s
+        {limit}
         """,
         {
-            "batch_no": batch_no,
+            "batch_no": batch_no or "",
             "building": building or "",
             "txt": f"%{txt}%" if txt else "%",
             "start": cint(start),
-            "page_len": cint(page_len) or 20,
+            "page_len": cint(page_len),
         },
     )
+
+
+@frappe.whitelist()
+def building_warehouses_for_batch(doctype, txt, searchfield, start, page_len, filters):
+    filters = frappe.parse_json(filters) if isinstance(filters, str) else (filters or {})
+    rows = _warehouse_batch_rows(
+        filters.get("batch"), user_building(), txt, start, cint(page_len) or 20
+    )
     return [(name, str(flt(qty, 3)) if flt(qty) > 0 else "0") for name, qty in rows]
+
+
+@frappe.whitelist()
+def get_batch_pick_info(batch):
+    """Knit App Create Pick Order → one Batch Items row: the batch's item and
+    stock UOM (Roll Pick Batch Item fetches the same on save), plus the
+    user's building warehouses with this batch's qty, stock-holding first."""
+    info = frappe.db.get_value("Batch", batch, ["item", "stock_uom"], as_dict=True)
+    if not info:
+        frappe.throw(frappe._("Batch {0} not found").format(batch))
+    building = user_building()
+    return {
+        "batch": batch,
+        "item": info.item,
+        "stock_uom": info.stock_uom,
+        "building": building,
+        "warehouses": [
+            {"warehouse": name, "qty": flt(qty, 3)}
+            for name, qty in _warehouse_batch_rows(batch, building)
+        ],
+    }
 
 
 @frappe.whitelist()
