@@ -26,7 +26,7 @@ website_route_rules = [
 # owns the doctype. Adds the "Cancel Pick + Stock Entry" button.
 doctype_js = {
     "Roll Wise Pick List": "public/js/roll_wise_pick_list.js",
-    # Batch Items → Warehouse dropdown: NAP warehouses with batch qty.
+    # Batch Items → Warehouse dropdown: user's building's warehouses with batch qty.
     "Roll Pick Assignment": "public/js/roll_pick_assignment_warehouse.js",
 }
 
