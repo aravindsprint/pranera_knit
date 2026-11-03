@@ -81,15 +81,31 @@
 
       <div class="card" v-if="store.needsBatchItems">
         <label class="form-label">Batch Items <span class="req">*</span></label>
-        <div v-for="(row, i) in store.batchItems" :key="i" class="batch-row">
-          <input
-            v-model="row.batch" list="batch-list" class="form-input"
-            placeholder="Search batch..." @input="onBatchSearch"
-          />
-          <input v-model.number="row.qty" type="number" min="0" step="0.01" class="form-input batch-row__qty" placeholder="Qty" />
-          <button class="btn-remove" @click="store.removeBatchItemRow(i)" title="Remove row">
-            <i class="pi pi-times"></i>
-          </button>
+        <div v-for="(row, i) in store.batchItems" :key="i" class="batch-item">
+          <div class="batch-row">
+            <input
+              v-model="row.batch" list="batch-list" class="form-input"
+              placeholder="Search batch..." @input="onBatchSearch(row, $event)" @change="store.loadBatchInfo(row)"
+            />
+            <input v-model.number="row.qty" type="number" min="0" step="0.01" class="form-input batch-row__qty"
+                   :placeholder="row.uom ? `Qty (${row.uom})` : 'Qty'" />
+            <button class="btn-remove" @click="store.removeBatchItemRow(i)" title="Remove row">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
+          <div v-if="row.loading" class="batch-meta"><i class="pi pi-spin pi-spinner"></i> Loading batch…</div>
+          <div v-else-if="row.error" class="batch-meta batch-meta--err">{{ row.error }}</div>
+          <template v-else-if="row.item">
+            <div class="batch-meta">
+              <span class="batch-meta__item">{{ row.item }}</span>
+              <span v-if="row.uom" class="batch-meta__uom">{{ row.uom }}</span>
+            </div>
+            <AutoComplete
+              v-model="row.warehouse"
+              :options="row.whOptions"
+              placeholder="Warehouse for this batch..."
+            />
+          </template>
         </div>
         <datalist id="batch-list">
           <option v-for="b in store.batches" :key="b.name" :value="b.name">{{ b.item }}</option>
@@ -99,7 +115,7 @@
         </button>
         <div class="hint-text" style="margin-top:10px">
           <i class="pi pi-info-circle"></i>
-          <span>Pick Qty is set automatically from the total below: <strong>{{ fmt(store.batchItemsTotal) }} kg</strong> (±3% tolerance: {{ toleranceRange }}).</span>
+          <span>Item and UOM come from the batch. Warehouse lists your building's warehouses, ones holding the batch first — add another row for the same batch to split it across warehouses. Pick Qty is set automatically from the total below: <strong>{{ fmt(store.batchItemsTotal) }} kg</strong> (±3% tolerance: {{ toleranceRange }}).</span>
         </div>
       </div>
 
@@ -187,8 +203,11 @@ function onSalesOrderSearch(e) {
   store.searchSalesOrders(e.target.value)
 }
 
-function onBatchSearch(e) {
-  store.searchBatches(e.target.value)
+function onBatchSearch(row, e) {
+  const v = e.target.value
+  // Picked from the suggestions → load its item / warehouses straight away.
+  if (store.batches.some(b => b.name === v)) store.loadBatchInfo(row)
+  store.searchBatches(v)
 }
 
 const toleranceRange = computed(() => {
@@ -228,6 +247,14 @@ function closeSuccessModal() {
 }
 textarea.form-input { resize: vertical; }
 
+.batch-item { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; margin-bottom: 8px; }
+.batch-item .batch-row { margin-bottom: 0; flex-wrap: wrap; }
+.batch-item .batch-row > .form-input:first-child { flex: 1 1 100%; }
+.batch-item .batch-row__qty { flex: 1 1 auto; }
+.batch-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #475569; margin: 8px 0 6px; overflow-wrap: anywhere; }
+.batch-meta__item { font-weight: 600; color: #0f172a; }
+.batch-meta__uom { background: #f1f5f9; border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+.batch-meta--err { color: #991b1b; }
 .batch-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .batch-row .form-input { flex: 1; min-width: 0; }
 .batch-row__qty { flex: 0 0 90px; }

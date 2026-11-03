@@ -1298,7 +1298,14 @@ def create_pick_order(pick_type, source_warehouse, target_warehouse, assigned_to
             doc.purchase_order = purchase_order
     if uses_batch_items:
         for row in batch_items:
-            doc.append("batch_items", {"batch": row.get("batch"), "qty": row.get("qty")})
+            doc.append("batch_items", {
+                "batch": row.get("batch"),
+                "qty": row.get("qty"),
+                # Planning hint: where this batch's qty sits (one batch can
+                # be split over several rows/warehouses). Item and Stock UOM
+                # are fetched from the Batch on save.
+                "warehouse": row.get("warehouse") or None,
+            })
     if project:
         doc.project = project
     if remarks:
