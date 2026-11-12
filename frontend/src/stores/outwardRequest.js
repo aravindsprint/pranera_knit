@@ -4,12 +4,26 @@ import {
   getOutwardRequestItems, saveOutwardRequest, getOutwardRequest, listOutwardRequests,
   getBuildings, searchWorkOrdersForOutward, searchPurchaseOrdersForOutward,
   getOutwardPickDefaults, createOutwardRollPickAssignment, syncWarehouses, searchAssignableUsers,
+  getOutwardRequestConfig, approveOutwardSameDay, rejectOutwardSameDay,
 } from '@/api/frappe'
 
 function todayISO() {
   const d = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function addDaysISO(iso, n) {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + n)
+  const pad = (v) => String(v).padStart(2, '0')
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+}
+
+// Minutes past midnight of a server "YYYY-MM-DD HH:MM:SS" / "HH:MM" string.
+function toMinutes(t) {
+  const hm = String(t || '').split(' ').pop().split(':')
+  return Number(hm[0]) * 60 + Number(hm[1] || 0)
 }
 
 // Stable per-row keys so duplicating / removing rows never shifts one row's
@@ -20,7 +34,7 @@ const nextKey = () => `r${++keySeq}`
 export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   // ── List ────────────────────────────────────────────────────────────────
   const requests = ref([])
-  const listFilter = ref('')        // '' | Pending | Processing | Completed
+  const listFilter = ref('')        // '' | Pending | Processing | Completed | AWAITING_APPROVAL
   const listSearch = ref('')
   const loadingList = ref(false)
 
@@ -34,6 +48,14 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   const items = ref([])
   const receipts = ref([])          // Subcontracting Receipts the PO items came from
   const meta = ref(null)            // created_by_name, created_on, status, request_status, assignments
+  const originalDate = ref('')      // the saved date, so editing an old request isn't blocked
+
+  // ── Same-day cut-off (server clock, Outward Request Settings) ───────────
+  const config = ref(null)
+  const configAt = ref(0)           // Date.now() when config was fetched
+  const clock = ref(Date.now())     // ticks every minute so the cut-off flips live
+  let clockTimer = null
+  const deciding = ref(false)
 
   const buildings = ref([])
   const workOrders = ref([])
@@ -43,6 +65,29 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   const saving = ref(false)
   const error = ref('')
   const fetchedFor = ref('')        // which document the current items came from
+
+  // Server time now = server time at fetch + time elapsed on this device.
+  const serverMinutesNow = computed(() => {
+    if (!config.value) return null
+    return toMinutes(config.value.now) + Math.floor((clock.value - configAt.value) / 60000)
+  })
+  const afterCutoff = computed(() =>
+    !!config.value && serverMinutesNow.value >= toMinutes(config.value.cutoff_time)
+  )
+  const minDate = computed(() => config.value?.today || todayISO())
+  const defaultDate = computed(() =>
+    afterCutoff.value ? addDaysISO(minDate.value, 1) : minDate.value
+  )
+  const dateChanged = computed(() => !name.value || date.value !== originalDate.value)
+  const dateInPast = computed(() => dateChanged.value && !!date.value && date.value < minDate.value)
+  const needsApproval = computed(() =>
+    dateChanged.value && !!config.value?.require_approval &&
+    date.value === minDate.value && afterCutoff.value
+  )
+  const isApprover = computed(() => !!config.value?.is_approver)
+  const approverNames = computed(() =>
+    (config.value?.approvers || []).map(a => a.full_name || a.user).join(', ')
+  )
 
   const documentName = computed(() =>
     sourceType.value === 'Work Order' ? workOrder.value : purchaseOrder.value
@@ -57,7 +102,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     return t
   })
   const canSave = computed(() =>
-    isEditable.value && !!date.value && !!toBuilding.value && !!documentName.value &&
+    isEditable.value && !!date.value && !dateInPast.value && !!toBuilding.value && !!documentName.value &&
     items.value.length > 0 &&
     items.value.every(r => r.item_code && Number(r.qty) > 0)
   )
@@ -72,7 +117,12 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     loadingList.value = true
     error.value = ''
     try {
-      requests.value = await listOutwardRequests({ requestStatus: listFilter.value, txt: listSearch.value })
+      const awaiting = listFilter.value === 'AWAITING_APPROVAL'
+      requests.value = await listOutwardRequests({
+        requestStatus: awaiting ? '' : listFilter.value,
+        sameDayApproval: awaiting ? 'Pending' : '',
+        txt: listSearch.value,
+      })
     } catch (e) {
       error.value = e.message
     } finally {
@@ -80,7 +130,20 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     }
   }
 
+  async function loadConfig() {
+    try {
+      config.value = await getOutwardRequestConfig()
+      configAt.value = Date.now()
+      clock.value = configAt.value
+      clearInterval(clockTimer)
+      clockTimer = setInterval(() => { clock.value = Date.now() }, 60000)
+      // A new, untouched form gets the cut-off-aware default date.
+      if (!name.value && (!date.value || date.value < defaultDate.value)) date.value = defaultDate.value
+    } catch { /* the server still enforces the rules on save */ }
+  }
+
   async function loadLookups() {
+    loadConfig()
     try {
       const [b, wo, po] = await Promise.all([
         getBuildings(), searchWorkOrdersForOutward(''), searchPurchaseOrdersForOutward('')
@@ -184,6 +247,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   function applyDoc(doc) {
     name.value = doc.name
     date.value = doc.date
+    originalDate.value = doc.date
     toBuilding.value = doc.to_building
     sourceType.value = doc.purchase_order ? 'Purchase Order' : 'Work Order'
     workOrder.value = doc.work_order || ''
@@ -201,12 +265,37 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       request_status: doc.request_status || 'Pending',
       assignments: doc.roll_pick_assignments || [],
       vehicles: doc.vehicle_gate_entries || [],
+      same_day_approval: doc.same_day_approval || '',
+      approval_requested_on: doc.approval_requested_on,
+      approved_by_name: doc.approved_by_name || doc.approved_by || '',
+      approved_on: doc.approved_on,
+      approval_remarks: doc.approval_remarks || '',
+      can_approve: !!doc.can_approve,
+    }
+  }
+
+  async function decideApproval(approve, remarks) {
+    if (!name.value) return null
+    deciding.value = true
+    error.value = ''
+    try {
+      const doc = approve
+        ? await approveOutwardSameDay(name.value, remarks)
+        : await rejectOutwardSameDay(name.value, remarks)
+      applyDoc(doc)
+      return doc
+    } catch (e) {
+      error.value = e.message
+      return null
+    } finally {
+      deciding.value = false
     }
   }
 
   function reset() {
     name.value = ''
-    date.value = todayISO()
+    date.value = config.value ? defaultDate.value : todayISO()
+    originalDate.value = ''
     toBuilding.value = ''
     sourceType.value = 'Work Order'
     workOrder.value = ''
@@ -227,7 +316,8 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   const pickError = ref('')
 
   const canCreatePick = computed(() =>
-    !!name.value && meta.value?.request_status === 'Pending'
+    !!name.value && meta.value?.request_status === 'Pending' &&
+    !['Pending', 'Rejected'].includes(meta.value?.same_day_approval)
   )
   const pickFormValid = computed(() => {
     const f = pickForm.value, p = pickPlan.value
@@ -309,6 +399,8 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     buildings, workOrders, purchaseOrders, buildingOptions,
     fetching, saving, error, fetchedFor,
     documentName, isEditable, totalsByUom, canSave,
+    config, afterCutoff, minDate, defaultDate, dateInPast, needsApproval, isApprover, approverNames,
+    deciding, decideApproval, loadConfig,
     loadList, loadLookups, searchWorkOrders, searchPurchaseOrders,
     setSourceType, clearItems, fetchItems, removeItem, duplicateItem, save, open, reset,
   }

@@ -724,10 +724,22 @@ export const saveOutwardRequest = (payload) =>
 export const getOutwardRequest = (name) =>
   call(`${OR_API}.get_outward_request`, { name }).then(r => r.message)
 
-export const listOutwardRequests = ({ requestStatus, txt } = {}) =>
+export const listOutwardRequests = ({ requestStatus, txt, sameDayApproval } = {}) =>
   call(`${OR_API}.list_outward_requests`, {
-    request_status: requestStatus || undefined, txt: txt || undefined
+    request_status: requestStatus || undefined, txt: txt || undefined,
+    same_day_approval: sameDayApproval || undefined,
   }).then(r => r.message || [])
+
+// Server-clock date rules: today, default_date, cutoff_time / cutoff_label,
+// after_cutoff, require_approval, is_approver, approvers.
+export const getOutwardRequestConfig = () =>
+  call(`${OR_API}.get_outward_request_config`).then(r => r.message)
+
+export const approveOutwardSameDay = (name, remarks) =>
+  call(`${OR_API}.approve_same_day`, { name, remarks: remarks || undefined }).then(r => r.message)
+
+export const rejectOutwardSameDay = (name, remarks) =>
+  call(`${OR_API}.reject_same_day`, { name, remarks }).then(r => r.message)
 
 export const getBuildings = () =>
   call(`${OR_API}.get_buildings`).then(r => r.message || [])
