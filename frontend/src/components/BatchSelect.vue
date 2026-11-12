@@ -38,7 +38,7 @@
         </div>
         <div v-if="loadError" class="bs-empty bs-error"><i class="pi pi-exclamation-triangle"></i> Couldn't load batches: {{ loadError }}</div>
         <div v-else-if="!options.length" class="bs-empty">
-          No batches for this item{{ query ? ` matching "${query}"` : '' }}.
+          No batches for this item{{ (workOrder || purchaseOrder) ? ` in this ${workOrder ? 'Work Order' : 'PO'}'s project` : '' }}{{ query ? ` matching "${query}"` : '' }}.
         </div>
       </template>
     </div>
@@ -50,7 +50,8 @@
 // batches of `itemCode` (searched on the server — there are 100k+ batches),
 // in-stock first with their available qty. Only a value picked from the
 // list is accepted; typing something else and leaving the field restores
-// the previous value.
+// the previous value. With workOrder / purchaseOrder set, the list is
+// limited to batches of that document's project.
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { searchBatchesForItem } from '@/api/frappe'
 
@@ -59,6 +60,9 @@ const props = defineProps({
   itemCode: { type: String, required: true },
   disabled: { type: Boolean, default: false },
   placeholder: { type: String, default: 'Select batch…' },
+  // When set, only batches of this Work Order's / Purchase Order's project.
+  workOrder: { type: String, default: '' },
+  purchaseOrder: { type: String, default: '' },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -79,7 +83,9 @@ async function load(txt) {
   loading.value = true
   loadError.value = ''
   try {
-    const rows = await searchBatchesForItem(props.itemCode, txt)
+    const rows = await searchBatchesForItem(props.itemCode, txt, {
+      workOrder: props.workOrder, purchaseOrder: props.purchaseOrder,
+    })
     if (mine !== seq) return
     options.value = rows
     highlighted.value = rows.length ? 0 : -1

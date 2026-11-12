@@ -158,7 +158,7 @@
         </div>
         <div class="hint-text">
           <i class="pi pi-info-circle"></i>
-          <span v-if="store.sourceType === 'Work Order'">Items come from the Work Order's Required Items. Work Orders don't carry a batch — add one per row if needed.</span>
+          <span v-if="store.sourceType === 'Work Order'">Items come from the Work Order's Required Items. Work Orders don't carry a batch — add one per row if needed (only batches of the Work Order's project are listed).</span>
           <span v-else>Items come from the Raw Materials Supplied table of the submitted Subcontracting Receipt(s) for this PO, merged by item + batch.</span>
         </div>
       </div>
@@ -181,6 +181,8 @@
             <span class="item-row__code">{{ row.item_code }}</span>
             <BatchSelect
               v-model="row.batch" :item-code="row.item_code" :disabled="!store.isEditable"
+              :work-order="store.sourceType === 'Work Order' ? store.workOrder : ''"
+              :purchase-order="store.sourceType === 'Purchase Order' ? store.purchaseOrder : ''"
               class="item-row__batch" placeholder="Select batch…"
             />
             <input

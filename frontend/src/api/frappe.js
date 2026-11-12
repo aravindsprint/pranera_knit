@@ -776,8 +776,14 @@ export const searchOutwardRequestsForGate = (txt, gateEntry) =>
   call(`${VGE_API}.search_outward_requests`, { txt: txt || undefined, gate_entry: gateEntry || undefined })
     .then(r => r.message || [])
 
-export const searchBatchesForItem = (itemCode, txt) =>
-  call(`${OR_API}.search_batches`, { item_code: itemCode, txt: txt || undefined }).then(r => r.message || [])
+// Limited to the Work Order's / Purchase Order's project when one is passed.
+export const searchBatchesForItem = (itemCode, txt, { workOrder, purchaseOrder } = {}) =>
+  call(`${OR_API}.search_batches`, {
+    item_code: itemCode,
+    txt: txt || undefined,
+    work_order: workOrder || undefined,
+    purchase_order: purchaseOrder || undefined,
+  }).then(r => r.message || [])
 
 // ── Needle / Sinker Issue ────────────────────────────────────────────────────
 // pranera_knit/api/spares_issue.py — issues spares to a machine as a submitted
