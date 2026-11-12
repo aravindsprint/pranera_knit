@@ -13,3 +13,4 @@ pranera_knit.patches.v1_9.add_nap_roles_and_pick_template
 pranera_knit.patches.v1_10.add_knit_app_page_access
 pranera_knit.patches.v1_11.add_spares_issue_page
 pranera_knit.patches.v1_12.add_create_pick_order_page
+pranera_knit.patches.v1_13.add_allow_old_roll_scan
