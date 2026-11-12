@@ -22,10 +22,11 @@ module only lets a roll be created against such a batch:
       numbered from the same "next numeric roll_no" sequence the
       knit_create_po_so_roll / knit-create-roll Server Scripts use.
 
-Project: taken from the order row's Project field. The old Server Script
-used the PO row's Material Request (e.g. 26PTIN1731-1), which never
-matches a Work Order's project (26PTIN1731) and so fails the Pick Order
-project check.
+Project: same as the old Server Scripts — the PO row's Material Request
+(a numbered sub-project such as 26PTIN1731-1), else its Project; the SCO
+row's Project for Subcontracting Orders. The Pick Order scan treats
+26PTIN1731-<n> as matching a Work Order on 26PTIN1731
+(pick_order._same_project).
 """
 import frappe
 from frappe import _
@@ -156,7 +157,7 @@ def _order_item(item_code, purchase_order=None, subcontracting_order=None):
         )
         if not row:
             frappe.throw(_("Item {0} is not on Purchase Order {1}").format(item_code, purchase_order))
-        return row.project or row.material_request or ""
+        return row.material_request or row.project or ""
     row = frappe.db.get_value(
         "Subcontracting Order Item", {"parent": subcontracting_order, "item_code": item_code},
         ["project"], as_dict=True,
