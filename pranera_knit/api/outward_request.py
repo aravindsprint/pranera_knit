@@ -407,11 +407,45 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
     return {"name": result.get("name"), "outward_request": get_outward_request(name)}
 
 
+def _source_projects(work_order=None, purchase_order=None):
+    """Projects of the Outward Request's source document: the Work Order's
+    project, or every project on the Purchase Order's item rows (the PO
+    header's project is normally blank on this site) plus the header's."""
+    if work_order:
+        project = frappe.db.get_value("Work Order", work_order, "project")
+        return [project] if project else []
+    if purchase_order:
+        projects = set(frappe.get_all(
+            "Purchase Order Item",
+            filters={"parent": purchase_order, "parenttype": "Purchase Order",
+                     "project": ["is", "set"]},
+            pluck="project", distinct=True,
+        ))
+        header = frappe.db.get_value("Purchase Order", purchase_order, "project")
+        if header:
+            projects.add(header)
+        return sorted(projects)
+    return []
+
+
+def _like_prefix(value):
+    """Escape LIKE wildcards in a literal prefix."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 @frappe.whitelist()
-def search_batches(item_code, txt=None):
+def search_batches(item_code, txt=None, work_order=None, purchase_order=None):
     """Batch dropdown on an Outward Request item row: enabled batches of
     this item only, in-stock first (batch_qty is ERPNext's maintained total
-    across warehouses), then newest."""
+    across warehouses), then newest.
+
+    When a Work Order / Purchase Order is given, only batches of its
+    project(s) are listed. Batch.custom_project is not filled on this site,
+    so a batch belongs to a project when its name starts with the project
+    code — "<project>/..." (e.g. 26PTIN1740/PO-18939/K4554-ML,
+    26PTIN1742/WO/26/12816) or a split/repack "<project>-<n>/..." — or when
+    custom_project is set to it. A source document with no project leaves
+    the list unfiltered."""
     if not item_code:
         return []
     frappe.has_permission("Batch", "read", throw=True)
@@ -422,6 +456,18 @@ def search_batches(item_code, txt=None):
     if txt:
         conditions.append("name like %(txt)s")
         values["txt"] = f"%{txt}%"
+
+    projects = _source_projects(work_order, purchase_order)
+    if projects:
+        project_conds = ["custom_project in %(projects)s"]
+        values["projects"] = tuple(projects)
+        for i, project in enumerate(projects):
+            values[f"p{i}_slash"] = _like_prefix(project) + "/%"
+            values[f"p{i}_dash"] = _like_prefix(project) + "-%"
+            project_conds.append(f"name like %(p{i}_slash)s")
+            project_conds.append(f"name like %(p{i}_dash)s")
+        conditions.append("(" + " or ".join(project_conds) + ")")
+
     return frappe.db.sql(
         f"""select name, batch_qty, stock_uom, expiry_date
         from `tabBatch`
