@@ -26,6 +26,12 @@ Validations that run on every scan:
      back to its parent, only the "<parent>-<n>" naming convention. So
      this check also walks that suffix off the scanned roll_no and
      accepts a match on any ancestor in the chain.
+     A roll that was never packed is still accepted when its batch was
+     brought into stock by a submitted source document — Manufacture /
+     Repack / Material Receipt Stock Entry, Purchase Receipt,
+     Subcontracting Receipt or Stock Reconciliation — which covers old
+     manufactured rolls and bought-in / subcontracted greige rolls
+     (see _batch_received_into_stock).
   2. Project match (pick_type == "To Work Order" only) — the roll's
      Project must match the target Work Order's Project, so material
      doesn't get misrouted into an unrelated project's job.
@@ -821,20 +827,28 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse, chosen_batch=Non
         """,
         {"roll_no_chain": roll_no_chain},
     )
-    # Greige rolls knitted by a subcontractor (or bought in) never go
-    # through an in-house Manufacture + Roll Packing List — their stock
-    # arrives via a submitted Subcontracting Receipt / Purchase Receipt.
-    # Such a roll is real, moveable stock as long as its batch was
-    # actually received, so accept it on that basis instead.
-    if not packed_against_stock_entry and _is_received_external_roll(roll):
+    # Rolls that never went through a Roll Packing List are still real,
+    # moveable stock when their batch was actually brought into stock by a
+    # source document:
+    #   - old manufactured rolls (knitted before the packing-list flow, or
+    #     packed without a Stock Entry link) — batch produced by a submitted
+    #     Manufacture / Repack Stock Entry;
+    #   - greige rolls knitted by a subcontractor or bought in — batch
+    #     received on a Subcontracting / Purchase Receipt, even when the
+    #     Roll record itself has no Subcontracting / Purchase Order filled;
+    #   - opening / migrated stock — Material Receipt or Stock
+    #     Reconciliation.
+    # Only a roll whose batch never came into stock at all is refused.
+    if not packed_against_stock_entry and _batch_received_into_stock(roll.batch):
         packed_against_stock_entry = True
 
     if not packed_against_stock_entry:
         frappe.throw(_(
-            "Roll {0} is not included in any submitted Roll Packing List with a Stock Entry "
-            "(Manufacture) linked — it hasn't actually been packed/produced yet, so it can't "
-            "be picked"
-        ).format(roll_no))
+            "Roll {0} can't be picked: it is not in any submitted Roll Packing List with a "
+            "Stock Entry, and its batch {1} was never brought into stock by a submitted "
+            "Manufacture / Repack / Material Receipt Stock Entry, Purchase Receipt, "
+            "Subcontracting Receipt or Stock Reconciliation"
+        ).format(roll_no, roll.batch or _("(no batch)")))
 
     if doc.pick_type == "To Work Order" and doc.work_order:
         wo_project = frappe.db.get_value("Work Order", doc.work_order, "project")
@@ -886,43 +900,58 @@ def _planned_batch_map(doc, batches):
     return out
 
 
-def _is_received_external_roll(roll):
-    """True when the roll came from a Subcontracting / Purchase Order and
-    its batch has been received against a submitted, non-cancelled
-    Subcontracting Receipt or Purchase Receipt."""
-    if not roll.batch or not (roll.get("subcontracting_order") or roll.get("purchase_order")):
+# Vouchers that bring a batch INTO stock from outside the warehouse network.
+# Plain transfers are excluded: they only move stock that already exists.
+SOURCE_VOUCHER_TYPES = ("Purchase Receipt", "Subcontracting Receipt", "Stock Reconciliation")
+SOURCE_STOCK_ENTRY_PURPOSES = ("Manufacture", "Repack", "Material Receipt")
+
+
+def _batch_received_into_stock(batch):
+    """True when `batch` has a submitted, non-cancelled inward from a source
+    document: Purchase Receipt, Subcontracting Receipt, Stock Reconciliation,
+    or a Stock Entry of purpose Manufacture / Repack / Material Receipt.
+    Checks both the v15 Serial and Batch Bundle path and the legacy
+    batch_no on the Stock Ledger (pre-bundle entries)."""
+    if not batch:
         return False
 
-    receipt_types = ("Subcontracting Receipt", "Purchase Receipt")
+    params = {
+        "batch": batch,
+        "types": SOURCE_VOUCHER_TYPES,
+        "purposes": SOURCE_STOCK_ENTRY_PURPOSES,
+    }
 
-    # v15 Serial and Batch Bundle path
     if frappe.db.sql(
         """
         select 1
         from `tabSerial and Batch Entry` sbe
         inner join `tabSerial and Batch Bundle` sbb on sbb.name = sbe.parent
+        left join `tabStock Entry` se
+            on sbb.voucher_type = 'Stock Entry' and se.name = sbb.voucher_no
         where sbe.batch_no = %(batch)s
-            and sbb.voucher_type in %(types)s
             and sbb.docstatus = 1
             and sbb.is_cancelled = 0
             and sbb.type_of_transaction = 'Inward'
+            and (sbb.voucher_type in %(types)s or se.purpose in %(purposes)s)
         limit 1
         """,
-        {"batch": roll.batch, "types": receipt_types},
+        params,
     ):
         return True
 
-    # Legacy batch_no on the ledger (pre-bundle entries)
     return bool(frappe.db.sql(
         """
-        select 1 from `tabStock Ledger Entry`
-        where batch_no = %(batch)s
-            and voucher_type in %(types)s
-            and is_cancelled = 0
-            and actual_qty > 0
+        select 1
+        from `tabStock Ledger Entry` sle
+        left join `tabStock Entry` se
+            on sle.voucher_type = 'Stock Entry' and se.name = sle.voucher_no
+        where sle.batch_no = %(batch)s
+            and sle.is_cancelled = 0
+            and sle.actual_qty > 0
+            and (sle.voucher_type in %(types)s or se.purpose in %(purposes)s)
         limit 1
         """,
-        {"batch": roll.batch, "types": receipt_types},
+        params,
     ))
 
 
