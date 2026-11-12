@@ -14,7 +14,7 @@
       <div class="card card--tight">
         <div class="chips">
           <button
-            v-for="f in FILTERS" :key="f.value" class="chip"
+            v-for="f in listFilters" :key="f.value" class="chip"
             :class="{ 'chip--active': store.listFilter === f.value }"
             @click="setFilter(f.value)"
           >{{ f.label }}</button>
@@ -34,6 +34,11 @@
         <div class="req-card__top">
           <span class="req-card__name">{{ r.name }}</span>
           <span class="pill" :class="docStatusClass(r.request_status)">{{ r.request_status || 'Pending' }}</span>
+        </div>
+        <div v-if="r.same_day_approval" class="req-card__approval">
+          <span class="pill pill--soft" :class="approvalClass(r.same_day_approval)">
+            <i class="pi pi-clock"></i> Same-day {{ approvalLabel(r.same_day_approval) }}
+          </span>
         </div>
         <div class="req-card__to"><i class="pi pi-building"></i> {{ r.to_building }}</div>
         <div class="req-card__meta">
@@ -92,6 +97,37 @@
           <i class="pi pi-link"></i>
           <span>Roll Pick Assignment: {{ store.meta.assignments.map(a => `${a.name} (${a.status})`).join(', ') }}</span>
         </div>
+        <div v-if="store.meta.same_day_approval" class="approval-box" :class="`approval-box--${store.meta.same_day_approval.toLowerCase()}`">
+          <div class="approval-box__head">
+            <span class="form-label" style="margin:0">Same-day Approval</span>
+            <span class="pill" :class="approvalClass(store.meta.same_day_approval)">{{ approvalLabel(store.meta.same_day_approval) }}</span>
+          </div>
+          <div class="approval-box__text">
+            <template v-if="store.meta.same_day_approval === 'Pending'">
+              Dated today after {{ store.config?.cutoff_label || '3:00 PM' }} — waiting for
+              {{ store.approverNames || 'an approver' }} since {{ fmtDateTime(store.meta.approval_requested_on) }}.
+              A Roll Pick Assignment can be created once it's approved.
+            </template>
+            <template v-else>
+              {{ store.meta.same_day_approval }} by {{ store.meta.approved_by_name }} on {{ fmtDateTime(store.meta.approved_on) }}<template v-if="store.meta.approval_remarks"> — “{{ store.meta.approval_remarks }}”</template>.
+              <template v-if="store.meta.same_day_approval === 'Rejected'"> Change the date to tomorrow or later to continue.</template>
+            </template>
+          </div>
+          <template v-if="store.meta.can_approve">
+            <textarea
+              v-model="approvalRemarks" class="form-input" rows="2"
+              placeholder="Remarks (required to reject)"
+            ></textarea>
+            <div class="approval-box__actions">
+              <button class="btn btn-outline btn-danger" :disabled="store.deciding || !approvalRemarks.trim()" @click="decide(false)">
+                <i class="pi pi-times"></i> Reject
+              </button>
+              <button class="btn btn-primary" :disabled="store.deciding" @click="decide(true)">
+                <i class="pi" :class="store.deciding ? 'pi-spin pi-spinner' : 'pi-check'"></i> Approve
+              </button>
+            </div>
+          </template>
+        </div>
         <button
           v-if="store.canCreatePick" class="btn btn-primary btn-full" style="margin-top:14px"
           @click="store.startPick()"
@@ -107,7 +143,10 @@
         <div class="row-2">
           <div>
             <label class="form-label">Date <span class="req">*</span></label>
-            <input v-model="store.date" type="date" class="form-input" :disabled="!store.isEditable" />
+            <input
+              v-model="store.date" type="date" class="form-input" :disabled="!store.isEditable"
+              :min="store.isEditable ? store.minDate : undefined"
+            />
           </div>
           <div>
             <label class="form-label">To <span class="req">*</span></label>
@@ -117,6 +156,22 @@
             />
           </div>
         </div>
+
+        <template v-if="store.isEditable">
+          <div v-if="store.dateInPast" class="hint-text hint-text--error">
+            <i class="pi pi-exclamation-circle"></i>
+            <span>The date can't be in the past — pick today or a later date.</span>
+          </div>
+          <div v-else-if="store.needsApproval" class="hint-text hint-text--warn">
+            <i class="pi pi-clock"></i>
+            <span v-if="store.isApprover">Today's date after {{ store.config.cutoff_label }} — you're an approver, so it will be approved automatically.</span>
+            <span v-else>Today's date after {{ store.config.cutoff_label }} needs approval from {{ store.approverNames || 'an approver' }}. It's sent for approval when you save — use tomorrow's date to skip approval.</span>
+          </div>
+          <div v-else-if="store.afterCutoff && !store.name" class="hint-text">
+            <i class="pi pi-info-circle"></i>
+            <span>After {{ store.config.cutoff_label }}, new requests are dated tomorrow by default.</span>
+          </div>
+        </template>
 
         <label class="form-label" style="margin-top:14px">Fetch Items From <span class="req">*</span></label>
         <div class="segmented">
@@ -360,12 +415,16 @@ const FILTERS = [
   { label: 'Completed', value: 'Completed' },
 ]
 const STEPS = ['Roll Pick Assigned', 'Picked', 'Completed']
+const approvalRemarks = ref('')
 
 const auth = useAuthStore()
 const store = useOutwardRequestStore()
 const route = useRoute()
 const router = useRouter()
 const savedName = ref('')
+const listFilters = computed(() =>
+  store.isApprover ? [...FILTERS, { label: 'Awaiting Approval', value: 'AWAITING_APPROVAL' }] : FILTERS
+)
 const savedTitle = ref('Outward Request Saved')
 const assignedToLabel = ref('')
 
@@ -462,9 +521,26 @@ async function save() {
   const wasNew = !store.name
   const doc = await store.save()
   if (!doc) return
-  savedTitle.value = 'Outward Request Saved'
+  savedTitle.value = doc.same_day_approval === 'Pending'
+    ? 'Sent for Same-day Approval'
+    : 'Outward Request Saved'
   savedName.value = doc.name
   if (wasNew) router.replace({ query: { name: doc.name } })
+}
+
+async function decide(approve) {
+  const doc = await store.decideApproval(approve, approvalRemarks.value.trim())
+  if (!doc) return
+  approvalRemarks.value = ''
+  savedTitle.value = approve ? 'Same-day Request Approved' : 'Same-day Request Rejected'
+  savedName.value = doc.name
+}
+
+function approvalClass(s) {
+  return { Pending: 'pill--amber', Approved: 'pill--green', Rejected: 'pill--red' }[s] || ''
+}
+function approvalLabel(s) {
+  return { Pending: 'approval pending', Approved: 'approved', Rejected: 'rejected' }[s] || s
 }
 
 function openGateEntry(name) {
@@ -628,6 +704,18 @@ function fmtQty(n) {
 .plan-row__main small { font-weight: 400; color: #64748b; }
 .plan-row__qty { white-space: nowrap; font-weight: 700; color: #166534; }
 .hint-text--warn { color: #92400e; }
+.hint-text--error { color: #dc2626; }
+.pill--red { background: #fee2e2; color: #991b1b; }
+.req-card__approval { margin-top: 6px; }
+.approval-box { margin-top: 14px; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; border: 1px solid #e2e8f0; }
+.approval-box--pending { background: #fffbeb; border-color: #fde68a; }
+.approval-box--approved { background: #f0fdf4; border-color: #bbf7d0; }
+.approval-box--rejected { background: #fef2f2; border-color: #fecaca; }
+.approval-box__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.approval-box__text { font-size: 13px; color: #334155; line-height: 1.5; }
+.approval-box__actions { display: flex; gap: 10px; justify-content: flex-end; }
+.btn-outline.btn-danger { color: #dc2626; border-color: #fca5a5; }
+.approval-box__actions .btn { min-height: 40px; }
 .optional { color: #94a3b8; font-weight: 400; text-transform: none; font-size: 11px; }
 .row-2--even { grid-template-columns: 1fr 1fr; }
 @media (max-width: 480px) { .row-2--even { grid-template-columns: 1fr; } }

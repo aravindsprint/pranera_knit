@@ -50,6 +50,11 @@ def validate_outward_request(doc, method=None):
                 frappe.throw(_("Row {0}: Batch {1} belongs to item {2}, not {3}")
                              .format(row.idx, row.batch, batch_item, row.item_code))
 
+    # Past-date check + same-day approval (cut-off time, approvers) —
+    # see outward_request_approval.py.
+    from pranera_knit import outward_request_approval
+    outward_request_approval.apply(doc)
+
     if doc.is_new():
         doc.created_by = doc.created_by or frappe.session.user
         doc.created_on = doc.created_on or now_datetime()

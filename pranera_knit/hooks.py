@@ -67,6 +67,8 @@ doc_events = {
     # table (and the pick_qty grand total) from batch_items on every save.
     "Roll Pick Assignment": {
         "validate": "pranera_knit.pick_qty_summary.set_pick_qty_summary",
+        # A same-day Outward Request must be approved before it's picked.
+        "before_submit": "pranera_knit.outward_request_approval.before_roll_pick_assignment_submit",
         # Outward Request status tracking (see outward_request_events.py).
         "on_submit": [
             "pranera_knit.outward_request_events.on_roll_pick_assignment_change",
@@ -96,6 +98,8 @@ doc_events = {
     # Status is driven by the pick chain via the hooks above.
     "Outward Request": {
         "validate": "pranera_knit.outward_request_events.validate_outward_request",
+        # Alerts the approvers when a same-day request needs approval.
+        "on_update": "pranera_knit.outward_request_approval.on_update",
         "on_trash": "pranera_knit.outward_request_events.on_trash_outward_request",
         "after_insert": "pranera_knit.push.on_outward_request_insert",
     },

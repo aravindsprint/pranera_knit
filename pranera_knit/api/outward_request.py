@@ -27,13 +27,15 @@ Status tracking for saved requests lives in outward_request_events.py.
 """
 import frappe
 from frappe import _
-from frappe.utils import flt, today
+from frappe.utils import flt
 
+from pranera_knit import outward_request_approval as approval
 from pranera_knit.vehicle_gate_entry_events import vehicles_for_outward_requests
 
 LIST_FIELDS = [
     "name", "date", "to_building", "work_order", "purchase_order",
     "created_by", "created_on", "status", "request_status", "modified",
+    "same_day_approval",
 ]
 
 
@@ -149,7 +151,8 @@ def save_outward_request(date=None, to_building=None, work_order=None, purchase_
     items = frappe.parse_json(items) if isinstance(items, str) else (items or [])
 
     doc = frappe.get_doc("Outward Request", name) if name else frappe.new_doc("Outward Request")
-    doc.date = date or today()
+    # No date given: today before the cut-off time, tomorrow from it onwards.
+    doc.date = date or (doc.date if name else approval.default_request_date())
     doc.to_building = to_building
     doc.work_order = work_order or None
     doc.purchase_order = purchase_order or None
@@ -179,14 +182,52 @@ def get_outward_request(name):
         order_by="creation asc",
     )
     out["vehicle_gate_entries"] = vehicles_for_outward_requests([name]).get(name, [])
+    out["approved_by_name"] = frappe.utils.get_fullname(doc.approved_by) if doc.get("approved_by") else ""
+    out["can_approve"] = doc.get("same_day_approval") == approval.PENDING and approval.is_approver()
     return out
 
 
 @frappe.whitelist()
-def list_outward_requests(request_status=None, txt=None, limit=50):
+def get_outward_request_config():
+    """Date rules for the form, from the server clock (not the phone's):
+    today, the default date for a new request (tomorrow from the cut-off
+    onwards), the cut-off time, and whether the user is an approver."""
+    settings = approval.get_settings()
+    now = frappe.utils.now_datetime()
+    return {
+        "now": now,
+        "today": now.date(),
+        "default_date": approval.default_request_date(now, settings),
+        "cutoff_time": settings.cutoff.strftime("%H:%M"),
+        "cutoff_label": approval.fmt_cutoff(settings),
+        "after_cutoff": approval.is_after_cutoff(now, settings),
+        "require_approval": settings.require_approval,
+        "is_approver": approval.is_approver(settings=settings),
+        "approvers": [
+            {"user": u, "full_name": frappe.utils.get_fullname(u)} for u in settings.approvers
+        ],
+    }
+
+
+@frappe.whitelist()
+def approve_same_day(name, remarks=None):
+    approval.decide(name, approve=True, remarks=remarks)
+    return get_outward_request(name)
+
+
+@frappe.whitelist()
+def reject_same_day(name, remarks=None):
+    approval.decide(name, approve=False, remarks=remarks)
+    return get_outward_request(name)
+
+
+@frappe.whitelist()
+def list_outward_requests(request_status=None, txt=None, limit=50, same_day_approval=None):
     filters = {}
     if request_status:
         filters["request_status"] = request_status
+    if same_day_approval:
+        filters["same_day_approval"] = same_day_approval
     or_filters = None
     if txt:
         like = f"%{txt}%"
@@ -342,6 +383,7 @@ def _assignment_plan(doc):
 def get_pick_assignment_defaults(name):
     doc = frappe.get_doc("Outward Request", name)
     doc.check_permission("read")
+    approval.assert_cleared(doc)
     return _assignment_plan(doc)
 
 
@@ -360,6 +402,7 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
     doc.check_permission("write")
     if doc.request_status != "Pending":
         frappe.throw(_("Outward Request {0} is already {1}").format(name, doc.request_status))
+    approval.assert_cleared(doc)
 
     plan = _assignment_plan(doc)
     if not source_warehouse or not target_warehouse:
