@@ -863,13 +863,23 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse, chosen_batch=Non
 
     if doc.pick_type == "To Work Order" and doc.work_order:
         wo_project = frappe.db.get_value("Work Order", doc.work_order, "project")
-        if wo_project and roll.project and wo_project != roll.project:
+        if wo_project and roll.project and not _same_project(roll.project, wo_project):
             frappe.throw(_(
                 "Roll {0} belongs to Project {1}, but Work Order {2} belongs to Project {3} — "
                 "rolls must match the target Work Order's project"
             ).format(roll_no, roll.project, doc.work_order, wo_project))
 
     return _record_scan(doc, roll_no, roll, source_warehouse)
+
+
+def _same_project(roll_project, wo_project):
+    """A roll's project matches the Work Order's when it is the same project
+    or a numbered sub-project of it: PO rolls carry the PO row's Material
+    Request name, e.g. 26PTIN1731-1 / 26PTIN1731-2 for project 26PTIN1731."""
+    if roll_project == wo_project:
+        return True
+    suffix = roll_project[len(wo_project):] if roll_project.startswith(wo_project) else ""
+    return suffix.startswith("-") and suffix[1:].isdigit()
 
 
 def _batch_choice_response(e, source_warehouse):

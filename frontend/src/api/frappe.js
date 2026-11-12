@@ -674,6 +674,21 @@ export const getSOItems = (subcontractingOrder) =>
 export const createPOSORoll = (payload) =>
   call('knit_create_po_so_roll', payload).then(r => r.message)
 
+// Purchase / Subcontract Order tabs (pranera_knit/api/order_rolls.py): only
+// batches actually received on that order's submitted receipts, with
+// received qty, rolls already made and what's left; and one-or-many roll
+// creation against such a batch.
+const ORDER_ROLLS_API = 'pranera_knit.api.order_rolls'
+export const getReceivedBatches = ({ itemCode, purchaseOrder, subcontractingOrder }) =>
+  call(`${ORDER_ROLLS_API}.get_received_batches`, {
+    item_code: itemCode,
+    purchase_order: purchaseOrder || undefined,
+    subcontracting_order: subcontractingOrder || undefined,
+  }).then(r => r.message || [])
+
+export const createOrderRolls = (payload) =>
+  call(`${ORDER_ROLLS_API}.create_order_rolls`, payload).then(r => r.message || [])
+
 export const cutRoll = (payload) =>
   call('knit_cut_roll', payload).then(r => r.message)
 

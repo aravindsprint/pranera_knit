@@ -202,12 +202,27 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">Batch No</label>
-            <AutoComplete
-              v-model="order.batch"
-              :options="batchOptions"
-              placeholder="Select Batch (optional)"
-            />
+            <label class="form-label">Received Batch *</label>
+            <div v-if="order.loadingBatches" class="cro-hint">Loading received batches…</div>
+            <template v-else>
+              <select class="form-input" v-model="order.batch" :disabled="!receivedBatches.length">
+                <option value="">{{ receivedBatches.length ? 'Select the received batch' : 'No batch received yet' }}</option>
+                <option v-for="b in receivedBatches" :key="b.batch" :value="b.batch">
+                  {{ b.batch }} · {{ fmtNum(b.received_qty) }} {{ b.stock_uom }} received · {{ b.rolls }} rolls
+                </option>
+              </select>
+              <div class="cro-hint cro-hint--warn" v-if="!receivedBatches.length">
+                Nothing received for this item on this {{ tab === 'po' ? 'Purchase Order' : 'Subcontracting Order' }} yet.
+                Submit the {{ tab === 'po' ? 'Purchase' : 'Subcontracting' }} Receipt first — a roll on a batch that wasn't received can't be scanned.
+              </div>
+            </template>
+          </div>
+
+          <div class="cro-batch-stats" v-if="selectedBatch">
+            <div><span>Received</span><strong>{{ fmtNum(selectedBatch.received_qty) }} {{ selectedBatch.stock_uom }}</strong></div>
+            <div><span>Rolls made</span><strong>{{ selectedBatch.rolls }} · {{ fmtNum(orderIsPcs ? selectedBatch.rolled_qty : selectedBatch.rolled_weight) }} {{ orderIsPcs ? 'pcs' : 'kg' }}</strong></div>
+            <div><span>Left to roll</span><strong :class="{ 'cro-neg': remainingAfter < 0 }">{{ fmtNum(remainingAfter) }} {{ selectedBatch.stock_uom }}</strong></div>
+            <div class="cro-batch-stats__rcpt">{{ selectedBatch.receipts.join(', ') }}</div>
           </div>
 
           <div class="form-group">
@@ -215,35 +230,42 @@
             <input class="form-input" v-model="order.actualWidth" placeholder="Measured width" />
           </div>
 
-          <div class="cro-field-grid">
-            <div class="form-group">
-              <label class="form-label">Roll Weight (kg)</label>
-              <input class="form-input" type="number" step="0.001" min="0" v-model="order.rollWeight" placeholder="0.000" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Roll Qty</label>
-              <input class="form-input" type="number" step="1" min="0" v-model="order.rollQty" placeholder="0" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Mistake Qty</label>
-              <input class="form-input" type="number" step="1" min="0" v-model="order.mistakeQty" placeholder="0" />
-            </div>
-            <div class="form-group">
-              <label class="form-label">Ok Qty</label>
-              <input class="form-input" type="number" step="1" v-model="order.okQty" placeholder="0" />
-            </div>
+          <div class="cro-rolls-head">
+            <label class="form-label" style="margin:0">Rolls ({{ order.rolls.length }})</label>
+            <button class="cro-link" type="button" @click="order.showPaste = !order.showPaste">
+              {{ order.showPaste ? 'Hide paste' : 'Paste many' }}
+            </button>
+          </div>
+          <div v-if="order.showPaste" class="form-group">
+            <textarea
+              class="form-input" rows="4" v-model="order.pasteText"
+              :placeholder="orderIsPcs ? 'One roll per line: qty, weight (e.g. 120, 24.5)' : 'One roll weight per line (e.g. 24.6)'"
+            ></textarea>
+            <button class="btn btn-outline btn-full" style="margin-top:8px" type="button" @click="applyPaste">Add these rolls</button>
           </div>
 
-          <div class="form-group" v-if="avgWeightPerPcs">
-            <label class="form-label">Avg Weight Pcs</label>
-            <input class="form-input" :value="avgWeightPerPcs" readonly />
+          <div class="cro-rolls">
+            <div class="cro-rolls__row cro-rolls__row--head">
+              <span>#</span><span>Weight (kg)</span><span>Qty</span><span>Mistake</span><span></span>
+            </div>
+            <div v-for="(r, i) in order.rolls" :key="r.key" class="cro-rolls__row">
+              <span class="cro-rolls__idx">{{ i + 1 }}</span>
+              <input class="form-input" type="number" step="0.001" min="0" v-model="r.rollWeight" placeholder="0.000" />
+              <input class="form-input" type="number" step="1" min="0" v-model="r.rollQty" :placeholder="orderIsPcs ? 'req.' : '0'" />
+              <input class="form-input" type="number" step="1" min="0" v-model="r.mistakeQty" placeholder="0" />
+              <button class="cro-rolls__del" type="button" title="Remove" :disabled="order.rolls.length === 1" @click="removeRollRow(i)">✕</button>
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-full" type="button" style="margin-top:8px" @click="addRollRow()">+ Add roll</button>
+          <div class="cro-hint" v-if="rollsTotal.weight || rollsTotal.qty">
+            Total: {{ fmtNum(rollsTotal.weight) }} kg<span v-if="rollsTotal.qty"> · {{ fmtNum(rollsTotal.qty) }} pcs</span>
           </div>
 
           <div class="alert alert-error" v-if="order.error">⚠ {{ order.error }}</div>
 
-          <button class="btn btn-primary btn-full btn-lg" :disabled="order.submitting" @click="submitOrder">
+          <button class="btn btn-primary btn-full btn-lg" style="margin-top:12px" :disabled="order.submitting || !order.batch" @click="submitOrder">
             <span v-if="order.submitting" class="cro-spinner"></span>
-            {{ order.submitting ? 'Creating…' : '+ Create Roll' }}
+            {{ order.submitting ? 'Creating…' : (validRolls.length > 1 ? `+ Create ${validRolls.length} Rolls` : '+ Create Roll') }}
           </button>
         </div>
       </template>
@@ -251,12 +273,17 @@
       <!-- ══════════════════════ RESULT / PRINT ══════════════════════ -->
       <div class="card cro-result" v-if="result">
         <div class="cro-result__icon">✅</div>
-        <div class="cro-result__title">Roll Created</div>
-        <div class="cro-result__rollno">{{ result.name }}</div>
+        <div class="cro-result__title">{{ resultRolls.length > 1 ? `${resultRolls.length} Rolls Created` : 'Roll Created' }}</div>
+        <div class="cro-result__rollno">
+          {{ resultRolls.length > 1 ? `${resultRolls[0].name} – ${resultRolls[resultRolls.length - 1].name}` : result.name }}
+        </div>
         <div class="cro-result__sub">
           {{ result.item_code || '—' }}<span v-if="result.commercial_name"> · {{ result.commercial_name }}</span>
+          <span v-if="result.batch"><br />{{ result.batch }}</span>
         </div>
-        <button class="btn btn-outline btn-full" style="margin-top:12px" @click="generatePrint">🖨 Generate Print</button>
+        <button class="btn btn-outline btn-full" style="margin-top:12px" @click="generatePrint">
+          🖨 {{ resultRolls.length > 1 ? `Print ${resultRolls.length} Stickers` : 'Generate Print' }}
+        </button>
         <button class="btn btn-ghost btn-full" style="margin-top:8px" @click="result = null">+ Create Another</button>
       </div>
 
@@ -265,7 +292,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, watch, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
@@ -276,9 +303,9 @@ import {
   syncSubcontractingOrders,
   getPOItems,
   getSOItems,
-  getBatchesForItemCode,
+  getReceivedBatches,
+  createOrderRolls,
   cutRoll,
-  createPOSORoll,
   searchRollsForCut
 } from '@/api/frappe'
 
@@ -307,11 +334,17 @@ const KNIT_MACHINES = [
 const SHIFT_OPTIONS = ['1', '2']
 
 const tab = ref('cut')
-const result = ref(null)
+const result = ref(null)        // first created roll (header of the result card)
+const resultRolls = ref([])     // every roll created by the last action
+
+function setResult(rolls) {
+  resultRolls.value = rolls
+  result.value = rolls[0] || null
+}
 
 function setTab(t) {
   tab.value = t
-  result.value = null
+  setResult([])
   resetCutForm()
   resetOrderForm()
 }
@@ -405,7 +438,7 @@ async function submitCut() {
       knit_shift_no: cut.shiftNo
     })
     const roll = await getDoc('Roll', resp.name)
-    result.value = roll
+    setResult([roll])
     resetCutForm()
   } catch (e) {
     cut.error = e.message || 'Failed to cut roll'
@@ -418,27 +451,36 @@ async function submitCut() {
 const poOrders = ref([])
 const soOrders = ref([])
 
+let rowSeq = 0
+const newRow = (v = {}) => ({ key: ++rowSeq, rollWeight: '', rollQty: '', mistakeQty: '', ...v })
+
 const order = reactive({
   selected: '', poFilter: '', items: [], itemCode: '', item: null,
-  batch: '', actualWidth: '', rollWeight: '', rollQty: '', mistakeQty: '', okQty: '',
-  submitting: false, error: ''
+  batch: '', actualWidth: '', rolls: [newRow()], showPaste: false, pasteText: '',
+  loadingBatches: false, submitting: false, error: ''
 })
-const batchOptions = ref([])
+// Batches of the chosen item actually received on this order's submitted
+// Purchase / Subcontracting Receipts — the only batches a scannable roll
+// can be created on (see pranera_knit/api/order_rolls.py).
+const receivedBatches = ref([])
+
+function resetBatches() {
+  order.batch = ''
+  receivedBatches.value = []
+}
 
 function resetOrderForm() {
   order.selected = ''; order.poFilter = ''; order.items = []; order.itemCode = ''; order.item = null
-  order.batch = ''; order.actualWidth = ''; order.rollWeight = ''; order.rollQty = ''
-  order.mistakeQty = ''; order.okQty = ''; order.submitting = false; order.error = ''
-  batchOptions.value = []
+  order.actualWidth = ''; order.rolls = [newRow()]; order.showPaste = false; order.pasteText = ''
+  order.loadingBatches = false; order.submitting = false; order.error = ''
+  resetBatches()
 }
 
-// Used after a successful "Create Roll" — keeps Purchase Order/Subcontracting
-// Order/Item Code/Batch/Actual Width as-is so the next roll off the same
-// order doesn't require re-picking them, and only clears the fields that
-// actually change roll to roll.
+// Used after a successful create — keeps Order / Item / Batch / Actual Width
+// so the next rolls off the same batch don't need re-picking; only the
+// per-roll rows are cleared.
 function resetPerRollFields() {
-  order.rollWeight = ''; order.rollQty = ''
-  order.mistakeQty = ''; order.okQty = ''; order.error = ''
+  order.rolls = [newRow()]; order.pasteText = ''; order.error = ''
 }
 
 const poFilterOptions = computed(() =>
@@ -464,8 +506,7 @@ function onPoFilterChange(val) {
   order.itemCode = ''
   order.item = null
   order.items = []
-  order.batch = ''
-  batchOptions.value = []
+  resetBatches()
 }
 
 const itemOptions = computed(() =>
@@ -476,8 +517,7 @@ async function onOrderChange(val) {
   order.itemCode = ''
   order.item = null
   order.items = []
-  order.batch = ''
-  batchOptions.value = []
+  resetBatches()
   if (!val) return
   try {
     order.items = tab.value === 'po' ? await getPOItems(val) : await getSOItems(val)
@@ -486,79 +526,110 @@ async function onOrderChange(val) {
   }
 }
 
-async function onOrderItemChange(val) {
-  order.item = order.items.find(i => i.item_code === val) || null
-  order.batch = ''
-  batchOptions.value = []
-  if (!val) return
+async function loadReceivedBatches() {
+  const keep = order.batch
+  resetBatches()
+  if (!order.itemCode || !order.selected) return
+  order.loadingBatches = true
   try {
-    const rows = await getBatchesForItemCode(val)
-    batchOptions.value = rows.map(b => ({ label: b.batch_id || b.name, value: b.name }))
+    receivedBatches.value = await getReceivedBatches({
+      itemCode: order.itemCode,
+      purchaseOrder: tab.value === 'po' ? order.selected : '',
+      subcontractingOrder: tab.value === 'so' ? order.selected : '',
+    })
+    if (keep && receivedBatches.value.some(b => b.batch === keep)) order.batch = keep
+    else if (receivedBatches.value.length === 1) order.batch = receivedBatches.value[0].batch
   } catch (e) {
-    console.warn('Batch fetch failed:', e.message)
+    order.error = e.message || 'Failed to load received batches'
+  } finally {
+    order.loadingBatches = false
   }
 }
 
-// Ok Qty auto-fills from Roll Qty − Mistake Qty, but stays a plain editable
-// field so the operator can override it afterwards (matches the legacy
-// Ionic report's behaviour).
-watch([() => order.rollQty, () => order.mistakeQty], ([qty, mistake]) => {
-  if (qty === '' || qty === null) return
-  order.okQty = Math.max(0, Number(qty || 0) - Number(mistake || 0))
+async function onOrderItemChange(val) {
+  order.item = order.items.find(i => i.item_code === val) || null
+  order.itemCode = val
+  await loadReceivedBatches()
+}
+
+const orderIsPcs = computed(() => (order.item?.stock_uom || '').trim().toLowerCase() === 'pcs')
+const selectedBatch = computed(() => receivedBatches.value.find(b => b.batch === order.batch) || null)
+
+// Rows the operator has actually filled in (blank trailing rows are ignored).
+const validRolls = computed(() => order.rolls.filter(r =>
+  orderIsPcs.value ? Number(r.rollQty) > 0 : Number(r.rollWeight) > 0
+))
+const rollsTotal = computed(() => ({
+  weight: validRolls.value.reduce((t, r) => t + (Number(r.rollWeight) || 0), 0),
+  qty: validRolls.value.reduce((t, r) => t + (Number(r.rollQty) || 0), 0),
+}))
+const remainingAfter = computed(() => {
+  const b = selectedBatch.value
+  if (!b) return 0
+  return Number(b.remaining || 0) - (orderIsPcs.value ? rollsTotal.value.qty : rollsTotal.value.weight)
 })
 
-const avgWeightPerPcs = computed(() => {
-  const w = Number(order.rollWeight || 0)
-  const q = Number(order.rollQty || 0)
-  if (!w || !q) return ''
-  return (w / q).toFixed(4)
-})
+function addRollRow(v) { order.rolls.push(newRow(v)) }
+function removeRollRow(i) { if (order.rolls.length > 1) order.rolls.splice(i, 1) }
+
+// "Paste many": one roll per line — a weight (Kgs items) or "qty, weight"
+// (Pcs items). Separators: comma, tab or spaces. Appends to the table,
+// replacing a single blank starting row.
+function applyPaste() {
+  const rows = order.pasteText.split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+    const nums = l.split(/[\s,;\t]+/).map(Number).filter(n => !Number.isNaN(n))
+    return orderIsPcs.value
+      ? { rollQty: nums[0] ?? '', rollWeight: nums[1] ?? '' }
+      : { rollWeight: nums[0] ?? '', rollQty: nums[1] ?? '' }
+  }).filter(r => Number(orderIsPcs.value ? r.rollQty : r.rollWeight) > 0)
+  if (!rows.length) { order.error = 'No numbers found in the pasted text'; return }
+  const blankStart = order.rolls.length === 1 && !order.rolls[0].rollWeight && !order.rolls[0].rollQty
+  order.rolls = [...(blankStart ? [] : order.rolls), ...rows.map(r => newRow(r))]
+  order.pasteText = ''
+  order.showPaste = false
+  order.error = ''
+}
+
+function fmtNum(n) {
+  return (Number(n) || 0).toLocaleString('en-IN', { maximumFractionDigits: 3 })
+}
 
 async function submitOrder() {
   order.error = ''
-  if (tab.value === 'so' && !order.poFilter) {
-    order.error = 'Select a Purchase Order first'
-    return
-  }
+  if (tab.value === 'so' && !order.poFilter) { order.error = 'Select a Purchase Order first'; return }
   if (!order.selected) {
     order.error = `Select a ${tab.value === 'po' ? 'Purchase Order' : 'Subcontracting Order'} first`
     return
   }
   if (!order.itemCode) { order.error = 'Select an Item'; return }
-
-  const rollWeight = Number(order.rollWeight || 0)
-  const rollQty = Number(order.rollQty || 0)
-  const isPcs = (order.item?.stock_uom || '').trim().toLowerCase() === 'pcs'
-
-  if (isPcs && !(rollQty > 0)) { order.error = 'Enter Roll Qty'; return }
-  if (!isPcs && !(rollWeight > 0)) { order.error = 'Enter Roll Weight'; return }
+  if (!order.batch) { order.error = 'Select the received batch'; return }
+  const rolls = validRolls.value
+  if (!rolls.length) { order.error = orderIsPcs.value ? 'Enter Roll Qty' : 'Enter Roll Weight'; return }
+  if (orderIsPcs.value && rolls.some(r => !(Number(r.rollWeight) > 0)) &&
+      !window.confirm('Some rolls have no weight. Create them anyway?')) return
+  if (remainingAfter.value < 0 && !window.confirm(
+    `These rolls take the batch ${fmtNum(-remainingAfter.value)} ${selectedBatch.value?.stock_uom || ''} over what was received. Create them anyway?`
+  )) return
 
   order.submitting = true
   try {
-    const payload = {
-      purchase_order: tab.value === 'po' ? order.selected : '',
-      subcontracting_order: tab.value === 'so' ? order.selected : '',
+    const created = await createOrderRolls({
+      purchase_order: tab.value === 'po' ? order.selected : undefined,
+      subcontracting_order: tab.value === 'so' ? order.selected : undefined,
       item_code: order.itemCode,
-      item_name: order.item?.item_name || '',
-      commercial_name: order.item?.commercial_name || '',
-      color: order.item?.color || '',
-      width: order.item?.width || '',
-      actual_width: order.actualWidth || '',
-      project: order.item?.project || '',
-      stock_uom: order.item?.stock_uom || '',
-      batch: order.batch || '',
-      roll_weight: rollWeight,
-      total_qty: rollQty,
-      mistake_qty: Number(order.mistakeQty || 0),
-      ok_qty: Number(order.okQty || 0),
-      avg_weight_per_pcs: Number(avgWeightPerPcs.value || 0)
-    }
-    const resp = await createPOSORoll(payload)
-    const roll = await getDoc('Roll', resp.name)
-    result.value = roll
+      batch: order.batch,
+      actual_width: order.actualWidth || undefined,
+      rolls: rolls.map(r => ({
+        roll_weight: Number(r.rollWeight || 0),
+        total_qty: Number(r.rollQty || 0),
+        mistake_qty: Number(r.mistakeQty || 0),
+      })),
+    })
+    setResult(created)
     resetPerRollFields()
+    loadReceivedBatches()   // refresh rolls made / left on this batch
   } catch (e) {
-    order.error = e.message || 'Failed to create roll'
+    order.error = e.message || 'Failed to create rolls'
   } finally {
     order.submitting = false
   }
@@ -574,10 +645,18 @@ onMounted(async () => {
 // so a roll created here prints exactly like the "🖨 Print Sticker" button on
 // /knit-app/rolls.
 async function generatePrint() {
-  const roll = result.value
-  if (!roll) return
+  const rolls = resultRolls.value.length ? resultRolls.value : (result.value ? [result.value] : [])
+  if (!rolls.length) return
   const w = window.open('', '_blank')
   if (!w) { alert('Allow pop-ups to print.'); return }
+  const stickers = []
+  for (const roll of rolls) stickers.push(await stickerHtml(roll))
+  w.document.write(stickerPage(`<div class="pgs">${stickers.join('')}</div>`))
+  w.document.close()
+}
+
+// One 60 × 75 mm label per roll; each prints on its own label/page.
+async function stickerHtml(roll) {
 
   const weight = Number(roll.roll_weight ?? 0).toFixed(3)
   const totalQtyRaw = roll.total_qty
@@ -598,7 +677,21 @@ async function generatePrint() {
   } catch (e) { console.error('QR generation failed:', e) }
   const qrCell = qrImg ? `<img src="${qrImg}" style="width:24mm;height:24mm" alt="QR"/>` : ''
 
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
+  return `<div class="pg"><div class="sticker">
+  <div class="qr-cell">${qrCell}</div>
+  <table>
+    <tr><td class="item-code" style="font-size:${itemFontSize}">${itemCode}</td></tr>
+    <tr><td>${roll.commercial_name || ''}</td></tr>
+    <tr><td>${refNo}</td></tr>
+    <tr><td>${roll.name}</td></tr>
+    <tr><td class="weight-line" style="font-size:${weightFontSize}">${weightLine}</td></tr>
+    ${batchRow}
+  </table>
+</div></div>`
+}
+
+function stickerPage(body) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Roll Sticker</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100%; height:100%; }
@@ -613,8 +706,7 @@ async function generatePrint() {
        font-family:Arial,Helvetica,sans-serif; color:#000; line-height:1.15;
        text-rendering:optimizeLegibility; -webkit-font-smoothing:antialiased;
        word-break:break-word; white-space:normal; overflow-wrap:break-word; }
-  td.item-code { font-size:${itemFontSize}; }
-  td.weight-line { font-size:${weightFontSize}; white-space:nowrap; }
+  td.weight-line { white-space:nowrap; }
   tr:last-child td { border-bottom:none; padding-bottom:1.5mm; }
   .noprint { text-align:center; padding:10px; }
   .noprint button { padding:7px 18px; margin:0 4px; border-radius:5px; border:none;
@@ -623,30 +715,21 @@ async function generatePrint() {
   .btn-c { background:#eee; color:#333; }
   @media print {
     .noprint { display:none; }
-    html, body { width:100%; height:75mm; max-height:75mm; margin:0; padding:0; overflow:hidden; }
+    html, body { width:100%; margin:0; padding:0; }
     body { display:block; }
+    .pg { height:75mm; max-height:75mm; overflow:hidden; page-break-after:always; break-after:page; }
+    .pgs > .pg:last-child { page-break-after:auto; break-after:auto; }
     .sticker { margin:2mm auto 0; max-height:73mm; overflow:hidden; }
     @page { size:60mm 75mm; margin:0; }
   }
 </style>
 </head><body>
-<div class="sticker">
-  <div class="qr-cell">${qrCell}</div>
-  <table>
-    <tr><td class="item-code">${itemCode}</td></tr>
-    <tr><td>${roll.commercial_name || ''}</td></tr>
-    <tr><td>${refNo}</td></tr>
-    <tr><td>${roll.name}</td></tr>
-    <tr><td class="weight-line">${weightLine}</td></tr>
-    ${batchRow}
-  </table>
-</div>
+${body}
 <div class="noprint">
   <button class="btn-p" onclick="window.print()">🖨 Print</button>
   <button class="btn-c" onclick="window.close()">Close</button>
 </div>
-</body></html>`)
-  w.document.close()
+</body></html>`
 }
 </script>
 
@@ -698,6 +781,30 @@ async function generatePrint() {
 .cro-detail-row strong { color:var(--slate-900,#0f172a); font-weight:700; }
 
 .cro-hint { font-size:12px; color:var(--slate-500,#64748b); margin-top:6px; }
+.cro-hint--warn { color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 10px; line-height:1.45; }
+
+/* Received batch summary */
+.cro-batch-stats {
+  display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:-4px 0 14px;
+  border:1.5px solid var(--slate-200,#e2e8f0); border-radius:10px; padding:10px 12px; background:var(--slate-50,#f8fafc);
+}
+.cro-batch-stats span { display:block; font-size:10.5px; font-weight:700; text-transform:uppercase; color:var(--slate-500,#64748b); }
+.cro-batch-stats strong { font-size:14px; color:var(--slate-900,#0f172a); }
+.cro-batch-stats__rcpt { grid-column:1 / -1; font-size:11px; color:var(--slate-500,#64748b); overflow-wrap:anywhere; }
+.cro-neg { color:#dc2626 !important; }
+
+/* Rolls table (one or many rolls on the batch) */
+.cro-rolls-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.cro-link { background:none; border:none; color:var(--app-primary,#0f6e56); font-weight:700; font-size:12.5px; cursor:pointer; font-family:inherit; }
+.cro-rolls { display:flex; flex-direction:column; gap:6px; }
+.cro-rolls__row { display:grid; grid-template-columns:22px 1.3fr 1fr 1fr 30px; gap:6px; align-items:center; }
+.cro-rolls__row .form-input { padding:8px; font-size:13px; min-width:0; }
+.cro-rolls__row--head span { font-size:10.5px; font-weight:700; text-transform:uppercase; color:var(--slate-500,#64748b); }
+.cro-rolls__idx { font-size:12px; color:var(--slate-400,#94a3b8); text-align:right; }
+.cro-rolls__del { border:none; background:none; color:var(--slate-400,#94a3b8); cursor:pointer; font-size:13px; padding:4px; }
+.cro-rolls__del:hover:not(:disabled) { color:#dc2626; }
+.cro-rolls__del:disabled { opacity:0.3; cursor:default; }
+@media (max-width:500px) { .cro-batch-stats { grid-template-columns:1fr 1fr; } }
 
 /* Result / print */
 .cro-result { text-align:center; padding:24px 16px; }
