@@ -26,7 +26,8 @@ Validations that run on every scan:
      back to its parent, only the "<parent>-<n>" naming convention. So
      this check also walks that suffix off the scanned roll_no and
      accepts a match on any ancestor in the chain.
-     A roll that was never packed is still accepted when its batch was
+     When the Assignment has 'Allow Old Roll Scan' ticked, a roll that
+     was never packed is also accepted when its batch was
      brought into stock by a submitted source document — Manufacture /
      Repack / Material Receipt Stock Entry, Purchase Receipt,
      Subcontracting Receipt or Stock Reconciliation — which covers old
@@ -643,6 +644,7 @@ def get_pick_order_detail(name):
         "status": doc.status,
         "pick_type": doc.pick_type,
         "roll_source": _roll_source(doc),
+        "allow_old_roll_scan": cint(doc.get("allow_old_roll_scan")),
         "document_name": _resolve_document_name(doc),
         "sales_order": doc.sales_order,
         "purchase_order": doc.purchase_order,
@@ -827,28 +829,37 @@ def scan_pick_order_roll(pick_order, roll_no, source_warehouse, chosen_batch=Non
         """,
         {"roll_no_chain": roll_no_chain},
     )
-    # Rolls that never went through a Roll Packing List are still real,
-    # moveable stock when their batch was actually brought into stock by a
-    # source document:
-    #   - old manufactured rolls (knitted before the packing-list flow, or
-    #     packed without a Stock Entry link) — batch produced by a submitted
-    #     Manufacture / Repack Stock Entry;
-    #   - greige rolls knitted by a subcontractor or bought in — batch
-    #     received on a Subcontracting / Purchase Receipt, even when the
-    #     Roll record itself has no Subcontracting / Purchase Order filled;
-    #   - opening / migrated stock — Material Receipt or Stock
-    #     Reconciliation.
-    # Only a roll whose batch never came into stock at all is refused.
-    if not packed_against_stock_entry and _batch_received_into_stock(roll.batch):
+    # Greige rolls knitted by a subcontractor (or bought in) never go
+    # through an in-house Manufacture + Roll Packing List — their stock
+    # arrives via a submitted Subcontracting Receipt / Purchase Receipt.
+    # Such a roll is real, moveable stock as long as its batch was
+    # actually received, so accept it on that basis instead.
+    if not packed_against_stock_entry and _is_received_external_roll(roll):
+        packed_against_stock_entry = True
+
+    # "Allow Old Roll Scan" on the Assignment: also accept rolls that never
+    # went through a Roll Packing List and aren't linked to a receipt, as
+    # long as their batch was brought into stock by a source document —
+    # old manufactured rolls (Manufacture / Repack Stock Entry), bought-in
+    # or subcontracted rolls without a PO/SCO on the Roll, and opening
+    # stock (Material Receipt / Stock Reconciliation).
+    allow_old = cint(doc.get("allow_old_roll_scan"))
+    if not packed_against_stock_entry and allow_old and _batch_received_into_stock(roll.batch):
         packed_against_stock_entry = True
 
     if not packed_against_stock_entry:
+        if allow_old:
+            frappe.throw(_(
+                "Roll {0} can't be picked: it is not in any submitted Roll Packing List with a "
+                "Stock Entry, and its batch {1} was never brought into stock by a submitted "
+                "Manufacture / Repack / Material Receipt Stock Entry, Purchase Receipt, "
+                "Subcontracting Receipt or Stock Reconciliation"
+            ).format(roll_no, roll.batch or _("(no batch)")))
         frappe.throw(_(
-            "Roll {0} can't be picked: it is not in any submitted Roll Packing List with a "
-            "Stock Entry, and its batch {1} was never brought into stock by a submitted "
-            "Manufacture / Repack / Material Receipt Stock Entry, Purchase Receipt, "
-            "Subcontracting Receipt or Stock Reconciliation"
-        ).format(roll_no, roll.batch or _("(no batch)")))
+            "Roll {0} is not included in any submitted Roll Packing List with a Stock Entry "
+            "(Manufacture) linked — it hasn't actually been packed/produced yet, so it can't "
+            "be picked. For old rolls, tick 'Allow Old Roll Scan' on this Pick Order"
+        ).format(roll_no))
 
     if doc.pick_type == "To Work Order" and doc.work_order:
         wo_project = frappe.db.get_value("Work Order", doc.work_order, "project")
@@ -900,6 +911,47 @@ def _planned_batch_map(doc, batches):
     return out
 
 
+def _is_received_external_roll(roll):
+    """True when the roll came from a Subcontracting / Purchase Order and
+    its batch has been received against a submitted, non-cancelled
+    Subcontracting Receipt or Purchase Receipt."""
+    if not roll.batch or not (roll.get("subcontracting_order") or roll.get("purchase_order")):
+        return False
+
+    receipt_types = ("Subcontracting Receipt", "Purchase Receipt")
+
+    # v15 Serial and Batch Bundle path
+    if frappe.db.sql(
+        """
+        select 1
+        from `tabSerial and Batch Entry` sbe
+        inner join `tabSerial and Batch Bundle` sbb on sbb.name = sbe.parent
+        where sbe.batch_no = %(batch)s
+            and sbb.voucher_type in %(types)s
+            and sbb.docstatus = 1
+            and sbb.is_cancelled = 0
+            and sbb.type_of_transaction = 'Inward'
+        limit 1
+        """,
+        {"batch": roll.batch, "types": receipt_types},
+    ):
+        return True
+
+    # Legacy batch_no on the ledger (pre-bundle entries)
+    return bool(frappe.db.sql(
+        """
+        select 1 from `tabStock Ledger Entry`
+        where batch_no = %(batch)s
+            and voucher_type in %(types)s
+            and is_cancelled = 0
+            and actual_qty > 0
+        limit 1
+        """,
+        {"batch": roll.batch, "types": receipt_types},
+    ))
+
+
+# Used only when the Assignment has 'Allow Old Roll Scan' ticked.
 # Vouchers that bring a batch INTO stock from outside the warehouse network.
 # Plain transfers are excluded: they only move stock that already exists.
 SOURCE_VOUCHER_TYPES = ("Purchase Receipt", "Subcontracting Receipt", "Stock Reconciliation")
