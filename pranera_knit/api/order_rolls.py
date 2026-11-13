@@ -147,6 +147,47 @@ def get_received_batches(item_code, purchase_order=None, subcontracting_order=No
     return out
 
 
+@frappe.whitelist()
+def get_draft_receipts(item_code, purchase_order=None, subcontracting_order=None):
+    """Draft (not yet submitted) Purchase / Subcontracting Receipts for this
+    item on the order. Their batches aren't in stock yet, so no scannable
+    roll can be made on them — the Create Rolls page names them so the
+    operator knows which receipt to get submitted."""
+    _check_order(purchase_order, subcontracting_order)
+    if not item_code:
+        return []
+    out = []
+    if purchase_order:
+        out += frappe.db.sql(
+            """
+            select pri.parent as receipt, 'Purchase Receipt' as receipt_type,
+                   sum(pri.stock_qty) as qty, max(pri.stock_uom) as stock_uom,
+                   max(pri.batch_no) as batch, max(pr.posting_date) as posting_date
+            from `tabPurchase Receipt Item` pri
+            inner join `tabPurchase Receipt` pr on pr.name = pri.parent
+            where pri.purchase_order = %(po)s and pri.item_code = %(item)s and pr.docstatus = 0
+            group by pri.parent
+            """,
+            {"po": purchase_order, "item": item_code}, as_dict=True,
+        )
+    sr_filter = "sri.subcontracting_order = %(sco)s" if subcontracting_order else "sri.purchase_order = %(po)s"
+    out += frappe.db.sql(
+        f"""
+        select sri.parent as receipt, 'Subcontracting Receipt' as receipt_type,
+               sum(sri.qty) as qty, max(sri.stock_uom) as stock_uom,
+               max(sri.batch_no) as batch, max(sr.posting_date) as posting_date
+        from `tabSubcontracting Receipt Item` sri
+        inner join `tabSubcontracting Receipt` sr on sr.name = sri.parent
+        where {sr_filter} and sri.item_code = %(item)s and sr.docstatus = 0
+        group by sri.parent
+        """,
+        {"po": purchase_order, "sco": subcontracting_order, "item": item_code}, as_dict=True,
+    )
+    for r in out:
+        r.qty = flt(r.qty, 3)
+    return sorted(out, key=lambda r: r.receipt)
+
+
 # ── Create rolls ──────────────────────────────────────────────────────────
 
 def _order_item(item_code, purchase_order=None, subcontracting_order=None):

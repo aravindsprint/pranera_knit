@@ -211,9 +211,18 @@
                   {{ b.batch }} · {{ fmtNum(b.received_qty) }} {{ b.stock_uom }} received · {{ b.rolls }} rolls
                 </option>
               </select>
-              <div class="cro-hint cro-hint--warn" v-if="!receivedBatches.length">
+              <div class="cro-hint cro-hint--warn" v-if="!receivedBatches.length && !draftReceipts.length">
                 Nothing received for this item on this {{ tab === 'po' ? 'Purchase Order' : 'Subcontracting Order' }} yet.
                 Submit the {{ tab === 'po' ? 'Purchase' : 'Subcontracting' }} Receipt first — a roll on a batch that wasn't received can't be scanned.
+              </div>
+              <div class="cro-hint cro-hint--warn" v-if="draftReceipts.length">
+                <strong>{{ draftReceipts.length === 1 ? 'This receipt is' : 'These receipts are' }} still in Draft</strong> —
+                ask stores to submit {{ draftReceipts.length === 1 ? 'it' : 'them' }}, then reopen this item to roll the batch:
+                <ul class="cro-drafts">
+                  <li v-for="d in draftReceipts" :key="d.receipt">
+                    {{ d.receipt }} · {{ fmtNum(d.qty) }} {{ d.stock_uom }}<span v-if="d.batch"> · {{ d.batch }}</span>
+                  </li>
+                </ul>
               </div>
             </template>
           </div>
@@ -304,6 +313,7 @@ import {
   getPOItems,
   getSOItems,
   getReceivedBatches,
+  getDraftReceipts,
   createOrderRolls,
   cutRoll,
   searchRollsForCut
@@ -463,10 +473,14 @@ const order = reactive({
 // Purchase / Subcontracting Receipts — the only batches a scannable roll
 // can be created on (see pranera_knit/api/order_rolls.py).
 const receivedBatches = ref([])
+// Receipts for this item still in Draft — their batches can't be rolled
+// until they're submitted, so the page names them.
+const draftReceipts = ref([])
 
 function resetBatches() {
   order.batch = ''
   receivedBatches.value = []
+  draftReceipts.value = []
 }
 
 function resetOrderForm() {
@@ -532,11 +546,17 @@ async function loadReceivedBatches() {
   if (!order.itemCode || !order.selected) return
   order.loadingBatches = true
   try {
-    receivedBatches.value = await getReceivedBatches({
+    const args = {
       itemCode: order.itemCode,
       purchaseOrder: tab.value === 'po' ? order.selected : '',
       subcontractingOrder: tab.value === 'so' ? order.selected : '',
-    })
+    }
+    const [received, drafts] = await Promise.all([
+      getReceivedBatches(args),
+      getDraftReceipts(args).catch(() => []),
+    ])
+    receivedBatches.value = received
+    draftReceipts.value = drafts
     if (keep && receivedBatches.value.some(b => b.batch === keep)) order.batch = keep
     else if (receivedBatches.value.length === 1) order.batch = receivedBatches.value[0].batch
   } catch (e) {
@@ -792,6 +812,8 @@ ${body}
 .cro-batch-stats strong { font-size:14px; color:var(--slate-900,#0f172a); }
 .cro-batch-stats__rcpt { grid-column:1 / -1; font-size:11px; color:var(--slate-500,#64748b); overflow-wrap:anywhere; }
 .cro-neg { color:#dc2626 !important; }
+.cro-drafts { margin:6px 0 0 16px; padding:0; }
+.cro-drafts li { margin:2px 0; overflow-wrap:anywhere; }
 
 /* Rolls table (one or many rolls on the batch) */
 .cro-rolls-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
