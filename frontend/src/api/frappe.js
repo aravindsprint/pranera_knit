@@ -686,6 +686,13 @@ export const getReceivedBatches = ({ itemCode, purchaseOrder, subcontractingOrde
     subcontracting_order: subcontractingOrder || undefined,
   }).then(r => r.message || [])
 
+export const getDraftReceipts = ({ itemCode, purchaseOrder, subcontractingOrder }) =>
+  call(`${ORDER_ROLLS_API}.get_draft_receipts`, {
+    item_code: itemCode,
+    purchase_order: purchaseOrder || undefined,
+    subcontracting_order: subcontractingOrder || undefined,
+  }).then(r => r.message || [])
+
 export const createOrderRolls = (payload) =>
   call(`${ORDER_ROLLS_API}.create_order_rolls`, payload).then(r => r.message || [])
 
