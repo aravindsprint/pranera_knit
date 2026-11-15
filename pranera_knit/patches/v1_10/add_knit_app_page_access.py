@@ -46,10 +46,13 @@ def execute():
                  "hidden": 1},
                 {"fieldname": "section_roles", "fieldtype": "Section Break", "label": "Access"},
                 {"fieldname": "roles", "label": "Roles", "fieldtype": "Table MultiSelect",
-                 "options": "Knit App Page Role", "in_list_view": 1,
+                 "options": "Knit App Page Role",
                  "description": "Only users with at least one of these roles see and can open this "
                                 "page in the Knit App. Leave empty to allow everyone. "
                                 "System Managers always have access."},
+                {"fieldname": "allowed_roles", "label": "Allowed Roles", "fieldtype": "Data",
+                 "read_only": 1, "in_list_view": 1, "default": "Everyone",
+                 "description": "Filled in from Roles on save (list views can't show table fields)."},
             ],
             "permissions": [
                 {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
@@ -64,5 +67,5 @@ def execute():
             continue
         frappe.get_doc({
             "doctype": "Knit App Page", "page_key": key, "page_title": title,
-            "route": route, "section": section, "idx_order": order,
+            "route": route, "section": section, "idx_order": order, "allowed_roles": "Everyone",
         }).insert(ignore_permissions=True)
