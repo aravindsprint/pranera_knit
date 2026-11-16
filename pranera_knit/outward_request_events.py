@@ -55,6 +55,10 @@ def validate_outward_request(doc, method=None):
     from pranera_knit import outward_request_approval
     outward_request_approval.apply(doc)
 
+    # One request per Work Order; From ≠ To; row warehouses in From.
+    validate_one_request_per_work_order(doc)
+    _validate_from_and_warehouses(doc)
+
     if doc.is_new():
         doc.created_by = doc.created_by or frappe.session.user
         doc.created_on = doc.created_on or now_datetime()
@@ -67,6 +71,55 @@ def validate_outward_request(doc, method=None):
     if frappe.db.get_value("Outward Request", doc.name, "request_status") != PENDING:
         frappe.throw(_("Outward Request {0} is already being processed and can no longer be edited")
                      .format(doc.name))
+
+
+def existing_request_for_work_order(work_order, exclude=None):
+    if not work_order:
+        return None
+    return frappe.db.get_value(
+        "Outward Request",
+        {"work_order": work_order, "name": ["!=", exclude or ""]},
+        "name", order_by="creation asc",
+    )
+
+
+def validate_one_request_per_work_order(doc):
+    if not doc.get("work_order"):
+        return
+    if not (doc.is_new() or doc.has_value_changed("work_order")):
+        return
+    other = existing_request_for_work_order(doc.work_order, exclude=doc.name)
+    if other:
+        frappe.throw(
+            _("Work Order {0} already has Outward Request {1}. Only one Outward Request "
+              "is allowed per Work Order — open {1} and edit it instead.")
+            .format(doc.work_order, other),
+            title=_("Duplicate Outward Request"),
+        )
+
+
+def _validate_from_and_warehouses(doc):
+    from_building = doc.get("from_building")
+    if from_building and from_building == doc.get("to_building"):
+        frappe.throw(_("From and To can't be the same building ({0})").format(from_building))
+
+    warehouses = {r.get("warehouse") for r in doc.get("items") or [] if r.get("warehouse")}
+    if not warehouses:
+        return
+    wh_building = dict(frappe.get_all(
+        "Warehouse", filters={"name": ["in", list(warehouses)]},
+        fields=["name", "building"], as_list=True,
+    ))
+    for row in doc.items:
+        wh = row.get("warehouse")
+        if not wh:
+            continue
+        if not row.batch:
+            frappe.throw(_("Row {0}: pick a Batch along with Warehouse {1}").format(row.idx, wh))
+        building = wh_building.get(wh)
+        if from_building and building and building != from_building:
+            frappe.throw(_("Row {0}: Warehouse {1} is in {2}, not in From building {3}")
+                         .format(row.idx, wh, building, from_building))
 
 
 def on_trash_outward_request(doc, method=None):

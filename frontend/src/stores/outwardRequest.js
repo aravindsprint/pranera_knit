@@ -41,6 +41,11 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   // ── Form ────────────────────────────────────────────────────────────────
   const name = ref('')              // set once saved / when opening an existing one
   const date = ref(todayISO())
+  // From is pre-filled with NAP (server: DEFAULT_FROM_BUILDING) on every
+  // new request; it can still be changed.
+  const DEFAULT_FROM_BUILDING = 'NAP'
+  const defaultFromBuilding = () => config.value?.default_from_building || DEFAULT_FROM_BUILDING
+  const fromBuilding = ref(DEFAULT_FROM_BUILDING)
   const toBuilding = ref('')
   const sourceType = ref('Work Order')   // 'Work Order' | 'Purchase Order'
   const workOrder = ref('')
@@ -65,6 +70,9 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   const saving = ref(false)
   const error = ref('')
   const fetchedFor = ref('')        // which document the current items came from
+  // Set when the fetched Work Order already has an Outward Request — only
+  // one is allowed per Work Order, so the form can't be saved.
+  const existingRequest = ref('')
 
   // Server time now = server time at fetch + time elapsed on this device.
   const serverMinutesNow = computed(() => {
@@ -101,10 +109,32 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     }
     return t
   })
+  // What this request takes from each (batch, warehouse), summed over its
+  // rows — compared against that pair's free qty (stock − other requests).
+  const takenByKey = computed(() => {
+    const t = {}
+    for (const r of items.value) {
+      if (!r.batch || !r.warehouse) continue
+      const k = `${r.batch}|${r.warehouse}`
+      t[k] = (t[k] || 0) + (Number(r.qty) || 0)
+    }
+    return t
+  })
+  function rowAllocation(r) {
+    if (!r.batch || !r.warehouse || !r.stock_info) return null
+    const taken = takenByKey.value[`${r.batch}|${r.warehouse}`] || 0
+    const free = Number(r.stock_info.available_qty) || 0
+    return { taken, free, short: Math.round((taken - free) * 1000) / 1000 }
+  }
+  const overAllocated = computed(() =>
+    items.value.filter(r => { const a = rowAllocation(r); return a && a.short > 0.001 })
+  )
+  const sameBuilding = computed(() => !!fromBuilding.value && fromBuilding.value === toBuilding.value)
   const canSave = computed(() =>
-    isEditable.value && !!date.value && !dateInPast.value && !!toBuilding.value && !!documentName.value &&
+    isEditable.value && !!date.value && !dateInPast.value && !!fromBuilding.value && !!toBuilding.value &&
+    !sameBuilding.value && !!documentName.value && !existingRequest.value &&
     items.value.length > 0 &&
-    items.value.every(r => r.item_code && Number(r.qty) > 0)
+    items.value.every(r => r.item_code && Number(r.qty) > 0 && (!r.batch || r.warehouse))
   )
   const buildingOptions = computed(() =>
     buildings.value.map(b => ({
@@ -139,6 +169,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       clockTimer = setInterval(() => { clock.value = Date.now() }, 60000)
       // A new, untouched form gets the cut-off-aware default date.
       if (!name.value && (!date.value || date.value < defaultDate.value)) date.value = defaultDate.value
+      if (!name.value && !fromBuilding.value) fromBuilding.value = defaultFromBuilding()
     } catch { /* the server still enforces the rules on save */ }
   }
 
@@ -175,6 +206,29 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     items.value = []
     receipts.value = []
     fetchedFor.value = ''
+    existingRequest.value = ''
+  }
+
+  // A row's batch must sit in a warehouse of the From building, so changing
+  // From clears picks that are now in another building.
+  function setFromBuilding(b) {
+    fromBuilding.value = b || ''
+    if (!b) return
+    for (const r of items.value) {
+      if (r.warehouse && r.building && r.building !== b) {
+        r.batch = ''; r.warehouse = ''; r.building = ''; r.stock_info = null
+      }
+    }
+  }
+
+  // The batch dropdown picked a (batch, warehouse) option (or cleared it).
+  function onBatchPicked(row, option) {
+    row.building = option?.building || ''
+    row.stock_info = option ? {
+      stock_qty: option.stock_qty, reserved_qty: option.reserved_qty,
+      available_qty: option.available_qty, unallocated_qty: option.unallocated_qty,
+      reservations: option.reservations, unallocated_reservations: option.unallocated_reservations,
+    } : null
   }
 
   async function fetchItems() {
@@ -182,13 +236,15 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     fetching.value = true
     error.value = ''
     try {
-      const res = await getOutwardRequestItems(
-        sourceType.value === 'Work Order'
+      const res = await getOutwardRequestItems({
+        ...(sourceType.value === 'Work Order'
           ? { workOrder: workOrder.value }
-          : { purchaseOrder: purchaseOrder.value }
-      )
-      items.value = (res.items || []).map(r => ({ ...r, _key: nextKey() }))
+          : { purchaseOrder: purchaseOrder.value }),
+        fromBuilding: fromBuilding.value, name: name.value,
+      })
+      items.value = (res.items || []).map(r => ({ ...r, stock_info: r.stock_info || null, _key: nextKey() }))
       receipts.value = res.receipts || []
+      existingRequest.value = res.existing_request || ''
       fetchedFor.value = documentName.value
     } catch (e) {
       clearItems()
@@ -215,11 +271,13 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       const doc = await saveOutwardRequest({
         name: name.value || undefined,
         date: date.value,
+        from_building: fromBuilding.value,
         to_building: toBuilding.value,
         work_order: sourceType.value === 'Work Order' ? workOrder.value : undefined,
         purchase_order: sourceType.value === 'Purchase Order' ? purchaseOrder.value : undefined,
         items: items.value.map(r => ({
-          item_code: r.item_code, batch: r.batch || null, qty: Number(r.qty), stock_uom: r.stock_uom
+          item_code: r.item_code, batch: r.batch || null, warehouse: r.warehouse || null,
+          qty: Number(r.qty), stock_uom: r.stock_uom
         })),
       })
       applyDoc(doc)
@@ -248,14 +306,17 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     name.value = doc.name
     date.value = doc.date
     originalDate.value = doc.date
+    fromBuilding.value = doc.from_building || ''
     toBuilding.value = doc.to_building
     sourceType.value = doc.purchase_order ? 'Purchase Order' : 'Work Order'
     workOrder.value = doc.work_order || ''
     purchaseOrder.value = doc.purchase_order || ''
     fetchedFor.value = doc.purchase_order || doc.work_order || ''
+    existingRequest.value = ''
     items.value = (doc.items || []).map(r => ({
       _key: nextKey(),
-      item_code: r.item_code, batch: r.batch || '', qty: r.qty, stock_uom: r.stock_uom || ''
+      item_code: r.item_code, batch: r.batch || '', warehouse: r.warehouse || '', building: r.building || '',
+      qty: r.qty, stock_uom: r.stock_uom || '', stock_info: r.stock_info || null,
     }))
     meta.value = {
       created_by: doc.created_by,
@@ -294,6 +355,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
 
   function reset() {
     name.value = ''
+    fromBuilding.value = defaultFromBuilding()
     date.value = config.value ? defaultDate.value : todayISO()
     originalDate.value = ''
     toBuilding.value = ''
@@ -395,10 +457,11 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     pickPlan, pickForm, warehouses, users, creatingPick, pickError, canCreatePick, pickFormValid,
     startPick, onSubcontractingOrderChange, searchUsers, createPick, cancelPick,
     requests, listFilter, listSearch, loadingList,
-    name, date, toBuilding, sourceType, workOrder, purchaseOrder, items, receipts, meta,
+    name, date, fromBuilding, toBuilding, sourceType, workOrder, purchaseOrder, items, receipts, meta,
     buildings, workOrders, purchaseOrders, buildingOptions,
     fetching, saving, error, fetchedFor,
-    documentName, isEditable, totalsByUom, canSave,
+    documentName, isEditable, totalsByUom, canSave, existingRequest, sameBuilding,
+    rowAllocation, overAllocated, setFromBuilding, onBatchPicked,
     config, afterCutoff, minDate, defaultDate, dateInPast, needsApproval, isApprover, approverNames,
     deciding, decideApproval, loadConfig,
     loadList, loadLookups, searchWorkOrders, searchPurchaseOrders,

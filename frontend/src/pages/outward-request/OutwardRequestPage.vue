@@ -21,7 +21,7 @@
         </div>
         <input
           v-model="store.listSearch" class="form-input" style="margin-top:10px"
-          placeholder="Search request, building, WO or PO..." @input="onListSearch"
+          placeholder="Search request, From / To building, WO or PO..." @input="onListSearch"
         />
       </div>
 
@@ -40,7 +40,11 @@
             <i class="pi pi-clock"></i> Same-day {{ approvalLabel(r.same_day_approval) }}
           </span>
         </div>
-        <div class="req-card__to"><i class="pi pi-building"></i> {{ r.to_building }}</div>
+        <div class="req-card__to">
+          <i class="pi pi-building"></i>
+          <span v-if="r.from_building">{{ r.from_building }} <i class="pi pi-arrow-right req-card__arrow"></i></span>
+          {{ r.to_building }}
+        </div>
         <div class="req-card__meta">
           <span>{{ r.work_order ? 'WO' : 'PO' }} · {{ r.work_order || r.purchase_order }}</span>
           <span>{{ fmtDate(r.date) }}</span>
@@ -140,12 +144,20 @@
       </div>
 
       <div class="card">
-        <div class="row-2">
+        <div class="row-3">
           <div>
             <label class="form-label">Date <span class="req">*</span></label>
             <input
               v-model="store.date" type="date" class="form-input" :disabled="!store.isEditable"
               :min="store.isEditable ? store.minDate : undefined"
+            />
+          </div>
+          <div>
+            <label class="form-label">From <span class="req">*</span></label>
+            <AutoComplete
+              :model-value="store.fromBuilding" @update:model-value="onFromChange"
+              :options="store.buildingOptions"
+              placeholder="Select building..." :disabled="!store.isEditable"
             />
           </div>
           <div>
@@ -155,6 +167,14 @@
               placeholder="Select building..." :disabled="!store.isEditable"
             />
           </div>
+        </div>
+        <div v-if="store.isEditable && store.sameBuilding" class="hint-text hint-text--error">
+          <i class="pi pi-exclamation-circle"></i>
+          <span>From and To can't be the same building.</span>
+        </div>
+        <div v-else-if="store.isEditable && !store.fromBuilding" class="hint-text">
+          <i class="pi pi-info-circle"></i>
+          <span>Pick From first — the batch list only shows stock in that building's warehouses.</span>
         </div>
 
         <template v-if="store.isEditable">
@@ -190,7 +210,7 @@
               @input="onDocInput($event, 'wo')"
             />
             <datalist id="or-wo-list">
-              <option v-for="wo in store.workOrders" :key="wo.name" :value="wo.name">{{ wo.production_item }}</option>
+              <option v-for="wo in store.workOrders" :key="wo.name" :value="wo.name">{{ wo.production_item }}{{ wo.outward_request && wo.outward_request !== store.name ? ` · has ${wo.outward_request}` : '' }}</option>
             </datalist>
           </template>
           <template v-else>
@@ -213,8 +233,17 @@
         </div>
         <div class="hint-text">
           <i class="pi pi-info-circle"></i>
-          <span v-if="store.sourceType === 'Work Order'">Items come from the Work Order's Required Items. Work Orders don't carry a batch — add one per row if needed (only batches of the Work Order's project are listed).</span>
+          <span v-if="store.sourceType === 'Work Order'">Items come from the Work Order's Required Items. Pick a batch + warehouse per row (only the Work Order's project batches with stock in the From building are listed). One Outward Request per Work Order.</span>
           <span v-else>Items come from the Raw Materials Supplied table of the submitted Subcontracting Receipt(s) for this PO, merged by item + batch.</span>
+        </div>
+        <div v-if="store.existingRequest" class="exists-box">
+          <div class="exists-box__text">
+            <i class="pi pi-ban"></i>
+            <span><strong>{{ store.workOrder }}</strong> already has Outward Request <strong>{{ store.existingRequest }}</strong>. Only one Outward Request is allowed per Work Order — edit that one instead.</span>
+          </div>
+          <button class="btn btn-outline" @click="openExisting(store.existingRequest)">
+            <i class="pi pi-external-link"></i> Open {{ store.existingRequest }}
+          </button>
         </div>
       </div>
 
@@ -230,15 +259,18 @@
 
         <div v-else class="items">
           <div class="items__header">
-            <span>Item Code</span><span>Batch</span><span class="num">Qty</span><span>UOM</span><span></span>
+            <span>Item Code</span><span>Batch · Warehouse</span><span class="num">Qty</span><span>UOM</span><span></span>
           </div>
           <div v-for="(row, i) in store.items" :key="row._key || i" class="item-row">
             <span class="item-row__code">{{ row.item_code }}</span>
-            <BatchSelect
-              v-model="row.batch" :item-code="row.item_code" :disabled="!store.isEditable"
+            <BatchStockSelect
+              v-model:batch="row.batch" v-model:warehouse="row.warehouse"
+              :item-code="row.item_code" :disabled="!store.isEditable"
               :work-order="store.sourceType === 'Work Order' ? store.workOrder : ''"
               :purchase-order="store.sourceType === 'Purchase Order' ? store.purchaseOrder : ''"
+              :from-building="store.fromBuilding" :exclude-request="store.name"
               class="item-row__batch" placeholder="Select batch…"
+              @pick="o => store.onBatchPicked(row, o)"
             />
             <input
               v-model.number="row.qty" type="number" min="0" step="0.001"
@@ -255,6 +287,28 @@
                 </button>
               </template>
             </span>
+            <div v-if="row.stock_info" class="item-row__stock" :class="{ 'item-row__stock--short': (store.rowAllocation(row)?.short || 0) > 0.001 }">
+              <div class="stock-nums">
+                <span><i class="pi pi-map-marker"></i> {{ row.warehouse }}</span>
+                <span>Stock <b>{{ fmtQty(row.stock_info.stock_qty) }}</b></span>
+                <span :class="{ 'stock-res': row.stock_info.reserved_qty > 0 }">Reserved for others <b>{{ fmtQty(row.stock_info.reserved_qty) }}</b></span>
+                <span class="stock-free">Free <b>{{ fmtQty(row.stock_info.available_qty) }}</b> {{ row.stock_uom }}</span>
+              </div>
+              <div v-if="row.stock_info.reservations.length" class="stock-res-list">
+                <span v-for="r in row.stock_info.reservations" :key="r.outward_request" class="res-chip" :title="`${r.request_status} · to ${r.to_building}`">
+                  {{ r.outward_request }} · {{ r.work_order || r.purchase_order }} · {{ fmtQty(r.qty) }}
+                </span>
+              </div>
+              <div v-if="row.stock_info.unallocated_qty > 0" class="stock-note">
+                + {{ fmtQty(row.stock_info.unallocated_qty) }} reserved on this batch by
+                {{ row.stock_info.unallocated_reservations.map(r => r.outward_request).join(', ') }} with no warehouse set.
+              </div>
+              <div v-if="(store.rowAllocation(row)?.short || 0) > 0.001" class="stock-short">
+                <i class="pi pi-exclamation-triangle"></i>
+                This request takes {{ fmtQty(store.rowAllocation(row).taken) }} from this batch here —
+                {{ fmtQty(store.rowAllocation(row).short) }} {{ row.stock_uom }} more than is free.
+              </div>
+            </div>
           </div>
           <div class="totals">
             <span v-for="(qty, uom) in store.totalsByUom" :key="uom" class="total-chip">
@@ -265,6 +319,10 @@
       </div>
 
       <div class="card" v-if="store.isEditable">
+        <div v-if="store.overAllocated.length" class="hint-text hint-text--warn" style="margin:0 0 10px">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>{{ store.overAllocated.length }} row(s) ask for more than is free after other requests' reservations. You can still save — check with the store before picking.</span>
+        </div>
         <button class="btn btn-primary btn-full" :disabled="!store.canSave || store.saving" @click="save">
           <i v-if="store.saving" class="pi pi-spin pi-spinner"></i>
           {{ store.saving ? 'Saving...' : (store.name ? 'Update Outward Request' : 'Create Outward Request') }}
@@ -370,7 +428,7 @@
           </datalist>
 
           <label class="form-label" style="margin-top:14px">Remarks <span class="optional">(optional)</span></label>
-          <textarea v-model="store.pickForm.remarks" class="form-input" rows="2" :placeholder="`Outward Request ${store.name} → ${store.toBuilding}`"></textarea>
+          <textarea v-model="store.pickForm.remarks" class="form-input" rows="2" :placeholder="`Outward Request ${store.name} · ${store.fromBuilding} → ${store.toBuilding}`"></textarea>
 
           <div v-if="store.pickError" class="error-banner" style="margin-top:12px">
             <i class="pi pi-exclamation-triangle"></i> {{ store.pickError }}
@@ -406,7 +464,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useOutwardRequestStore } from '@/stores/outwardRequest'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
-import BatchSelect from '@/components/BatchSelect.vue'
+import BatchStockSelect from '@/components/BatchStockSelect.vue'
 
 const FILTERS = [
   { label: 'All', value: '' },
@@ -492,6 +550,12 @@ let listTimer = null
 function onListSearch() {
   clearTimeout(listTimer)
   listTimer = setTimeout(() => store.loadList(), 300)
+}
+
+function onFromChange(b) {
+  if (b !== store.fromBuilding && store.items.some(r => r.building && r.building !== b) &&
+      !window.confirm('Rows with a batch from another building will be cleared. Continue?')) return
+  store.setFromBuilding(b)
 }
 
 function changeSource(t) {
@@ -586,6 +650,27 @@ function fmtQty(n) {
 .num { text-align: right; }
 
 .row-2 { display: grid; grid-template-columns: 1fr 1.6fr; gap: 12px; }
+.row-3 { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 600px) { .row-3 { grid-template-columns: 1fr 1fr; } .row-3 > div:first-child { grid-column: 1 / -1; } }
+@media (max-width: 400px) { .row-3 { grid-template-columns: 1fr; } }
+.req-card__arrow { font-size: 10px; color: #94a3b8; margin: 0 2px; }
+.exists-box { margin-top: 12px; border: 1px solid #fecaca; background: #fef2f2; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.exists-box__text { display: flex; gap: 8px; font-size: 13px; color: #991b1b; line-height: 1.5; }
+.exists-box__text i { margin-top: 3px; }
+.exists-box .btn { align-self: flex-start; min-height: 38px; border-color: #dc2626; color: #dc2626; }
+.item-row__stock { grid-column: 1 / -1; background: #f8fafc; border-radius: 8px; padding: 7px 10px; font-size: 12px; color: #475569; display: flex; flex-direction: column; gap: 5px; }
+.item-row__stock--short { background: #fef2f2; }
+.stock-nums { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.stock-nums i { font-size: 10px; color: #0f6e56; }
+.stock-nums b { color: #0f172a; }
+.stock-res b { color: #b45309; }
+.stock-free b { color: #166534; }
+.item-row__stock--short .stock-free b { color: #dc2626; }
+.stock-res-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.res-chip { background: #fef3c7; color: #92400e; border-radius: 999px; padding: 2px 8px; font-size: 11px; font-weight: 600; }
+.stock-note { font-size: 11px; color: #94a3b8; }
+.stock-short { color: #dc2626; font-weight: 600; display: flex; gap: 6px; align-items: flex-start; }
+.stock-short i { margin-top: 2px; }
 @media (max-width: 480px) { .row-2 { grid-template-columns: 1fr; } }
 
 .segmented { display: flex; background: #f1f5f9; border-radius: 10px; padding: 3px; }
@@ -614,7 +699,8 @@ function fmtQty(n) {
 .item-row__uom { font-size: 12px; color: #64748b; }
 @media (max-width: 520px) {
   .items__header { display: none; }
-  .item-row { grid-template-columns: minmax(0, 1fr) 84px 44px; grid-template-areas: "code code actions" "batch qty uom"; row-gap: 6px; }
+  .item-row { grid-template-columns: minmax(0, 1fr) 84px 44px; grid-template-areas: "code code actions" "batch qty uom" "stock stock stock"; row-gap: 6px; }
+  .item-row__stock { grid-area: stock; }
   .item-row__code { grid-area: code; }
   .item-row__batch { grid-area: batch; }
   .item-row__qty { grid-area: qty; }
