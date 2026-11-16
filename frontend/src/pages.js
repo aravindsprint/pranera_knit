@@ -17,6 +17,7 @@ export const PAGES = [
   { key: 'production-report',   label: 'Production Report',   icon: '📋', path: '/knit-app/production-report',   section: 'REPORTS' },
   { key: 'process-loss',        label: 'Process Loss',        icon: '📉', path: '/knit-app/process-loss',        section: 'REPORTS' },
   { key: 'dashboard',           label: 'Dashboard',           icon: '📈', path: '/knit-app/dashboard',           section: 'ANALYTICS' },
+  { key: 'workstation-status',  label: 'Machine Status',      icon: '🏭', path: '/knit-app/workstation-status',  section: 'ANALYTICS' },
 ]
 
 // Screens opened from inside another page follow that page's access.

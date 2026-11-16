@@ -854,3 +854,7 @@ export const searchBatchStock = (itemCode, txt, { workOrder, purchaseOrder, from
     work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined,
     from_building: fromBuilding || undefined, exclude_request: excludeRequest || undefined,
   }).then(r => r.message || [])
+
+// ── Machine Status (workstation-status page) ──
+export const getWorkstationStatus = () =>
+  call('pranera_knit.api.workstation_status.get_workstation_status').then(r => r.message || { machines: [] })
