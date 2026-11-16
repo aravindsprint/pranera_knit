@@ -7,15 +7,15 @@
     "file": "chunks/index.esm2017-BJtptJo2.js",
     "name": "index.esm2017"
   },
-  "_pickOrder-CYYFfBuI.js": {
-    "file": "chunks/pickOrder-CYYFfBuI.js",
+  "_pickOrder-JfUztU5t.js": {
+    "file": "chunks/pickOrder-JfUztU5t.js",
     "name": "pickOrder",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "index-qkL58u-0.js",
+    "file": "index-CVaoqg65.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -88,7 +88,7 @@
     "src": "node_modules/primeicons/fonts/primeicons.woff2"
   },
   "src/pages/NoAccessPage.vue": {
-    "file": "chunks/NoAccessPage-CrXhl5aL.js",
+    "file": "chunks/NoAccessPage-B3bnEKuG.js",
     "name": "NoAccessPage",
     "src": "src/pages/NoAccessPage.vue",
     "isDynamicEntry": true,
@@ -100,7 +100,7 @@
     ]
   },
   "src/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue": {
-    "file": "chunks/CollarCuffDashboardPage-X2QKmcTP.js",
+    "file": "chunks/CollarCuffDashboardPage-J6TVqZRd.js",
     "name": "CollarCuffDashboardPage",
     "src": "src/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue",
     "isDynamicEntry": true,
@@ -112,7 +112,7 @@
     ]
   },
   "src/pages/create-pick-order/CreatePickOrderPage.vue": {
-    "file": "chunks/CreatePickOrderPage-BUcaJYMj.js",
+    "file": "chunks/CreatePickOrderPage-DMQ_8Eva.js",
     "name": "CreatePickOrderPage",
     "src": "src/pages/create-pick-order/CreatePickOrderPage.vue",
     "isDynamicEntry": true,
@@ -124,7 +124,7 @@
     ]
   },
   "src/pages/dashboard/DashboardPage.vue": {
-    "file": "chunks/DashboardPage-Dvm33yf_.js",
+    "file": "chunks/DashboardPage-D7Mhjvda.js",
     "name": "DashboardPage",
     "src": "src/pages/dashboard/DashboardPage.vue",
     "isDynamicEntry": true,
@@ -136,20 +136,20 @@
     ]
   },
   "src/pages/my-pick-orders/MyPickOrdersPage.vue": {
-    "file": "chunks/MyPickOrdersPage-DcoUz7_s.js",
+    "file": "chunks/MyPickOrdersPage-Bq-oa89j.js",
     "name": "MyPickOrdersPage",
     "src": "src/pages/my-pick-orders/MyPickOrdersPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_pickOrder-CYYFfBuI.js"
+      "_pickOrder-JfUztU5t.js"
     ],
     "css": [
       "assets/MyPickOrdersPage-BzAEw4Ux.css"
     ]
   },
   "src/pages/outward-request/OutwardRequestPage.vue": {
-    "file": "chunks/OutwardRequestPage-CWcLvQeX.js",
+    "file": "chunks/OutwardRequestPage-Co2TffTM.js",
     "name": "OutwardRequestPage",
     "src": "src/pages/outward-request/OutwardRequestPage.vue",
     "isDynamicEntry": true,
@@ -161,7 +161,7 @@
     ]
   },
   "src/pages/process-loss/ProcessLossPage.vue": {
-    "file": "chunks/ProcessLossPage-DCqFH6B8.js",
+    "file": "chunks/ProcessLossPage-D8TgapzB.js",
     "name": "ProcessLossPage",
     "src": "src/pages/process-loss/ProcessLossPage.vue",
     "isDynamicEntry": true,
@@ -173,7 +173,7 @@
     ]
   },
   "src/pages/production-report/ProductionReportPage.vue": {
-    "file": "chunks/ProductionReportPage-BXUmDSfu.js",
+    "file": "chunks/ProductionReportPage-CTb2t-uY.js",
     "name": "ProductionReportPage",
     "src": "src/pages/production-report/ProductionReportPage.vue",
     "isDynamicEntry": true,
@@ -185,7 +185,7 @@
     ]
   },
   "src/pages/production-roll-summary/ProductionRollSummaryPage.vue": {
-    "file": "chunks/ProductionRollSummaryPage-BqrpTvK5.js",
+    "file": "chunks/ProductionRollSummaryPage-DOsQt860.js",
     "name": "ProductionRollSummaryPage",
     "src": "src/pages/production-roll-summary/ProductionRollSummaryPage.vue",
     "isDynamicEntry": true,
@@ -197,7 +197,7 @@
     ]
   },
   "src/pages/roll-wise-pick-list/RollWisePickListPage.vue": {
-    "file": "chunks/RollWisePickListPage-DNYZtNL6.js",
+    "file": "chunks/RollWisePickListPage-DFowIOTn.js",
     "name": "RollWisePickListPage",
     "src": "src/pages/roll-wise-pick-list/RollWisePickListPage.vue",
     "isDynamicEntry": true,
@@ -210,13 +210,13 @@
     ]
   },
   "src/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue": {
-    "file": "chunks/RollWisePickOrderExecutionPage-CzxV2Myu.js",
+    "file": "chunks/RollWisePickOrderExecutionPage-BA-moQ_J.js",
     "name": "RollWisePickOrderExecutionPage",
     "src": "src/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_pickOrder-CYYFfBuI.js",
+      "_pickOrder-JfUztU5t.js",
       "_html5-qrcode-scanner-DNkrq8sm.js"
     ],
     "css": [
@@ -224,7 +224,7 @@
     ]
   },
   "src/pages/spares-issue/SparesIssuePage.vue": {
-    "file": "chunks/SparesIssuePage-Cz-gmsfC.js",
+    "file": "chunks/SparesIssuePage-EwqT1ZRc.js",
     "name": "SparesIssuePage",
     "src": "src/pages/spares-issue/SparesIssuePage.vue",
     "isDynamicEntry": true,
@@ -236,7 +236,7 @@
     ]
   },
   "src/pages/stock/StockPage.vue": {
-    "file": "chunks/StockPage-Kzv89XIt.js",
+    "file": "chunks/StockPage-u-Gi6PTH.js",
     "name": "StockPage",
     "src": "src/pages/stock/StockPage.vue",
     "isDynamicEntry": true,
@@ -249,7 +249,7 @@
     ]
   },
   "src/pages/vehicle-gate-entry/VehicleGateEntryPage.vue": {
-    "file": "chunks/VehicleGateEntryPage-BKWLwqKN.js",
+    "file": "chunks/VehicleGateEntryPage-DHRzLGxj.js",
     "name": "VehicleGateEntryPage",
     "src": "src/pages/vehicle-gate-entry/VehicleGateEntryPage.vue",
     "isDynamicEntry": true,
@@ -261,7 +261,7 @@
     ]
   },
   "src/pages/workstation-status/WorkstationStatusPage.vue": {
-    "file": "chunks/WorkstationStatusPage-DAXsfz01.js",
+    "file": "chunks/WorkstationStatusPage-CuFxXa8J.js",
     "name": "WorkstationStatusPage",
     "src": "src/pages/workstation-status/WorkstationStatusPage.vue",
     "isDynamicEntry": true,
@@ -269,11 +269,11 @@
       "index.html"
     ],
     "css": [
-      "assets/WorkstationStatusPage-Col99dm3.css"
+      "assets/WorkstationStatusPage-DCOwvkSr.css"
     ]
   },
   "src/push.js": {
-    "file": "chunks/push-DiFlhHRA.js",
+    "file": "chunks/push-DpPUGYtZ.js",
     "name": "push",
     "src": "src/push.js",
     "isDynamicEntry": true,

@@ -257,15 +257,18 @@ onBeforeUnmount(() => clearInterval(timer))
   font-size: 14px; background: white; outline: none; font-family: inherit; min-width: 0;
 }
 .ws-search:focus { border-color: var(--app-primary, #059669); }
-.ws-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.ws-chips { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ws-chips::-webkit-scrollbar { display: none; }
 .ws-chip {
   padding: 7px 12px; border-radius: 999px; border: 1.5px solid #e2e8f0; background: white;
   font-size: 12px; font-weight: 700; color: #475569; cursor: pointer; font-family: inherit;
+  white-space: nowrap; flex-shrink: 0;
 }
 .ws-chip--on { background: var(--app-primary, #059669); border-color: var(--app-primary, #059669); color: white; }
 .ws-refresh {
   width: 38px; height: 38px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: white;
   font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
 .ws-updated { font-size: 11px; color: #94a3b8; margin: 4px 2px 12px; }
 
@@ -273,8 +276,8 @@ onBeforeUnmount(() => clearInterval(timer))
 .ws-state { display: flex; align-items: center; justify-content: center; gap: 8px; color: #64748b; padding: 28px 16px; margin-bottom: 12px; }
 .ws-state--err { color: #991b1b; }
 
-.ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
-.ws-machine { border-left: 5px solid #cbd5e1; display: flex; flex-direction: column; gap: 10px; }
+.ws-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 12px; }
+.ws-machine { border-left: 5px solid #cbd5e1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .ws-machine--running { border-left-color: #059669; }
 .ws-machine--idle { border-left-color: #d97706; }
 .ws-machine--no_work_order { border-left-color: #dc2626; }
@@ -295,9 +298,9 @@ onBeforeUnmount(() => clearInterval(timer))
 .ws-bar { height: 6px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
 .ws-bar__fill { height: 100%; background: linear-gradient(90deg, var(--app-primary, #059669), #34d399); border-radius: 999px; transition: width 0.4s; }
 
-.ws-qty-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.ws-qty-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
 .ws-qty { background: #f8fafc; border-radius: 10px; padding: 8px 10px; }
-.ws-qty__lbl { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+.ws-qty__lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
 .ws-qty__val { font-size: 15px; font-weight: 800; color: #0f172a; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .ws-qty__val--ok { color: #059669; }
 .ws-qty__val--pend { color: #d97706; }
@@ -334,6 +337,8 @@ onBeforeUnmount(() => clearInterval(timer))
 @media (max-width: 480px) {
   .ws-kpi__num { font-size: 20px; }
   .ws-kpi__lbl { font-size: 9px; }
-  .ws-grid { grid-template-columns: 1fr; }
+  .ws-grid { grid-template-columns: minmax(0, 1fr); }
+  .ws-search { flex-basis: 100%; }
+  .ws-chips { flex: 1 1 0; }
 }
 </style>
