@@ -34,6 +34,7 @@ const routes = [
 
   // ── Online-only reports / dashboards (lazy) ──
   { path: '/knit-app/dashboard', component: () => import('@/pages/dashboard/DashboardPage.vue') },
+  { path: '/knit-app/workstation-status', component: () => import('@/pages/workstation-status/WorkstationStatusPage.vue') },
   { path: '/knit-app/collar-cuff-dashboard', component: () => import('@/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue') },
   { path: '/knit-app/roll-wise-pick-list', component: () => import('@/pages/roll-wise-pick-list/RollWisePickListPage.vue') },
   { path: '/knit-app/stock', component: () => import('@/pages/stock/StockPage.vue') },
