@@ -22,6 +22,25 @@ Item fetching (get_outward_request_items):
   Work Order → its "Required Items" table (Work Order Item):
       item_code, stock_uom, qty ← required_qty. Work Order Item has no
       batch, so batch is left blank for the user to fill if needed.
+      Only ONE Outward Request per Work Order: fetching a Work Order that
+      already has one returns `existing_request` (and no items), and the
+      save is refused (outward_request_events.validate_one_request_per_work_order).
+
+From / warehouse / reservations:
+
+  Each request has a From building (from_building, defaults to
+  DEFAULT_FROM_BUILDING) next to To, and each row a warehouse next to its
+  batch. The batch dropdown (search_batch_stock) lists one option per
+  (batch, warehouse) with stock, limited to the From building's warehouses,
+  showing:
+      stock_qty      Stock Ledger balance of that batch in that warehouse
+      reserved_qty   qty other, not-yet-Completed Outward Requests hold on
+                     the same batch + warehouse (reservations[] says which
+                     request / Work Order / PO)
+      available_qty  stock_qty − reserved_qty
+  A request stops reserving once Completed (its Stock Entry has moved the
+  stock). Rows saved without a warehouse (older requests) are reported per
+  batch as unallocated_qty.
 
 Status tracking for saved requests lives in outward_request_events.py.
 """
@@ -30,10 +49,17 @@ from frappe import _
 from frappe.utils import flt
 
 from pranera_knit import outward_request_approval as approval
+from pranera_knit.outward_request_events import existing_request_for_work_order
 from pranera_knit.vehicle_gate_entry_events import vehicles_for_outward_requests
 
+# From building pre-filled on every new request from this page.
+DEFAULT_FROM_BUILDING = "NAP"
+
+QTY_EPSILON = 0.001
+BATCH_OPTION_LIMIT = 60
+
 LIST_FIELDS = [
-    "name", "date", "to_building", "work_order", "purchase_order",
+    "name", "date", "from_building", "to_building", "work_order", "purchase_order",
     "created_by", "created_on", "status", "request_status", "modified",
     "same_day_approval",
 ]
@@ -42,12 +68,22 @@ LIST_FIELDS = [
 # ── Fetch items ───────────────────────────────────────────────────────────
 
 @frappe.whitelist()
-def get_outward_request_items(work_order=None, purchase_order=None):
+def get_outward_request_items(work_order=None, purchase_order=None, from_building=None, name=None):
     if bool(work_order) == bool(purchase_order):
         frappe.throw(_("Pass either a Work Order or a Purchase Order"))
-    if purchase_order:
-        return _items_from_purchase_order(purchase_order)
-    return _items_from_work_order(work_order)
+
+    if work_order:
+        existing = existing_request_for_work_order(work_order, exclude=name)
+        if existing:
+            return {"source": "Work Order", "receipts": [], "items": [],
+                    "existing_request": existing}
+        res = _items_from_work_order(work_order)
+    else:
+        res = _items_from_purchase_order(purchase_order)
+
+    _fill_single_warehouse(res["items"], from_building)
+    _attach_stock_info(res["items"], exclude_request=name)
+    return res
 
 
 def _items_from_purchase_order(purchase_order):
@@ -128,7 +164,7 @@ def _merge(merged, item_code, batch, stock_uom, qty):
     if key in merged:
         merged[key]["qty"] += qty
     else:
-        merged[key] = {"item_code": item_code, "batch": batch or "", "stock_uom": stock_uom or "", "qty": qty}
+        merged[key] = {"item_code": item_code, "batch": batch or "", "warehouse": "", "stock_uom": stock_uom or "", "qty": qty}
 
 
 def _rows(merged):
@@ -140,19 +176,161 @@ def _rows(merged):
     return rows
 
 
+# ── Stock + reservations ──────────────────────────────────────────────────
+
+def _fill_single_warehouse(rows, from_building):
+    """PO rows arrive with a batch but no warehouse. When that batch has
+    stock in exactly one warehouse (of the From building, if set), fill it
+    in; otherwise the user picks one from the dropdown."""
+    batched = [r for r in rows if r.get("batch") and not r.get("warehouse")]
+    if not batched:
+        return
+    balances = _batch_balances([r["batch"] for r in batched], from_building=from_building)
+    by_batch = {}
+    for b in balances:
+        by_batch.setdefault(b.batch, []).append(b.warehouse)
+    for r in batched:
+        whs = by_batch.get(r["batch"], [])
+        if len(whs) == 1:
+            r["warehouse"] = whs[0]
+
+
+def _batch_balances(batches, from_building=None):
+    """Positive Stock Ledger balances per (batch, warehouse) for these
+    batches — the batch read from each entry's Serial and Batch Bundle, or
+    the legacy batch_no column (same numbers as the Stock page). Driven by
+    batch (indexed on both tables), which is ~70x faster than scanning a
+    high-volume item's whole ledger."""
+    batches = tuple({b for b in batches or [] if b})
+    if not batches:
+        return []
+    rows = frappe.db.sql(
+        """
+        SELECT batch, warehouse, SUM(qty) AS qty FROM (
+            SELECT sbe.batch_no AS batch, sle.warehouse, sbe.qty
+            FROM `tabSerial and Batch Entry` sbe
+            JOIN `tabStock Ledger Entry` sle
+              ON sle.serial_and_batch_bundle = sbe.parent AND sle.is_cancelled = 0
+            WHERE sbe.batch_no IN %(batches)s
+            UNION ALL
+            SELECT sle.batch_no, sle.warehouse, sle.actual_qty
+            FROM `tabStock Ledger Entry` sle
+            WHERE sle.batch_no IN %(batches)s AND sle.is_cancelled = 0
+              AND IFNULL(sle.serial_and_batch_bundle, '') = ''
+        ) x
+        GROUP BY batch, warehouse
+        HAVING qty > %(eps)s
+        """,
+        {"batches": batches, "eps": QTY_EPSILON}, as_dict=True,
+    )
+    if not rows:
+        return []
+    buildings = dict(frappe.get_all(
+        "Warehouse", filters={"name": ["in", list({r.warehouse for r in rows})]},
+        fields=["name", "building"], as_list=True,
+    ))
+    out = []
+    for r in rows:
+        r.building = buildings.get(r.warehouse) or ""
+        if from_building and r.building != from_building:
+            continue
+        r.qty = round(flt(r.qty), 3)
+        out.append(r)
+    return out
+
+
+def _reservations(batches, exclude_request=None):
+    """Outward Request rows on these batches whose request isn't Completed
+    yet (and isn't the one being edited), keyed by batch."""
+    if not batches:
+        return {}
+    rows = frappe.db.sql(
+        f"""
+        SELECT i.batch, IFNULL(i.warehouse, '') AS warehouse,
+               i.qty, i.stock_uom, o.name AS outward_request, o.work_order,
+               o.purchase_order, o.request_status, o.to_building, o.date
+        FROM `tabOutward Request Item` i
+        JOIN `tabOutward Request` o ON o.name = i.parent
+        WHERE i.parenttype = 'Outward Request'
+          AND i.batch IN %(batches)s
+          AND IFNULL(o.request_status, 'Pending') != 'Completed'
+          AND o.name != %(exclude)s
+        ORDER BY o.creation ASC
+        """,
+        {"batches": tuple(set(batches)), "exclude": exclude_request or ""},
+        as_dict=True,
+    )
+    by_batch = {}
+    for r in rows:
+        r.qty = round(flt(r.qty), 3)
+        by_batch.setdefault(r.batch, []).append(r)
+    return by_batch
+
+
+def _stock_info(batch, warehouse, stock_qty, reservations):
+    """Numbers shown for one (batch, warehouse): reservations on the same
+    warehouse are subtracted; ones with no warehouse are reported apart."""
+    mine = [r for r in reservations if r.warehouse == warehouse]
+    unallocated = [r for r in reservations if not r.warehouse]
+    reserved = round(sum(r.qty for r in mine), 3)
+    return {
+        "stock_qty": round(flt(stock_qty), 3),
+        "reserved_qty": reserved,
+        "available_qty": round(flt(stock_qty) - reserved, 3),
+        "unallocated_qty": round(sum(r.qty for r in unallocated), 3),
+        "reservations": [_reservation_dict(r) for r in mine],
+        "unallocated_reservations": [_reservation_dict(r) for r in unallocated],
+    }
+
+
+def _reservation_dict(r):
+    return {
+        "outward_request": r.outward_request, "work_order": r.work_order or "",
+        "purchase_order": r.purchase_order or "", "qty": r.qty,
+        "request_status": r.request_status or "Pending", "to_building": r.to_building or "",
+        "date": r.date,
+    }
+
+
+def _attach_stock_info(rows, exclude_request=None):
+    """rows[i]["stock_info"] for every row that has a batch + warehouse."""
+    keyed = [r for r in rows if r.get("batch") and r.get("warehouse")]
+    if not keyed:
+        return rows
+    batches = [r["batch"] for r in keyed]
+    stock = {(b.batch, b.warehouse): b.qty for b in _batch_balances(batches)}
+    reservations = _reservations(batches, exclude_request)
+    buildings = dict(frappe.get_all(
+        "Warehouse", filters={"name": ["in", list({r["warehouse"] for r in keyed})]},
+        fields=["name", "building"], as_list=True,
+    ))
+    for r in keyed:
+        r["building"] = buildings.get(r["warehouse"]) or ""
+        r["stock_info"] = _stock_info(
+            r["batch"], r["warehouse"], stock.get((r["batch"], r["warehouse"]), 0),
+            reservations.get(r["batch"], []),
+        )
+    return rows
+
+
 # ── Create / update / read ────────────────────────────────────────────────
 
 @frappe.whitelist()
 def save_outward_request(date=None, to_building=None, work_order=None, purchase_order=None,
-                         items=None, name=None):
+                         items=None, name=None, from_building=None):
     """Create (no name) or update (name, only while Pending) a request.
     validate_outward_request in outward_request_events.py enforces the
     rules either way, so this stays a thin wrapper."""
     items = frappe.parse_json(items) if isinstance(items, str) else (items or [])
+    for i, r in enumerate(items, start=1):
+        if r.get("batch") and not r.get("warehouse"):
+            frappe.throw(_("Row {0}: pick the batch from the list so its warehouse is set too")
+                         .format(i))
 
     doc = frappe.get_doc("Outward Request", name) if name else frappe.new_doc("Outward Request")
     # No date given: today before the cut-off time, tomorrow from it onwards.
     doc.date = date or (doc.date if name else approval.default_request_date())
+    doc.from_building = from_building or doc.get("from_building") or DEFAULT_FROM_BUILDING
     doc.to_building = to_building
     doc.work_order = work_order or None
     doc.purchase_order = purchase_order or None
@@ -161,6 +339,7 @@ def save_outward_request(date=None, to_building=None, work_order=None, purchase_
         doc.append("items", {
             "item_code": r.get("item_code"),
             "batch": r.get("batch") or None,
+            "warehouse": r.get("warehouse") or None,
             "qty": flt(r.get("qty")),
             "stock_uom": r.get("stock_uom") or None,
         })
@@ -174,6 +353,11 @@ def get_outward_request(name):
     doc = frappe.get_doc("Outward Request", name)
     doc.check_permission("read")
     out = doc.as_dict()
+    out["items"] = _attach_stock_info([
+        {"item_code": r.item_code, "batch": r.batch or "", "warehouse": r.get("warehouse") or "",
+         "qty": r.qty, "stock_uom": r.stock_uom or ""}
+        for r in doc.items
+    ], exclude_request=name)
     out["created_by_name"] = frappe.utils.get_fullname(doc.created_by) if doc.created_by else ""
     out["roll_pick_assignments"] = frappe.get_all(
         "Roll Pick Assignment",
@@ -202,6 +386,7 @@ def get_outward_request_config():
         "cutoff_label": approval.fmt_cutoff(settings),
         "after_cutoff": approval.is_after_cutoff(now, settings),
         "require_approval": settings.require_approval,
+        "default_from_building": DEFAULT_FROM_BUILDING,
         "is_approver": approval.is_approver(settings=settings),
         "approvers": [
             {"user": u, "full_name": frappe.utils.get_fullname(u)} for u in settings.approvers
@@ -232,7 +417,7 @@ def list_outward_requests(request_status=None, txt=None, limit=50, same_day_appr
     if txt:
         like = f"%{txt}%"
         or_filters = {
-            "name": ["like", like], "to_building": ["like", like],
+            "name": ["like", like], "to_building": ["like", like], "from_building": ["like", like],
             "work_order": ["like", like], "purchase_order": ["like", like],
         }
     rows = frappe.get_list(
@@ -265,14 +450,28 @@ def get_buildings():
 
 @frappe.whitelist()
 def search_work_orders(txt=None):
+    """Submitted Work Orders, each with the Outward Request it already has
+    (if any) so the page can say so before fetching."""
     filters = {"docstatus": 1}
     if txt:
         filters["name"] = ["like", f"%{txt}%"]
-    return frappe.get_all(
+    rows = frappe.get_all(
         "Work Order", filters=filters,
-        fields=["name", "production_item", "status"],
-        limit=30, order_by="modified desc",
+        fields=["name", "production_item", "status"], limit=30, order_by="modified desc",
     )
+    if rows:
+        taken = {}
+        for r in frappe.get_all(
+            "Outward Request",
+            filters={"work_order": ["in", [w.name for w in rows]]},
+            fields=["name", "work_order"], order_by="creation asc",
+        ):
+            taken.setdefault(r.work_order, r.name)
+        for w in rows:
+            w["outward_request"] = taken.get(w.name, "")
+    return rows
+
+
 
 
 @frappe.whitelist()
@@ -315,19 +514,25 @@ def _assignment_plan(doc):
         uom = r.stock_uom or "Kgs"
         plan["uom_totals"][uom] = round(plan["uom_totals"].get(uom, 0.0) + flt(r.qty), 3)
 
-    # Rows WITH a batch become planned batches (one per batch, qty summed);
-    # rows without one can't be roll-picked and are reported as excluded.
+    # Rows WITH a batch become planned batches — one per (batch, warehouse),
+    # qty summed; the warehouse goes onto the Assignment's batch_items row as
+    # its planning hint, and when every row sits in one warehouse that's the
+    # default Source Warehouse. Rows without a batch can't be roll-picked and
+    # are reported as excluded.
     merged = {}
     excluded = []
     for r in doc.items:
         if not r.batch:
             excluded.append({"item_code": r.item_code, "qty": flt(r.qty), "stock_uom": r.stock_uom})
             continue
-        if r.batch in merged:
-            merged[r.batch]["qty"] += flt(r.qty)
+        key = (r.batch, r.get("warehouse") or "")
+        if key in merged:
+            merged[key]["qty"] += flt(r.qty)
         else:
-            merged[r.batch] = {"batch": r.batch, "item_code": r.item_code,
-                               "qty": flt(r.qty), "stock_uom": r.stock_uom}
+            merged[key] = {"batch": r.batch, "warehouse": r.get("warehouse") or "",
+                           "item_code": r.item_code, "qty": flt(r.qty), "stock_uom": r.stock_uom}
+    row_warehouses = {b["warehouse"] for b in merged.values()}
+    single_wh = next(iter(row_warehouses)) if len(row_warehouses) == 1 else None
 
     if doc.work_order:
         wo = frappe.db.get_value("Work Order", doc.work_order,
@@ -336,7 +541,7 @@ def _assignment_plan(doc):
             "pick_type": "To Work Order",
             "document_name": doc.work_order,
             "project": wo.get("project"),
-            "default_source_warehouse": wo.get("source_warehouse"),
+            "default_source_warehouse": single_wh or wo.get("source_warehouse"),
             "default_target_warehouse": wo.get("wip_warehouse"),
             "subcontracting_orders": [],
         })
@@ -372,7 +577,7 @@ def _assignment_plan(doc):
         "batch_items": list(merged.values()),
         "pick_qty": round(sum(b["qty"] for b in merged.values()), 3),
         "subcontracting_orders": sco,
-        "default_source_warehouse": None,
+        "default_source_warehouse": single_wh,
         "default_target_warehouse": sco[0].supplier_warehouse if sco else None,
         "non_kgs": {},
     })
@@ -414,7 +619,8 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
         target_warehouse=target_warehouse,
         assigned_to=assigned_to,
         project=plan.get("project"),
-        remarks=remarks or _("Outward Request {0} → {1}").format(name, doc.to_building),
+        remarks=remarks or _("Outward Request {0} · {1}").format(
+            name, " → ".join(b for b in (doc.get("from_building"), doc.to_building) if b)),
         roll_source=roll_source,
         outward_request=name,
     )
@@ -422,7 +628,7 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
     if plan["pick_type"] == "To Work Order" and plan["batch_items"]:
         args.update(
             document_name=plan["document_name"],
-            batch_items=[{"batch": b["batch"], "qty": b["qty"]} for b in plan["batch_items"]],
+            batch_items=_batch_rows(plan),
         )
     elif plan["pick_type"] == "To Work Order":
         target = flt(pick_qty) or plan["pick_qty"]
@@ -443,11 +649,16 @@ def create_roll_pick_assignment(name, source_warehouse, target_warehouse, assign
         args.update(
             purchase_order=doc.purchase_order,
             subcontracting_order=subcontracting_order,
-            batch_items=[{"batch": b["batch"], "qty": b["qty"]} for b in plan["batch_items"]],
+            batch_items=_batch_rows(plan),
         )
 
     result = create_pick_order(**args)
     return {"name": result.get("name"), "outward_request": get_outward_request(name)}
+
+
+def _batch_rows(plan):
+    return [{"batch": b["batch"], "qty": b["qty"], "warehouse": b["warehouse"] or None}
+            for b in plan["batch_items"]]
 
 
 def _source_projects(work_order=None, purchase_order=None):
@@ -519,3 +730,59 @@ def search_batches(item_code, txt=None, work_order=None, purchase_order=None):
         limit 30""",
         values, as_dict=True,
     )
+
+
+@frappe.whitelist()
+def search_batch_stock(item_code, txt=None, work_order=None, purchase_order=None,
+                       from_building=None, exclude_request=None):
+    """Batch dropdown on an item row: one option per (batch, warehouse)
+    holding stock of this item — only enabled batches of the source
+    document's project(s), only warehouses of the From building — with the
+    stock / reserved / available numbers described at the top."""
+    if not item_code:
+        return []
+    frappe.has_permission("Batch", "read", throw=True)
+
+    has_project_field = frappe.get_meta("Batch").has_field("custom_project")
+    conditions, values = ["item = %(item)s", "disabled = 0"], {"item": item_code}
+    projects = _source_projects(work_order, purchase_order)
+    if projects:
+        # Batch.custom_project isn't filled on this site, so a batch belongs
+        # to a project when its name starts with "<project>/" or
+        # "<project>-<n>/" (split / repack) — see pranera_knit search_batches.
+        project_conds = []
+        if has_project_field:
+            project_conds.append("custom_project IN %(projects)s")
+            values["projects"] = tuple(projects)
+        for i, project in enumerate(projects):
+            values[f"p{i}_slash"] = _like_prefix(project) + "/%"
+            values[f"p{i}_dash"] = _like_prefix(project) + "-%"
+            project_conds += [f"name LIKE %(p{i}_slash)s", f"name LIKE %(p{i}_dash)s"]
+        conditions.append("(" + " OR ".join(project_conds) + ")")
+    batch_meta = {
+        b.name: b for b in frappe.db.sql(
+            f"""SELECT name, stock_uom FROM `tabBatch`
+            WHERE {" AND ".join(conditions)}
+            ORDER BY creation DESC LIMIT 1000""",
+            values, as_dict=True,
+        )
+    }
+    if not batch_meta:
+        return []
+
+    needle = (txt or "").strip().lower()
+    candidates = [
+        b for b in _batch_balances(list(batch_meta), from_building=from_building)
+        if not needle or needle in b.batch.lower() or needle in b.warehouse.lower()
+    ]
+    reservations = _reservations([b.batch for b in candidates], exclude_request)
+    options = []
+    for b in candidates:
+        info = _stock_info(b.batch, b.warehouse, b.qty, reservations.get(b.batch, []))
+        options.append({
+            "batch": b.batch, "warehouse": b.warehouse, "building": b.building,
+            "stock_uom": batch_meta[b.batch].stock_uom or "", **info,
+        })
+    # Free stock first (most free on top), fully reserved ones last.
+    options.sort(key=lambda o: (o["available_qty"] <= QTY_EPSILON, -o["available_qty"], o["batch"]))
+    return options[:BATCH_OPTION_LIMIT]

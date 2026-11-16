@@ -735,9 +735,12 @@ export const getBatchesForItemCode = (itemCode) =>
 // see pranera_knit/outward_request_events.py — so the page only reads it.
 const OR_API = 'pranera_knit.api.outward_request'
 
-export const getOutwardRequestItems = ({ workOrder, purchaseOrder }) =>
+// { source, receipts, items, existing_request } — existing_request is set
+// (and items empty) when the Work Order already has an Outward Request.
+export const getOutwardRequestItems = ({ workOrder, purchaseOrder, fromBuilding, name }) =>
   call(`${OR_API}.get_outward_request_items`, {
-    work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined
+    work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined,
+    from_building: fromBuilding || undefined, name: name || undefined,
   }).then(r => r.message)
 
 export const saveOutwardRequest = (payload) =>
@@ -841,3 +844,13 @@ export const getRecentSpareIssues = (workstation) =>
 
 export const issueSpares = (payload) =>
   call(`${SPARES_API}.issue_spares`, payload).then(r => r.message)
+
+// Batch dropdown on an Outward Request row: one option per (batch, warehouse)
+// with stock_qty / reserved_qty / available_qty / unallocated_qty and the
+// reservations behind them.
+export const searchBatchStock = (itemCode, txt, { workOrder, purchaseOrder, fromBuilding, excludeRequest } = {}) =>
+  call(`${OR_API}.search_batch_stock`, {
+    item_code: itemCode, txt: txt || undefined,
+    work_order: workOrder || undefined, purchase_order: purchaseOrder || undefined,
+    from_building: fromBuilding || undefined, exclude_request: excludeRequest || undefined,
+  }).then(r => r.message || [])
