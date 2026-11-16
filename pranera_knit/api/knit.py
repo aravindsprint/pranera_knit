@@ -32,6 +32,7 @@ from frappe import _
 from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
+from pranera_knit.job_card_permissions import work_order_condition
 
 
 # ── App access ────────────────────────────────────────────────────────────────
@@ -79,6 +80,33 @@ def get_job_cards_for_knit_app(username=None, designation=None):
         ],
         order_by="modified desc", limit=500
     )
+
+
+@frappe.whitelist()
+def get_work_orders():
+    """Work Order list for the knit app (backs `knit_get_work_orders`).
+
+    Replaces the Server Script of the same name: same query and columns, but
+    a Job Card Operator only gets Work Orders with one of their Job Cards
+    (see job_card_permissions.py); supervisors still get all of them.
+    """
+    cond = work_order_condition(table="wo")
+    rows = frappe.db.sql(
+        f"""
+        SELECT wo.name, wo.production_item, wo.item_name,
+               COALESCE(NULLIF(wo.commercial_name, ''), i.commercial_name, '') AS commercial_name,
+               wo.qty, wo.produced_qty, wo.status,
+               (SELECT COUNT(*) FROM `tabJob Card` jc
+                 WHERE jc.work_order = wo.name AND jc.docstatus != 2) AS job_card_count
+        FROM `tabWork Order` wo
+        LEFT JOIN `tabItem` i ON i.name = wo.production_item
+        WHERE wo.docstatus != 2 {"AND " + cond if cond else ""}
+        ORDER BY wo.modified DESC
+        LIMIT 1000
+        """,
+        as_dict=True,
+    )
+    return rows
 
 
 # ── Roll Management ───────────────────────────────────────────────────────────

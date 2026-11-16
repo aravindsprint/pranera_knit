@@ -110,16 +110,20 @@ doc_events = {
     },
 }
 
-# ── Job Card visibility restriction ───────────────────────────────────────────
-# Users with the "Job Card Operator" role only see Job Cards assigned to them
-# (via standard Frappe "Assign To"). System Manager, Knitting Supervisor and
-# Administrator bypass this restriction. See job_card_permissions.py.
+# ── Job Card / Work Order visibility restriction ──────────────────────────────
+# Users with the "Job Card Operator" role only see Job Cards where their
+# Employee is in the Time Logs table (or that are assigned to them with
+# "Assign To"), and only the Work Orders of those Job Cards. Knitting
+# Supervisor, System Manager and Administrator see everything.
+# See job_card_permissions.py.
 permission_query_conditions = {
     "Job Card": "pranera_knit.job_card_permissions.get_permission_query_conditions",
+    "Work Order": "pranera_knit.job_card_permissions.get_work_order_permission_query_conditions",
 }
 
 has_permission = {
     "Job Card": "pranera_knit.job_card_permissions.has_permission",
+    "Work Order": "pranera_knit.job_card_permissions.work_order_has_permission",
 }
 
 fixtures = [
@@ -175,6 +179,9 @@ override_whitelisted_methods = {
     # Replaces the "knit-save-roll-data" Server Script: same behaviour, but
     # refuses to overwrite a roll that belongs to a different job card.
     "knit_save_roll_data": "pranera_knit.api.knit.save_roll_data",
+    # Replaces the "knit_get_work_orders" Server Script: same columns, but a
+    # Job Card Operator only gets the Work Orders of their own Job Cards.
+    "knit_get_work_orders": "pranera_knit.api.knit.get_work_orders",
     # Replaces the "knit_submit_roll_packing_list_v2" Server Script (Job Card
     # submit): same behaviour, plus an automatic MR/26/ top-up instead of a
     # negative-stock failure, with an email to the audit team.

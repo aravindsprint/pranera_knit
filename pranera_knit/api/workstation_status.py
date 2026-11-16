@@ -26,6 +26,13 @@ Unfinished   Open Work Orders that ran on the machine earlier (only Completed
 Idle         No WIP Job Card on the machine. "idle" = has upcoming work,
              "no_work_order" = no running or upcoming Work Order.
 
+Who sees what
+-------------
+A "Job Card Operator" (without Knitting Supervisor / System Manager) only
+sees the machines and Work Orders of their own Job Cards — the ones where
+their Employee is in the Time Logs table (job_card_permissions.py).
+Supervisors see every machine.
+
 Start / last production date
 ----------------------------
 Job Card actual_start_date / actual_end_date and the time logs are not
@@ -43,6 +50,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, now_datetime
 
+from pranera_knit.job_card_permissions import employee_ids, is_restricted, job_card_condition
 from pranera_knit.page_access import denied_pages
 
 PAGE_KEY = "workstation-status"
@@ -72,6 +80,9 @@ def _iso(dt):
 def get_workstation_status():
     _check_page_access()
 
+    restricted = is_restricted()
+    jc_cond = job_card_condition(table="jc")
+
     machines = [
         w for w in frappe.get_all(
             "Workstation",
@@ -84,7 +95,7 @@ def get_workstation_status():
 
     # Job Cards on knitting machines for open Work Orders, counted by status.
     jc_rows = frappe.db.sql(
-        """
+        f"""
         SELECT jc.workstation, jc.work_order, jc.status, COUNT(*) AS cnt
         FROM `tabJob Card` jc
         JOIN `tabWork Order` wo ON wo.name = jc.work_order
@@ -92,6 +103,7 @@ def get_workstation_status():
           AND wo.docstatus = 1
           AND wo.status IN %(wo_statuses)s
           AND jc.workstation REGEXP %(ws_re)s
+          {"AND " + jc_cond if jc_cond else ""}
         GROUP BY jc.workstation, jc.work_order, jc.status
         """,
         {"wo_statuses": OPEN_WO_STATUSES, "ws_re": MACHINE_SQL_RE},
@@ -102,6 +114,10 @@ def get_workstation_status():
     by_ws = {}
     for r in jc_rows:
         by_ws.setdefault(r.workstation, {}).setdefault(r.work_order, {})[r.status] = r.cnt
+
+    if restricted:
+        # Operators only see machines they have a Job Card on.
+        machines = [m for m in machines if m.name in by_ws]
 
     wo_names = sorted({r.work_order for r in jc_rows})
     wos = _work_orders(wo_names)
@@ -150,6 +166,8 @@ def get_workstation_status():
     return {
         "generated_at": _iso(now),
         "stale_hours": STALE_HOURS,
+        "scope": "assigned" if restricted else "all",
+        "employee_linked": bool(employee_ids()) if restricted else True,
         "machines": out,
     }
 
