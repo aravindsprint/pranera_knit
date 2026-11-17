@@ -7,6 +7,11 @@
 #
 # Trigger: Stock Entry (Manufacture) on_submit -> background job after commit.
 #
+# Scope: only knitting Work Orders - production item code starting with
+# "GKF" (greige knitted fabric / collar / cuff). Dyeing / process Work
+# Orders (DKF..., etc.) get no auto Process Loss and no email. Site config
+# `process_loss_item_prefixes` (list) overrides the prefixes.
+#
 # Calculation mirrors existing PL docs (e.g. PL/4949):
 #   sent      = Material Transfer for Manufacture + extra issues (Material
 #               Transfer into the WO's WIP) per raw item
@@ -24,8 +29,26 @@ LOSS_DOCTYPE = "Work Order Process Loss"
 # ---------------------------------------------------------------------------
 # Hook entry point
 # ---------------------------------------------------------------------------
+DEFAULT_ITEM_PREFIXES = ("GKF",)
+
+
+def _item_prefixes():
+    prefixes = frappe.conf.get("process_loss_item_prefixes") or DEFAULT_ITEM_PREFIXES
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    return tuple(p.upper() for p in prefixes if p)
+
+
+def _in_scope(production_item):
+    """Only Work Orders whose production item starts with one of the
+    prefixes (default "GKF") get the auto Process Loss report and email."""
+    return (production_item or "").upper().startswith(_item_prefixes())
+
+
 def on_stock_entry_submit(doc, method=None):
     if doc.purpose != "Manufacture" or not doc.work_order:
+        return
+    if not _in_scope(frappe.db.get_value("Work Order", doc.work_order, "production_item")):
         return
 
     frappe.enqueue(
@@ -60,6 +83,8 @@ def create_and_email(work_order, force=False):
         wo = frappe.get_doc("Work Order", work_order)
         if wo.docstatus != 1:
             return
+        if not force and not _in_scope(wo.production_item):
+            return  # not a knitting (GKF...) Work Order
         if not force and not _is_finished(wo):
             return  # still below the produced-% threshold
 
