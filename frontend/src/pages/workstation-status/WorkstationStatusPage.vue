@@ -38,6 +38,9 @@
         ⚠ Your login is not linked to an Employee record, so no job cards can be matched to you.
         Ask the admin to set your user in Employee → User ID.
       </div>
+      <div v-else-if="scope === 'assigned' && uoms.length" class="ws-scope">
+        Showing {{ uoms.includes('Kgs') && uoms.includes('Pcs') ? 'fabric and collar / cuff' : uoms.includes('Kgs') ? 'fabric (Kgs)' : 'collar / cuff (Pcs)' }} machines and work orders.
+      </div>
       <div v-else-if="scope === 'assigned'" class="ws-scope">
         Showing only machines and work orders from job cards you are the operator on.
       </div>
@@ -157,6 +160,7 @@ const generatedAt = ref(null)
 const staleHours = ref(24)
 const scope = ref('all')
 const employeeLinked = ref(true)
+const uoms = ref([])
 const loading = ref(false)
 const errorMsg = ref('')
 const search = ref('')
@@ -202,6 +206,7 @@ async function load() {
     staleHours.value = res.stale_hours || 24
     scope.value = res.scope || 'all'
     employeeLinked.value = res.employee_linked !== false
+    uoms.value = res.uoms || []
   } catch (e) {
     errorMsg.value = e.message || 'Could not load machine status'
   } finally {

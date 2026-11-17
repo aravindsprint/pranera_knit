@@ -32,7 +32,7 @@ from frappe import _
 from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
-from pranera_knit.job_card_permissions import work_order_condition
+from pranera_knit.job_card_permissions import is_supervisor, work_order_condition
 
 
 # ── App access ────────────────────────────────────────────────────────────────
@@ -107,6 +107,56 @@ def get_work_orders():
         as_dict=True,
     )
     return rows
+
+
+@frappe.whitelist()
+def assign_employee_to_job_card(job_card, employee_id):
+    """Put the operator on a Job Card (backs `knit_assign_employee_to_job_card`,
+    the 👤 button on the knit app's Job Cards page).
+
+    Replaces the Server Script of the same name with the same behaviour — the
+    Time Logs table is cleared and one row with this employee is added — plus:
+      * only supervisors may assign (Knitting Supervisor, Fabric Knitting
+        Supervisor, Collar Cuff Knitting Supervisor, System Manager);
+      * the supervisor must be able to see the Job Card (a Fabric supervisor
+        cannot assign on a Pcs job card and vice versa).
+    """
+    if not job_card or not employee_id:
+        frappe.throw(_("job_card and employee_id are required"))
+    if not is_supervisor():
+        frappe.throw(_("Only a knitting supervisor can assign operators to job cards."),
+                     frappe.PermissionError)
+
+    jc = frappe.get_doc("Job Card", job_card)
+    if not frappe.has_permission("Job Card", "read", doc=jc):
+        frappe.throw(_("You cannot assign operators on Job Card {0}.").format(job_card),
+                     frappe.PermissionError)
+    if jc.docstatus == 2:
+        frappe.throw(_("Cannot assign to a cancelled Job Card"))
+
+    emp = frappe.db.get_value("Employee", employee_id, ["name", "employee_name"], as_dict=True)
+    if not emp:
+        frappe.throw(_("Employee {0} not found").format(employee_id))
+
+    for row in frappe.get_all("Job Card Time Log",
+                              filters={"parent": job_card, "parenttype": "Job Card",
+                                       "parentfield": "time_logs"},
+                              pluck="name"):
+        frappe.delete_doc("Job Card Time Log", row, ignore_permissions=True)
+
+    frappe.get_doc({
+        "doctype": "Job Card Time Log",
+        "parent": job_card,
+        "parenttype": "Job Card",
+        "parentfield": "time_logs",
+        "employee": emp.name,
+        "custom_employee_name": emp.employee_name,
+        "from_time": now_datetime(),
+        "completed_qty": 0,
+        "time_in_mins": 0,
+    }).insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"success": True, "employee_name": emp.employee_name}
 
 
 # ── Roll Management ───────────────────────────────────────────────────────────

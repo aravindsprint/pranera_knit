@@ -41,6 +41,9 @@ doc_events = {
         "before_cancel": "pranera_knit.job_card_events.on_before_cancel",
         "after_cancel":  "pranera_knit.job_card_events.on_after_cancel",
         "after_insert":  "pranera_knit.job_card_events.on_after_insert",
+        # Knitting job cards can't go to Work In Progress without an operator
+        # (Employee) in the Time Logs table.
+        "validate":      "pranera_knit.job_card_events.validate_operator_assigned",
     },
     # Keeps each Roll's `warehouse` field in sync with where it actually
     # is after a Roll Wise Pick List transfer — scoped to only the Stock
@@ -111,11 +114,10 @@ doc_events = {
 }
 
 # ── Job Card / Work Order visibility restriction ──────────────────────────────
-# Users with the "Job Card Operator" role only see Job Cards where their
-# Employee is in the Time Logs table (or that are assigned to them with
-# "Assign To"), and only the Work Orders of those Job Cards. Knitting
-# Supervisor, System Manager and Administrator see everything.
-# See job_card_permissions.py.
+# Knitting Supervisor / System Manager: everything. Fabric Knitting Supervisor:
+# Kgs work orders. Collar Cuff Knitting Supervisor: Pcs work orders. Job Card
+# Operator: job cards where their Employee is in the Time Logs table, and
+# those job cards' work orders. See job_card_permissions.py.
 permission_query_conditions = {
     "Job Card": "pranera_knit.job_card_permissions.get_permission_query_conditions",
     "Work Order": "pranera_knit.job_card_permissions.get_work_order_permission_query_conditions",
@@ -182,6 +184,10 @@ override_whitelisted_methods = {
     # Replaces the "knit_get_work_orders" Server Script: same columns, but a
     # Job Card Operator only gets the Work Orders of their own Job Cards.
     "knit_get_work_orders": "pranera_knit.api.knit.get_work_orders",
+    # Replaces the "knit_assign_employee_to_job_card" Server Script: same
+    # behaviour, but only supervisors (by role) may assign, and only on job
+    # cards they can see (Fabric = Kgs, Collar Cuff = Pcs).
+    "knit_assign_employee_to_job_card": "pranera_knit.api.knit.assign_employee_to_job_card",
     # Replaces the "knit_submit_roll_packing_list_v2" Server Script (Job Card
     # submit): same behaviour, plus an automatic MR/26/ top-up instead of a
     # negative-stock failure, with an email to the audit team.

@@ -13,15 +13,23 @@ function currentUser() {
   return window.__FRAPPE_SESSION__?.user || ''
 }
 
-function readCache() {
+function readCacheFull() {
   try {
     const c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null')
-    return c && c.user === currentUser() ? c.denied : null
+    return c && c.user === currentUser() ? c : null
   } catch { return null }
+}
+
+function readCache() {
+  const c = readCacheFull()
+  return c ? c.denied : null
 }
 
 export const usePageAccessStore = defineStore('pageAccess', () => {
   const denied = ref(readCache() || [])
+  // Role-based (Knitting / Fabric / Collar Cuff Knitting Supervisor, System
+  // Manager): shows the 👤 Assign Employee button. Cached with the page list.
+  const isSupervisor = ref(!!readCacheFull()?.isSupervisor)
   const loadedFor = ref('')
   let inflight = null
 
@@ -40,9 +48,15 @@ export const usePageAccessStore = defineStore('pageAccess', () => {
       inflight = call('pranera_knit.api.page_access.get_page_access')
         .then((r) => {
           denied.value = r.message?.denied || []
-          try { localStorage.setItem(CACHE_KEY, JSON.stringify({ user, denied: denied.value })) } catch { /* ignore */ }
+          isSupervisor.value = !!r.message?.is_supervisor
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify({ user, denied: denied.value, isSupervisor: isSupervisor.value }))
+          } catch { /* ignore */ }
         })
-        .catch(() => { denied.value = readCache() || [] })
+        .catch(() => {
+          denied.value = readCache() || []
+          isSupervisor.value = !!readCacheFull()?.isSupervisor
+        })
         .finally(() => { loadedFor.value = user; inflight = null })
     }
     return inflight
@@ -50,9 +64,10 @@ export const usePageAccessStore = defineStore('pageAccess', () => {
 
   function reset() {
     denied.value = []
+    isSupervisor.value = false
     loadedFor.value = ''
     try { localStorage.removeItem(CACHE_KEY) } catch { /* ignore */ }
   }
 
-  return { denied, visiblePages, can, ensureLoaded, reset }
+  return { denied, isSupervisor, visiblePages, can, ensureLoaded, reset }
 })

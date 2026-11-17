@@ -28,10 +28,11 @@ Idle         No WIP Job Card on the machine. "idle" = has upcoming work,
 
 Who sees what
 -------------
-A "Job Card Operator" (without Knitting Supervisor / System Manager) only
-sees the machines and Work Orders of their own Job Cards — the ones where
-their Employee is in the Time Logs table (job_card_permissions.py).
-Supervisors see every machine.
+Knitting Supervisor / System Manager: every machine.
+Fabric Knitting Supervisor: SJ / IL machines and Kgs Work Orders.
+Collar Cuff Knitting Supervisor: FK machines and Pcs Work Orders.
+Job Card Operator: only machines with their own Job Cards (their Employee in
+the Time Logs table). See job_card_permissions.py.
 
 Start / last production date
 ----------------------------
@@ -50,7 +51,9 @@ import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, now_datetime
 
-from pranera_knit.job_card_permissions import employee_ids, is_restricted, job_card_condition
+from pranera_knit.job_card_permissions import (
+    OPERATOR_ROLE, allowed_uoms, employee_ids, is_restricted, job_card_condition,
+)
 from pranera_knit.page_access import denied_pages
 
 PAGE_KEY = "workstation-status"
@@ -60,6 +63,9 @@ OPEN_WO_STATUSES = ("Not Started", "In Process")
 FINISHED_RATIO = 0.95
 STALE_HOURS = 24
 MACHINE_TYPES = {"SJ": "Single Jersey", "IL": "Interlock", "FK": "Flat Knit"}
+# Which machines a UOM-scoped supervisor looks after: fabric (Kgs) runs on
+# single jersey / interlock, collars & cuffs (Pcs) on flat knit.
+UOM_MACHINE_PREFIXES = {"Kgs": ("SJ", "IL"), "Pcs": ("FK",)}
 
 
 def _check_page_access():
@@ -116,8 +122,11 @@ def get_workstation_status():
         by_ws.setdefault(r.workstation, {}).setdefault(r.work_order, {})[r.status] = r.cnt
 
     if restricted:
-        # Operators only see machines they have a Job Card on.
-        machines = [m for m in machines if m.name in by_ws]
+        # Scoped supervisors: every machine of their type (idle ones too).
+        # Operators: machines they have a Job Card on.
+        prefixes = tuple(p for u in (allowed_uoms() or []) for p in UOM_MACHINE_PREFIXES.get(u, ()))
+        machines = [m for m in machines
+                    if (prefixes and m.name.upper().startswith(prefixes)) or m.name in by_ws]
 
     wo_names = sorted({r.work_order for r in jc_rows})
     wos = _work_orders(wo_names)
@@ -167,7 +176,9 @@ def get_workstation_status():
         "generated_at": _iso(now),
         "stale_hours": STALE_HOURS,
         "scope": "assigned" if restricted else "all",
-        "employee_linked": bool(employee_ids()) if restricted else True,
+        "uoms": allowed_uoms(),
+        "employee_linked": bool(employee_ids())
+        if restricted and OPERATOR_ROLE in frappe.get_roles() and not allowed_uoms() else True,
         "machines": out,
     }
 

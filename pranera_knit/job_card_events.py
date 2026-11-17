@@ -163,3 +163,33 @@ def on_after_insert(doc, method=None):
         f"Draft auto-created from {old.name} for amended Job Card {doc.name}. "
         "Readings copied from the previous inspection — verify before submitting.",
     )
+
+
+# ── Operator required before a knitting job card starts ────────────────────
+KNITTING_MACHINE_RE = r"^(SJ|IL|FK)[0-9]"
+
+
+def validate_operator_assigned(doc, method=None):
+    """Block a knitting Job Card from going to "Work In Progress" (Start Job
+    in the knit app, or a status change in Desk) until a supervisor has put
+    the operator in the Time Logs table (👤 Assign Employee).
+
+    Without that Employee the Job Card Operator cannot see the job card, and
+    the job card's production has no operator against it.
+    Only knitting machines (workstation SJ.., IL.., FK..) are checked;
+    Job Card submit (knit_submit_roll_packing_list_v2) skips validate.
+    """
+    import re
+
+    if doc.status != "Work In Progress" or doc.docstatus != 0:
+        return
+    if not re.match(KNITTING_MACHINE_RE, doc.workstation or "", re.IGNORECASE):
+        return
+    rows = (doc.get("time_logs") or []) + (doc.get("employee") or [])
+    if any(r.get("employee") for r in rows):
+        return
+    frappe.throw(
+        _("Assign an operator to Job Card {0} before starting it: in the knit app tap 👤 "
+          "on the job card, or set the Employee in the Time Logs table.").format(doc.name),
+        title=_("Operator not assigned"),
+    )
