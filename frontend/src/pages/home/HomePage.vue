@@ -138,7 +138,7 @@
           <div class="jc-actions">
             <button class="jc-btn jc-btn--primary" @click="openCreateRoll(jc)">+ Roll</button>
             <button v-if="!auth.isKnittingOperator" class="jc-btn" :class="jc.quality_inspection ? 'jc-btn--qi-done' : 'jc-btn--outline'" @click="createQI(jc)">{{ jc.quality_inspection ? '✓ QI Done' : '✓ QI' }}</button>
-            <button v-if="auth.isSupervisor" class="jc-btn jc-btn--assign" @click.stop="openAssignModal(jc)" title="Assign Employee">👤</button>
+            <button v-if="access.isSupervisor" class="jc-btn jc-btn--assign" @click.stop="openAssignModal(jc)" title="Assign Employee">👤</button>
           </div>
         </div>
       </div>

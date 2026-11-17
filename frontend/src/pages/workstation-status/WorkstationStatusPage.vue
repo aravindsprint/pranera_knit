@@ -34,6 +34,17 @@
         Updated {{ fmtDateTime(generatedAt) }} · auto-refresh every 2 min
       </div>
 
+      <div v-if="scope === 'assigned' && !employeeLinked" class="ws-card ws-scope ws-scope--warn">
+        ⚠ Your login is not linked to an Employee record, so no job cards can be matched to you.
+        Ask the admin to set your user in Employee → User ID.
+      </div>
+      <div v-else-if="scope === 'assigned' && uoms.length" class="ws-scope">
+        Showing {{ uoms.includes('Kgs') && uoms.includes('Pcs') ? 'fabric and collar / cuff' : uoms.includes('Kgs') ? 'fabric (Kgs)' : 'collar / cuff (Pcs)' }} machines and work orders.
+      </div>
+      <div v-else-if="scope === 'assigned'" class="ws-scope">
+        Showing only machines and work orders from job cards you are the operator on.
+      </div>
+
       <div v-if="errorMsg" class="ws-card ws-state ws-state--err">⚠ {{ errorMsg }}</div>
       <div v-else-if="loading && !machines.length" class="ws-card ws-state">
         <span class="ws-spinner ws-spinner--dark"></span> Loading machines…
@@ -147,6 +158,9 @@ const auth = useAuthStore()
 const machines = ref([])
 const generatedAt = ref(null)
 const staleHours = ref(24)
+const scope = ref('all')
+const employeeLinked = ref(true)
+const uoms = ref([])
 const loading = ref(false)
 const errorMsg = ref('')
 const search = ref('')
@@ -190,6 +204,9 @@ async function load() {
     machines.value = res.machines || []
     generatedAt.value = res.generated_at
     staleHours.value = res.stale_hours || 24
+    scope.value = res.scope || 'all'
+    employeeLinked.value = res.employee_linked !== false
+    uoms.value = res.uoms || []
   } catch (e) {
     errorMsg.value = e.message || 'Could not load machine status'
   } finally {
@@ -273,6 +290,8 @@ onBeforeUnmount(() => clearInterval(timer))
 .ws-updated { font-size: 11px; color: #94a3b8; margin: 4px 2px 12px; }
 
 .ws-card { background: white; border-radius: 14px; padding: 14px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+.ws-scope { font-size: 12px; color: #1e40af; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; }
+.ws-scope--warn { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 .ws-state { display: flex; align-items: center; justify-content: center; gap: 8px; color: #64748b; padding: 28px 16px; margin-bottom: 12px; }
 .ws-state--err { color: #991b1b; }
 

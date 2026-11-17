@@ -26,6 +26,14 @@ Unfinished   Open Work Orders that ran on the machine earlier (only Completed
 Idle         No WIP Job Card on the machine. "idle" = has upcoming work,
              "no_work_order" = no running or upcoming Work Order.
 
+Who sees what
+-------------
+Knitting Supervisor / System Manager: every machine.
+Fabric Knitting Supervisor: SJ / IL machines and Kgs Work Orders.
+Collar Cuff Knitting Supervisor: FK machines and Pcs Work Orders.
+Job Card Operator: only machines with their own Job Cards (their Employee in
+the Time Logs table). See job_card_permissions.py.
+
 Start / last production date
 ----------------------------
 Job Card actual_start_date / actual_end_date and the time logs are not
@@ -43,6 +51,9 @@ import frappe
 from frappe import _
 from frappe.utils import flt, get_datetime, now_datetime
 
+from pranera_knit.job_card_permissions import (
+    OPERATOR_ROLE, allowed_uoms, employee_ids, is_restricted, job_card_condition,
+)
 from pranera_knit.page_access import denied_pages
 
 PAGE_KEY = "workstation-status"
@@ -52,6 +63,9 @@ OPEN_WO_STATUSES = ("Not Started", "In Process")
 FINISHED_RATIO = 0.95
 STALE_HOURS = 24
 MACHINE_TYPES = {"SJ": "Single Jersey", "IL": "Interlock", "FK": "Flat Knit"}
+# Which machines a UOM-scoped supervisor looks after: fabric (Kgs) runs on
+# single jersey / interlock, collars & cuffs (Pcs) on flat knit.
+UOM_MACHINE_PREFIXES = {"Kgs": ("SJ", "IL"), "Pcs": ("FK",)}
 
 
 def _check_page_access():
@@ -72,6 +86,9 @@ def _iso(dt):
 def get_workstation_status():
     _check_page_access()
 
+    restricted = is_restricted()
+    jc_cond = job_card_condition(table="jc")
+
     machines = [
         w for w in frappe.get_all(
             "Workstation",
@@ -84,7 +101,7 @@ def get_workstation_status():
 
     # Job Cards on knitting machines for open Work Orders, counted by status.
     jc_rows = frappe.db.sql(
-        """
+        f"""
         SELECT jc.workstation, jc.work_order, jc.status, COUNT(*) AS cnt
         FROM `tabJob Card` jc
         JOIN `tabWork Order` wo ON wo.name = jc.work_order
@@ -92,6 +109,7 @@ def get_workstation_status():
           AND wo.docstatus = 1
           AND wo.status IN %(wo_statuses)s
           AND jc.workstation REGEXP %(ws_re)s
+          {"AND " + jc_cond if jc_cond else ""}
         GROUP BY jc.workstation, jc.work_order, jc.status
         """,
         {"wo_statuses": OPEN_WO_STATUSES, "ws_re": MACHINE_SQL_RE},
@@ -102,6 +120,13 @@ def get_workstation_status():
     by_ws = {}
     for r in jc_rows:
         by_ws.setdefault(r.workstation, {}).setdefault(r.work_order, {})[r.status] = r.cnt
+
+    if restricted:
+        # Scoped supervisors: every machine of their type (idle ones too).
+        # Operators: machines they have a Job Card on.
+        prefixes = tuple(p for u in (allowed_uoms() or []) for p in UOM_MACHINE_PREFIXES.get(u, ()))
+        machines = [m for m in machines
+                    if (prefixes and m.name.upper().startswith(prefixes)) or m.name in by_ws]
 
     wo_names = sorted({r.work_order for r in jc_rows})
     wos = _work_orders(wo_names)
@@ -150,6 +175,10 @@ def get_workstation_status():
     return {
         "generated_at": _iso(now),
         "stale_hours": STALE_HOURS,
+        "scope": "assigned" if restricted else "all",
+        "uoms": allowed_uoms(),
+        "employee_linked": bool(employee_ids())
+        if restricted and OPERATOR_ROLE in frappe.get_roles() and not allowed_uoms() else True,
         "machines": out,
     }
 

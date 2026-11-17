@@ -32,6 +32,7 @@ from frappe import _
 from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
+from pranera_knit.job_card_permissions import is_supervisor, work_order_condition
 
 
 # ── App access ────────────────────────────────────────────────────────────────
@@ -79,6 +80,83 @@ def get_job_cards_for_knit_app(username=None, designation=None):
         ],
         order_by="modified desc", limit=500
     )
+
+
+@frappe.whitelist()
+def get_work_orders():
+    """Work Order list for the knit app (backs `knit_get_work_orders`).
+
+    Replaces the Server Script of the same name: same query and columns, but
+    a Job Card Operator only gets Work Orders with one of their Job Cards
+    (see job_card_permissions.py); supervisors still get all of them.
+    """
+    cond = work_order_condition(table="wo")
+    rows = frappe.db.sql(
+        f"""
+        SELECT wo.name, wo.production_item, wo.item_name,
+               COALESCE(NULLIF(wo.commercial_name, ''), i.commercial_name, '') AS commercial_name,
+               wo.qty, wo.produced_qty, wo.status,
+               (SELECT COUNT(*) FROM `tabJob Card` jc
+                 WHERE jc.work_order = wo.name AND jc.docstatus != 2) AS job_card_count
+        FROM `tabWork Order` wo
+        LEFT JOIN `tabItem` i ON i.name = wo.production_item
+        WHERE wo.docstatus != 2 {"AND " + cond if cond else ""}
+        ORDER BY wo.modified DESC
+        LIMIT 1000
+        """,
+        as_dict=True,
+    )
+    return rows
+
+
+@frappe.whitelist()
+def assign_employee_to_job_card(job_card, employee_id):
+    """Put the operator on a Job Card (backs `knit_assign_employee_to_job_card`,
+    the 👤 button on the knit app's Job Cards page).
+
+    Replaces the Server Script of the same name with the same behaviour — the
+    Time Logs table is cleared and one row with this employee is added — plus:
+      * only supervisors may assign (Knitting Supervisor, Fabric Knitting
+        Supervisor, Collar Cuff Knitting Supervisor, System Manager);
+      * the supervisor must be able to see the Job Card (a Fabric supervisor
+        cannot assign on a Pcs job card and vice versa).
+    """
+    if not job_card or not employee_id:
+        frappe.throw(_("job_card and employee_id are required"))
+    if not is_supervisor():
+        frappe.throw(_("Only a knitting supervisor can assign operators to job cards."),
+                     frappe.PermissionError)
+
+    jc = frappe.get_doc("Job Card", job_card)
+    if not frappe.has_permission("Job Card", "read", doc=jc):
+        frappe.throw(_("You cannot assign operators on Job Card {0}.").format(job_card),
+                     frappe.PermissionError)
+    if jc.docstatus == 2:
+        frappe.throw(_("Cannot assign to a cancelled Job Card"))
+
+    emp = frappe.db.get_value("Employee", employee_id, ["name", "employee_name"], as_dict=True)
+    if not emp:
+        frappe.throw(_("Employee {0} not found").format(employee_id))
+
+    for row in frappe.get_all("Job Card Time Log",
+                              filters={"parent": job_card, "parenttype": "Job Card",
+                                       "parentfield": "time_logs"},
+                              pluck="name"):
+        frappe.delete_doc("Job Card Time Log", row, ignore_permissions=True)
+
+    frappe.get_doc({
+        "doctype": "Job Card Time Log",
+        "parent": job_card,
+        "parenttype": "Job Card",
+        "parentfield": "time_logs",
+        "employee": emp.name,
+        "custom_employee_name": emp.employee_name,
+        "from_time": now_datetime(),
+        "completed_qty": 0,
+        "time_in_mins": 0,
+    }).insert(ignore_permissions=True)
+    frappe.db.commit()
+    return {"success": True, "employee_name": emp.employee_name}
 
 
 # ── Roll Management ───────────────────────────────────────────────────────────
