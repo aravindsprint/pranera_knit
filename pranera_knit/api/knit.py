@@ -548,6 +548,10 @@ def submit_roll_packing_list(jobcard, work_order):
     """
     frappe.has_permission("Stock Entry", throw=True)
 
+    # Same Knit Down Approval gate as job_card_submit.submit_roll_packing_list_v2.
+    from pranera_knit.knit_down_events import ensure_approved
+    ensure_approved(jobcard, work_order)
+
     se = frappe.new_doc("Stock Entry")
     se.stock_entry_type = "Manufacture"
     se.work_order = work_order

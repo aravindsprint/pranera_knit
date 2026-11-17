@@ -71,6 +71,13 @@ def submit_roll_packing_list_v2(jobcard=None, work_order=None, actual_consumptio
             "Job Card already fully submitted. RPL: " + str(existing_rpl) + ", Stock Entry: " + str(existing_se)
         )
 
+    # Knit Down Approval gate (knit_down_events.py): fabric knitting rolls
+    # can't be submitted until production has approved the knit down for
+    # this WO + machine. Skipped on a retry that already got past it.
+    if not existing_rpl and not existing_se:
+        from pranera_knit.knit_down_events import ensure_approved
+        ensure_approved(jobcard, work_order)
+
     rolls = frappe.db.sql(
         "SELECT name, item_code, batch, roll_weight, total_qty, stock_uom, start_time, end_time "
         "FROM `tabRoll` WHERE job_card = %(jobcard)s ORDER BY name asc",

@@ -863,3 +863,56 @@ export const getWorkstationStatus = () =>
 export const getOperatorJobCards = (fromDate, toDate) =>
   call('pranera_knit.api.operator_job_cards.get_operator_job_cards', { from_date: fromDate, to_date: toDate })
     .then(r => r.message || { operators: [], unassigned: [] })
+
+// ── Knit Down Approval ───────────────────────────────────────────────────────
+// pranera_knit/api/knit_down.py (rules + roll-submit gate: knit_down_events.py)
+const KD_API = 'pranera_knit.api.knit_down'
+
+export const getKnitDownSetup = () =>
+  call(`${KD_API}.get_setup`).then(r => r.message)
+
+export const searchKnitWorkOrders = (txt) =>
+  call(`${KD_API}.search_work_orders`, { txt: txt || undefined }).then(r => r.message || [])
+
+export const getKnitDownDefaults = (workOrder) =>
+  call(`${KD_API}.get_work_order_defaults`, { work_order: workOrder }).then(r => r.message)
+
+export const saveKnitDown = (payload) =>
+  call(`${KD_API}.save_knit_down`, payload).then(r => r.message)
+
+export const getKnitDown = (name) =>
+  call(`${KD_API}.get_knit_down`, { name }).then(r => r.message)
+
+export const listKnitDowns = ({ status, txt } = {}) =>
+  call(`${KD_API}.list_knit_downs`, { status: status || undefined, txt: txt || undefined })
+    .then(r => r.message || [])
+
+export const approveKnitDown = (name, remarks) =>
+  call(`${KD_API}.approve_knit_down`, { name, remarks: remarks || undefined }).then(r => r.message)
+
+export const rejectKnitDown = (name, remarks) =>
+  call(`${KD_API}.reject_knit_down`, { name, remarks }).then(r => r.message)
+
+export const getKnitDownForJobCard = (jobCard) =>
+  call(`${KD_API}.get_job_card_status`, { job_card: jobCard }).then(r => r.message)
+
+// Uploads an image/file through Frappe's upload_file and returns its file_url.
+// Public (is_private=0) so every approver can open it from the app.
+export async function uploadFile(file, filename) {
+  const token = await ensureCSRF()
+  const fd = new FormData()
+  fd.append('file', file, filename || file.name || 'upload.jpg')
+  fd.append('is_private', '0')
+  fd.append('folder', 'Home/Attachments')
+  const res = await fetch('/api/method/upload_file', {
+    method: 'POST',
+    headers: { 'X-Frappe-CSRF-Token': token },
+    body: fd,
+    credentials: 'include'
+  })
+  signalServerReachable(res)
+  const data = await res.json().catch(() => ({}))
+  await throwIfSessionExpired(res, data)
+  if (!res.ok || data.exc) throw new Error(extractServerError(data, res.statusText))
+  return data.message?.file_url
+}

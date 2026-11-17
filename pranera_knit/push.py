@@ -24,6 +24,8 @@ Who gets what (wired in hooks.py / outward_request_events.py):
   * Outward Request Completed          → "NAP Security" role (ready to load)
   * Vehicle Gate Entry: request added  → that request's creator (vehicle at gate)
   * Vehicle Gate Entry: departed       → creators of the requests it carried
+  * Knit Down Approval posted         → "Knit Down Approver" role (production)
+  * Knit Down Approved / Rejected     → whoever posted it (knitting)
 
 WhatsApp (whatsapp_alerts.py) is sent ONLY for Roll Pick Assignments, to
 the assigned picker (send(..., whatsapp=True) below). Every other alert is
@@ -43,6 +45,7 @@ SKIP_USERS = {"Administrator", "Guest", None, ""}
 
 OUTWARD_REQUEST_ROLES = ("NAP Warehouse User",)
 SECURITY_ROLES = ("NAP Security",)
+KNIT_DOWN_ROLES = ("Knit Down Approver",)
 
 
 def project_name():
@@ -190,3 +193,24 @@ def _creators(outward_requests):
                                 fields=["name", "created_by"])
         if r.created_by
     }
+
+
+def _knit_down_detail(doc):
+    return f"{doc.work_order} · {doc.workstation} · GSM {doc.gsm:g} · LL {doc.loop_length}"
+
+
+def on_knit_down_insert(doc, method=None):
+    send(users_with_roles(KNIT_DOWN_ROLES, exclude=[doc.requested_by]),
+         "Knit down ready for approval",
+         f"{doc.name}: {_knit_down_detail(doc)} ({(doc.item_name or '').strip()[:60]})",
+         f"/knit-app/knit-down?name={doc.name}", tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
+
+
+def on_knit_down_update(doc, method=None):
+    if not doc.has_value_changed("status") or doc.status not in ("Approved", "Rejected"):
+        return
+    body = f"{doc.name}: {_knit_down_detail(doc)}"
+    if doc.approver_remarks:
+        body += f" — {doc.approver_remarks}"
+    send([doc.requested_by], f"Knit down {doc.status.lower()}", body,
+         f"/knit-app/knit-down?name={doc.name}", tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
