@@ -18,3 +18,4 @@ pranera_knit.patches.v1_14.add_outward_request_same_day_approval
 pranera_knit.patches.v1_15.add_outward_request_from_warehouse
 pranera_knit.patches.v1_16.add_workstation_status_page
 pranera_knit.patches.v1_17.add_fabric_and_collar_cuff_supervisor_roles
+pranera_knit.patches.v1_18.add_operator_job_cards_page
