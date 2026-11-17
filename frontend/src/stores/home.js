@@ -5,6 +5,9 @@ import { db } from '@/db'
 import { fetchJobCards, fetchJobCardAssignments } from '@/api/frappe'
 import { isOnline } from '@/composables/useSync'
 
+// Which login the cached job_cards in IndexedDB belong to.
+const JOB_CARD_CACHE_USER_KEY = 'KNIT_JOB_CARDS_CACHE_USER'
+
 export const useHomeStore = defineStore('home', () => {
   const jobCards = ref([])
   const loading = ref(false)
@@ -50,6 +53,16 @@ export const useHomeStore = defineStore('home', () => {
     error.value = ''
 
     try {
+      // The offline cache is per device, not per login. If someone else used
+      // this device last, drop their cached job cards first, so a failed or
+      // slow request can never show this user another user's list.
+      const sessionUser = window.__FRAPPE_SESSION__?.user || ''
+      const cachedFor = localStorage.getItem(JOB_CARD_CACHE_USER_KEY) || ''
+      if (sessionUser && cachedFor !== sessionUser) {
+        await db.job_cards.clear().catch(() => {})
+        jobCards.value = []
+      }
+
       // Serve local cache immediately so the UI is never blank offline
       const local = await db.job_cards.toArray().catch(() => [])
       if (local.length) {
@@ -76,6 +89,7 @@ export const useHomeStore = defineStore('home', () => {
       if (Array.isArray(fresh) && fresh.length) {
         await db.job_cards.clear()
         await db.job_cards.bulkPut(fresh.map(jc => ({ ...jc, id: jc.name })))
+        if (sessionUser) localStorage.setItem(JOB_CARD_CACHE_USER_KEY, sessionUser)
         jobCards.value = fresh
 
         // Cache every card's assignment so "Currently assigned" works

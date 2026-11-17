@@ -5,10 +5,10 @@ Row-level visibility of Job Cards and Work Orders by knitting role.
   Role                               Sees
   ---------------------------------  ----------------------------------------
   System Manager, Knitting Supervisor everything (Administrator too)
-  Fabric Knitting Supervisor         Work Orders in Kgs + their Job Cards
-                                     (single jersey / interlock fabric)
-  Collar Cuff Knitting Supervisor    Work Orders in Pcs + their Job Cards
-                                     (flat knit collars / cuffs)
+  Fabric Knitting Supervisor         knitting (GKF...) Work Orders in Kgs, and
+                                     their Job Cards on SJ / IL machines
+  Collar Cuff Knitting Supervisor    knitting (GKF...) Work Orders in Pcs, and
+                                     their Job Cards on FK machines
   Job Card Operator                  Job Cards where their Employee
                                      (Employee.user_id = the user) is in the
                                      Time Logs table (or the Employee
@@ -18,13 +18,17 @@ Row-level visibility of Job Cards and Work Orders by knitting role.
 A user with several of these roles sees the union. Users with none of them
 are not restricted here (normal role permissions only).
 
-The UOM is the Work Order's stock_uom; a Job Card follows its Work Order.
+The UOM is the Work Order's stock_uom and "knitting" means its production
+item starts with GKF (dyeing / process work orders - DKF, SKF, ... - are not
+shown to the knitting supervisors); a Job Card follows its Work Order.
 
 Used by the permission_query_conditions / has_permission hooks (Desk lists,
 reports, /api/resource, frappe.get_list) and by the knit-app APIs that query
 with raw SQL (knit_get_work_orders, Machine Status) via job_card_condition().
 It is a filter on top of role permissions: it never grants extra access.
 """
+
+import re
 
 import frappe
 
@@ -34,6 +38,13 @@ UOM_SUPERVISOR_ROLES = {
     "Fabric Knitting Supervisor": "Kgs",
     "Collar Cuff Knitting Supervisor": "Pcs",
 }
+# Production item prefix of knitting work orders (greige fabric, collar, cuff).
+KNITTING_ITEM_PREFIX = "GKF"
+# Knitting machines per supervisor UOM (workstation name prefix + digit).
+# Job cards of GKF work orders on other workstations (Sub Contracting, the old
+# "KNITTING01 - WORK IN PROGRESS", dyeing machines) are not shown to them.
+UOM_MACHINE_REGEX = {"Kgs": "^(SJ|IL)[0-9]", "Pcs": "^FK[0-9]"}
+
 # Roles that may assign operators to job cards (the 👤 button).
 SUPERVISOR_ROLES = ALL_ACCESS_ROLES | set(UOM_SUPERVISOR_ROLES)
 
@@ -73,7 +84,12 @@ def allowed_uoms(user=None):
 def employee_ids(user=None):
     """Employee records linked to this user (Employee.user_id), cached per request."""
     user = user or frappe.session.user
-    cache = frappe.local.__dict__.setdefault("_knit_operator_employees", {})
+    # frappe.local is a werkzeug Local: it has no __dict__, so keep the
+    # per-request cache as a plain attribute on it.
+    cache = getattr(frappe.local, "knit_operator_employees", None)
+    if cache is None:
+        cache = {}
+        frappe.local.knit_operator_employees = cache
     if user not in cache:
         cache[user] = frappe.get_all("Employee", filters={"user_id": user}, pluck="name")
     return cache[user]
@@ -81,6 +97,14 @@ def employee_ids(user=None):
 
 def _sql_list(values):
     return ", ".join(frappe.db.escape(v) for v in values)
+
+
+def _knitting_wo_sql(table, uoms):
+    """Work Order rows that are knitting (GKF...) in one of the UOMs.
+    LEFT() instead of LIKE 'GKF%': no literal "%" in the SQL."""
+    prefix = frappe.db.escape(KNITTING_ITEM_PREFIX)
+    return (f"({table}.stock_uom IN ({_sql_list(uoms)}) "
+            f"AND LEFT({table}.production_item, {len(KNITTING_ITEM_PREFIX)}) = {prefix})")
 
 
 def job_card_condition(user=None, table="`tabJob Card`"):
@@ -92,12 +116,12 @@ def job_card_condition(user=None, table="`tabJob Card`"):
         return ""
 
     parts = []
-    uoms = allowed_uoms(user)
-    if uoms:
+    for uom in allowed_uoms(user) or []:
         parts.append(
-            f"""{table}.work_order IN (
-                SELECT wo_uom.name FROM `tabWork Order` wo_uom
-                WHERE wo_uom.stock_uom IN ({_sql_list(uoms)}))"""
+            f"""({table}.workstation REGEXP {frappe.db.escape(UOM_MACHINE_REGEX[uom])}
+                AND {table}.work_order IN (
+                    SELECT wo_uom.name FROM `tabWork Order` wo_uom
+                    WHERE {_knitting_wo_sql("wo_uom", [uom])}))"""
         )
 
     if OPERATOR_ROLE in _roles(user):
@@ -122,7 +146,7 @@ def work_order_condition(user=None, table="`tabWork Order`"):
     parts = []
     uoms = allowed_uoms(user)
     if uoms:
-        parts.append(f"{table}.stock_uom IN ({_sql_list(uoms)})")
+        parts.append(_knitting_wo_sql(table, uoms))
     if OPERATOR_ROLE in _roles(user):
         jc_cond = job_card_condition(user, table="jc_perm")
         parts.append(
@@ -146,7 +170,10 @@ def has_permission(doc, ptype=None, user=None):
 
     uoms = allowed_uoms(user)
     if uoms and doc.get("work_order"):
-        if frappe.db.get_value("Work Order", doc.work_order, "stock_uom") in uoms:
+        wo = frappe.db.get_value("Work Order", doc.work_order, ["stock_uom", "production_item"], as_dict=True)
+        if (wo and wo.stock_uom in uoms
+                and (wo.production_item or "").startswith(KNITTING_ITEM_PREFIX)
+                and re.match(UOM_MACHINE_REGEX[wo.stock_uom], doc.get("workstation") or "")):
             return True
 
     if OPERATOR_ROLE in _roles(user):
