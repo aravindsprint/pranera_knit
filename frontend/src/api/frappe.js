@@ -858,3 +858,8 @@ export const searchBatchStock = (itemCode, txt, { workOrder, purchaseOrder, from
 // ── Machine Status (workstation-status page) ──
 export const getWorkstationStatus = () =>
   call('pranera_knit.api.workstation_status.get_workstation_status').then(r => r.message || { machines: [] })
+
+// ── Operator Job Cards (operator-job-cards page) ──
+export const getOperatorJobCards = (fromDate, toDate) =>
+  call('pranera_knit.api.operator_job_cards.get_operator_job_cards', { from_date: fromDate, to_date: toDate })
+    .then(r => r.message || { operators: [], unassigned: [] })
