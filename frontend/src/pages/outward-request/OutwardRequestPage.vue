@@ -287,6 +287,12 @@
                 </button>
               </template>
             </span>
+            <div v-if="store.isEditable && row.batch && !row.warehouse" class="item-row__stock item-row__stock--short">
+              <div class="stock-short">
+                <i class="pi pi-exclamation-triangle"></i>
+                No warehouse for this batch — clear it (×) and pick the batch again from the list.
+              </div>
+            </div>
             <div v-if="row.stock_info" class="item-row__stock" :class="{ 'item-row__stock--short': (store.rowAllocation(row)?.short || 0) > 0.001 }">
               <div class="stock-nums">
                 <span><i class="pi pi-map-marker"></i> {{ row.warehouse }}</span>
@@ -327,6 +333,10 @@
           <i v-if="store.saving" class="pi pi-spin pi-spinner"></i>
           {{ store.saving ? 'Saving...' : (store.name ? 'Update Outward Request' : 'Create Outward Request') }}
         </button>
+        <div v-if="!store.canSave && store.saveBlockers.length" class="hint-text hint-text--error">
+          <i class="pi pi-exclamation-circle"></i>
+          <span>{{ store.saveBlockers.join(' ') }}</span>
+        </div>
         <div v-if="store.name" class="hint-text">
           <i class="pi pi-lock"></i>
           <span>Editable until a Roll Pick Assignment is linked to it.</span>

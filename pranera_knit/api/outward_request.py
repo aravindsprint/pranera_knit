@@ -353,11 +353,21 @@ def get_outward_request(name):
     doc = frappe.get_doc("Outward Request", name)
     doc.check_permission("read")
     out = doc.as_dict()
-    out["items"] = _attach_stock_info([
+    items = [
         {"item_code": r.item_code, "batch": r.batch or "", "warehouse": r.get("warehouse") or "",
          "qty": r.qty, "stock_uom": r.stock_uom or ""}
         for r in doc.items
-    ], exclude_request=name)
+    ]
+    # Requests saved before From / per-row Warehouse existed load with both
+    # blank, which leaves the page's Update button disabled for no visible
+    # reason. While still Pending, default From and fill each row's warehouse
+    # when its batch sits in exactly one warehouse there; the rest the user
+    # re-picks from the batch dropdown. Nothing is written until they save.
+    if (doc.get("request_status") or "Pending") == "Pending":
+        if not out.get("from_building"):
+            out["from_building"] = DEFAULT_FROM_BUILDING
+        _fill_single_warehouse(items, out["from_building"])
+    out["items"] = _attach_stock_info(items, exclude_request=name)
     out["created_by_name"] = frappe.utils.get_fullname(doc.created_by) if doc.created_by else ""
     out["roll_pick_assignments"] = frappe.get_all(
         "Roll Pick Assignment",
