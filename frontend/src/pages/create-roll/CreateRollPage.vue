@@ -22,6 +22,25 @@
 
     <div class="cr-content">
 
+      <!-- Knit Down Approval status (rolls can't be submitted until approved) -->
+      <div
+        v-if="knitDown && knitDown.required && !knitDown.approved && !isJobSubmitted"
+        class="cr-kd-banner" :class="{ 'cr-kd-banner--bad': knitDown.knit_down?.status === 'Rejected' }"
+        @click="openKnitDown"
+      >
+        <i class="pi" :class="knitDown.knit_down?.status === 'Pending' ? 'pi-clock' : 'pi-exclamation-triangle'"></i>
+        <div class="cr-kd-banner__text">
+          <strong v-if="!knitDown.knit_down">Knit down not posted</strong>
+          <strong v-else-if="knitDown.knit_down.status === 'Pending'">Knit down waiting for approval</strong>
+          <strong v-else>Knit down rejected</strong>
+          <span>
+            Rolls can be submitted only after production approves the knit down for {{ knitDown.workstation }}.
+            <template v-if="knitDown.knit_down?.status === 'Rejected' && knitDown.knit_down.approver_remarks"> Reason: {{ knitDown.knit_down.approver_remarks }}</template>
+          </span>
+        </div>
+        <i class="pi pi-chevron-right"></i>
+      </div>
+
       <!-- Product info card -->
       <div class="cr-info-card" v-if="rollStore.productData">
         <div class="cr-info-row">
@@ -490,12 +509,32 @@ import { db } from '@/db'
 import { getLastRollNo, nextOfflineRollNo, isCachedRollNoStale } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
 import { call, createDoc, ensureCSRF, initCSRF } from '@/api/frappe'
+import { getKnitDownForJobCard } from '@/api/frappe'
 import QRCode from 'qrcode'
 import moment from 'moment'
 
 const router    = useRouter()
 const rollStore = useRollStore()
 const auth      = useAuthStore()
+
+// ── Knit Down Approval (api/knit_down.py) ─────────────────────────────────
+// Fabric knitting job cards need an Approved knit down for their WO +
+// machine before rolls can be submitted; the server enforces it, this just
+// tells the operator up front. Online only — offline it simply isn't shown.
+const knitDown = ref(null)
+async function loadKnitDown(jobCard) {
+  if (!jobCard || !navigator.onLine) return
+  try { knitDown.value = await getKnitDownForJobCard(jobCard) } catch { knitDown.value = null }
+}
+function openKnitDown() {
+  const kd = knitDown.value
+  if (!kd) return
+  if (kd.knit_down && kd.knit_down.status !== 'Rejected') {
+    router.push({ path: '/knit-app/knit-down', query: { name: kd.knit_down.name } })
+  } else {
+    router.push({ path: '/knit-app/knit-down', query: { new: '1', work_order: kd.work_order, workstation: kd.workstation } })
+  }
+}
 
 // ── UI State ──────────────────────────────────────────────────────────────
 const initializing  = ref(true)
@@ -847,6 +886,7 @@ onMounted(async () => {
   if (!pd) { initializing.value = false; return }
   pageJobCard   = pd.name
   pageWorkOrder = pd.work_order
+  loadKnitDown(pd.name)
 
   isPcsUOM.value = (pd.stock_uom || '').toLowerCase() === 'pcs'
   isJobStarted.value = ['Work In Progress', 'Completed'].includes(pd.status)
@@ -1944,6 +1984,11 @@ function buildStickerHTML({ itemCode, commercialName, workOrder, rollNo, weight,
 .cr-overlay__text { font-size:14px; font-weight:600; color:#64748b; }
 
 /* Info card */
+.cr-kd-banner { display:flex; align-items:center; gap:12px; background:#fef3c7; color:#92400e; border:1px solid #f59e0b; border-radius:12px; padding:12px 14px; margin-bottom:14px; cursor:pointer; }
+.cr-kd-banner--bad { background:#fee2e2; color:#991b1b; border-color:#f87171; }
+.cr-kd-banner > .pi:first-child { font-size:20px; }
+.cr-kd-banner__text { flex:1; display:flex; flex-direction:column; gap:2px; font-size:13px; }
+.cr-kd-banner__text strong { font-size:14px; }
 .cr-info-card { background:linear-gradient(135deg, var(--app-primary,#0f6e56), color-mix(in srgb, var(--app-primary,#0f6e56) 65%, black)); border-radius:16px; padding:16px; margin-bottom:14px; }
 .cr-info-row  { display:flex; gap:12px; }
 .cr-info-divider { height:1px; background:rgba(255,255,255,0.15); margin:10px 0; }

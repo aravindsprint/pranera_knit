@@ -111,6 +111,13 @@ doc_events = {
         "validate": "pranera_knit.vehicle_gate_entry_events.validate_vehicle_gate_entry",
         "on_update": "pranera_knit.push.on_vehicle_gate_entry_update",
     },
+    # Knit Down Approval — app-owned (patches/v1_19/add_knit_down_approval.py).
+    # Knitting posts a knit down per WO + machine; production approves it.
+    "Knit Down Approval": {
+        "validate": "pranera_knit.knit_down_events.validate_knit_down",
+        "after_insert": "pranera_knit.push.on_knit_down_insert",
+        "on_update": "pranera_knit.push.on_knit_down_update",
+    },
 }
 
 # ── Job Card / Work Order visibility restriction ──────────────────────────────
