@@ -136,6 +136,24 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     items.value.length > 0 &&
     items.value.every(r => r.item_code && Number(r.qty) > 0 && (!r.batch || r.warehouse))
   )
+  // Why canSave is false, in words — shown under the disabled button so a
+  // locked form never looks broken (e.g. rows with a batch but no warehouse).
+  const saveBlockers = computed(() => {
+    if (!isEditable.value) return []
+    const out = []
+    if (!date.value) out.push('Set the Date.')
+    else if (dateInPast.value) out.push('Date can\'t be in the past.')
+    if (!fromBuilding.value) out.push('Pick the From building.')
+    if (!toBuilding.value) out.push('Pick the To building.')
+    if (!documentName.value) out.push(`Pick a ${sourceType.value}.`)
+    if (existingRequest.value) out.push(`${existingRequest.value} already exists for this ${sourceType.value}.`)
+    if (!items.value.length) out.push('Fetch the items.')
+    const noQty = items.value.filter(r => !(Number(r.qty) > 0)).length
+    if (noQty) out.push(`${noQty} row(s) need a qty above zero.`)
+    const noWh = items.value.filter(r => r.batch && !r.warehouse).length
+    if (noWh) out.push(`${noWh} row(s) have a batch but no warehouse — clear the batch (×) and pick it again from the list.`)
+    return out
+  })
   const buildingOptions = computed(() =>
     buildings.value.map(b => ({
       value: b.name,
@@ -460,7 +478,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     name, date, fromBuilding, toBuilding, sourceType, workOrder, purchaseOrder, items, receipts, meta,
     buildings, workOrders, purchaseOrders, buildingOptions,
     fetching, saving, error, fetchedFor,
-    documentName, isEditable, totalsByUom, canSave, existingRequest, sameBuilding,
+    documentName, isEditable, totalsByUom, canSave, saveBlockers, existingRequest, sameBuilding,
     rowAllocation, overAllocated, setFromBuilding, onBatchPicked,
     config, afterCutoff, minDate, defaultDate, dateInPast, needsApproval, isApprover, approverNames,
     deciding, decideApproval, loadConfig,
