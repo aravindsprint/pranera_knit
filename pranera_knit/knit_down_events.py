@@ -131,7 +131,10 @@ def _copy_required_spec(doc):
 
 def _validate_values(doc):
     for field, label in (("dia", _("Dia")), ("gauge", _("Gauge")), ("gsm", _("GSM"))):
-        if flt(doc.get(field)) <= 0:
+        # The app posts these as text ("163"); store real numbers so later
+        # code (push alerts, comparisons) doesn't trip over a str.
+        doc.set(field, flt(doc.get(field)))
+        if doc.get(field) <= 0:
             frappe.throw(_("{0} must be greater than 0").format(label))
     doc.loop_length = (doc.loop_length or "").strip()
     if not doc.loop_length:

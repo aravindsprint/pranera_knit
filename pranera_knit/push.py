@@ -37,7 +37,7 @@ Sending never blocks or fails the document save: it's enqueued after
 commit, and every error is logged instead of raised.
 """
 import frappe
-from frappe.utils import get_url
+from frappe.utils import flt, get_url
 
 DEFAULT_PROJECT = "hrms"
 ICON = "/assets/pranera_knit/knit_app/icons/icon-192.png"
@@ -196,10 +196,18 @@ def _creators(outward_requests):
 
 
 def _knit_down_detail(doc):
-    return f"{doc.work_order} · {doc.workstation} · GSM {doc.gsm:g} · LL {doc.loop_length}"
+    return f"{doc.work_order} · {doc.workstation} · GSM {flt(doc.gsm):g} · LL {doc.loop_length}"
 
 
 def on_knit_down_insert(doc, method=None):
+    # An alert must never block saving the knit down itself.
+    try:
+        _knit_down_insert_alert(doc)
+    except Exception:
+        frappe.log_error(title=f"Knit down alert failed for {doc.name}")
+
+
+def _knit_down_insert_alert(doc):
     send(users_with_roles(KNIT_DOWN_ROLES, exclude=[doc.requested_by]),
          "Knit down ready for approval",
          f"{doc.name}: {_knit_down_detail(doc)} ({(doc.item_name or '').strip()[:60]})",
@@ -207,6 +215,13 @@ def on_knit_down_insert(doc, method=None):
 
 
 def on_knit_down_update(doc, method=None):
+    try:
+        _knit_down_decision_alert(doc)
+    except Exception:
+        frappe.log_error(title=f"Knit down alert failed for {doc.name}")
+
+
+def _knit_down_decision_alert(doc):
     if not doc.has_value_changed("status") or doc.status not in ("Approved", "Rejected"):
         return
     body = f"{doc.name}: {_knit_down_detail(doc)}"
