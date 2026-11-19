@@ -127,7 +127,7 @@
       <div class="cr-timer-card" v-if="isRollActive && !showEndRollForm">
         <div class="cr-timer-card__header">
           <div class="cr-timer-badge">RUNNING</div>
-          <div class="cr-timer-rollno">Roll #{{ currentRollNo }}</div>
+          <div class="cr-timer-rollno">{{ isProvisionalRollId(currentRollNo) ? 'Roll # — (offline, assigned on sync)' : `Roll #${currentRollNo}` }}</div>
         </div>
         <div class="cr-timer-display">{{ formattedRunningTime }}</div>
 
@@ -167,8 +167,9 @@
           class="cr-btn cr-btn--ghost cr-btn--full"
           style="margin-top:10px"
           @click="generatePrintLabel"
+          :disabled="!!stickerBlockReason"
         >
-          📱 Print / QR — Roll #{{ lastCompletedRollData.roll_no }}
+          {{ stickerBlockReason ? '⏳ Sticker available after sync' : `📱 Print / QR — Roll #${lastCompletedRollData.roll_no}` }}
         </button>
         <!-- Submit job (end last roll + submit) -->
         <button
@@ -187,7 +188,7 @@
           {{ isJobSubmissionMode ? '⏹ End Roll & Submit Job' : '⏹ End Roll' }}
         </div>
         <div class="cr-card__subtitle" v-if="completingRollNo">
-          Completing Roll #{{ completingRollNo }}
+          {{ isProvisionalRollId(completingRollNo) ? 'Completing offline roll (number assigned on sync)' : `Completing Roll #${completingRollNo}` }}
         </div>
 
         <div class="cr-field">
@@ -224,14 +225,17 @@
 
       <!-- ── POST SUBMISSION (print buttons) ── -->
       <div class="cr-card" v-if="showPrintButtons && lastCompletedRollData">
-        <div class="cr-alert cr-alert--success" style="margin-bottom:14px">
+        <div class="cr-alert cr-alert--success" style="margin-bottom:14px" v-if="!stickerBlockReason">
           ✓ Roll {{ lastCompletedRollData.roll_no }} completed!
+        </div>
+        <div class="cr-alert cr-alert--warning" style="margin-bottom:14px" v-else>
+          ⚠ Roll saved on this tablet only. {{ stickerBlockReason }}
         </div>
 
         <div class="cr-completed-grid">
           <div class="cr-completed-item">
             <span class="cr-completed-label">Roll No</span>
-            <span class="cr-completed-value">{{ lastCompletedRollData.roll_no }}</span>
+            <span class="cr-completed-value">{{ stickerBlockReason ? 'Pending' : lastCompletedRollData.roll_no }}</span>
           </div>
           <div class="cr-completed-item">
             <span class="cr-completed-label">Weight</span>
@@ -256,8 +260,8 @@
         </div>
 
         <div style="margin-top:16px">
-          <button class="cr-btn cr-btn--ghost cr-btn--full" @click="generatePrintLabel">
-            📱 Print / QR
+          <button class="cr-btn cr-btn--ghost cr-btn--full" @click="generatePrintLabel" :disabled="!!stickerBlockReason">
+            {{ stickerBlockReason ? '⏳ Sticker available after sync' : '📱 Print / QR' }}
           </button>
         </div>
 
@@ -500,13 +504,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRollStore } from '@/stores/roll'
 import { useAuthStore } from '@/stores/auth'
-import { isOnline } from '@/composables/useSync'
+import { isOnline, lastSyncAt, pendingCount, flushQueue } from '@/composables/useSync'
 import { db } from '@/db'
-import { getLastRollNo, nextOfflineRollNo, isCachedRollNoStale } from '@/api/frappe'
+import { getLastRollNo, isCachedRollNoStale } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
 import { call, createDoc, ensureCSRF, initCSRF } from '@/api/frappe'
 import { getKnitDownForJobCard } from '@/api/frappe'
@@ -792,8 +796,9 @@ async function resetSession() {
   if (!confirm('Reset session? This will clear the current roll state and reload the page.')) return
   stopTimer()
   clearInterval(cooldownInterval)
-  // Delete orphan roll (weight = 0) if one was created
-  if (currentRollNo.value) {
+  // Delete orphan roll (weight = 0) if one was created. A provisional
+  // (offline) id was never created in ERP — nothing to delete.
+  if (currentRollNo.value && !isProvisionalRollId(currentRollNo.value)) {
     try {
       // Only delete it if it really is this job card's roll.
       const r = await call('frappe.client.get_value', {
@@ -1235,8 +1240,13 @@ async function createKnitRoll({ keepTimer = false } = {}) {
     showToast(keepTimer ? `Roll #${rollIdx} started!` : `Roll #${rollIdx} started!`)
   } catch(e) {
     if (pageUnmounted) return
-    // Offline: assign next sequential roll number matching ERP's sequence
-    const idx = nextOfflineRollNo()
+    // Server unreachable / call failed. Do NOT guess the next roll number:
+    // other machines keep taking numbers from the ERP meanwhile, and a guessed
+    // number printed on a sticker collides with theirs (19-11-2026: 8 collar /
+    // cuff stickers reused 209041–209050). Run the roll under a provisional
+    // id; the ERP assigns the real number when the roll is saved/synced, and
+    // the sticker can only be printed after that.
+    const idx = newProvisionalRollId()
     currentRollNo.value  = idx
     isRollActive.value   = true
     if (!keepTimer) {
@@ -1246,7 +1256,7 @@ async function createKnitRoll({ keepTimer = false } = {}) {
       startTimer()
     }
     saveSession()
-    showToast(`Roll #${idx} started (offline — will sync when reconnected)`, 'warning')
+    showToast('Roll started offline — roll number will be given by ERP when it syncs. Sticker prints after sync.', 'warning')
     console.warn('createKnitRoll fallback (offline):', e.message)
     // Refresh cached sequence in background for next time
     getLastRollNo().catch(() => {})
@@ -1405,10 +1415,16 @@ async function submitRollWeight() {
   }
 
   try {
-    await saveRollToERP(rollData)
+    const saved = await saveRollToERP(rollData)
+    if (saved.reassignedFrom) {
+      showToast(`Roll number ${saved.reassignedFrom} was already used — ERP gave this roll #${saved.name}. Print the sticker with the new number.`, 'warning')
+    }
 
     lastCompletedRollData.value = {
-      roll_no:     completingRollNo.value,
+      // The number the ERP actually saved the roll under (never a guess).
+      // null while an offline roll is waiting to sync — see stickerBlockReason.
+      roll_no:     saved.name,
+      pending_local_id: saved.localId || null,
       // Snapshot what the sticker must say, so it can never mix this roll's
       // number with another job card's work order.
       work_order:  pd.work_order,
@@ -1455,23 +1471,67 @@ async function submitRollWeight() {
   }
 }
 
+// Returns { name, reassignedFrom, localId }.
+//  * Saved online   → name = the roll number ERP saved it under (may differ
+//                     from rollData.roll_no if that number was taken).
+//  * Queued offline → name = null until the queue syncs, even if ERP had
+//                     reserved a number for it: that empty reserved roll can be
+//                     deleted meanwhile, and the sync would then give the roll
+//                     a different number than the sticker.
 async function saveRollToERP(rollData) {
   if (isOnline.value) {
     try {
-      await call('knit_save_roll_data', rollData)
-      return
+      const resp = await call('knit_save_roll_data', rollData)
+      const name = resp?.message?.name
+      if (name) return { name: String(name), reassignedFrom: resp.message.reassigned_from || null, localId: null }
+      console.warn('knit_save_roll_data returned no roll name, queueing:', resp)
     } catch(e) {
       console.warn('ERP save failed, falling back to offline queue:', e.message)
     }
   }
-  // Offline path — queue for sync; the real roll_no will come from ERP after sync
+  // Offline path — queue for sync; the real roll_no comes from ERP after sync
   const { saveRollOffline } = await import('@/composables/useSync')
   const localId = await saveRollOffline(rollData)
-  // Update lastCompletedRollData with localId so QR print knows it's pending
-  if (lastCompletedRollData.value) {
-    lastCompletedRollData.value = { ...lastCompletedRollData.value, roll_no: localId }
+  return { name: null, reassignedFrom: null, localId }
+}
+
+// ── Provisional (offline) roll ids ──────────────────────────────────────────
+// Clearly not a roll number, so nobody can mistake it for one or print it.
+function newProvisionalRollId() {
+  return `OFFLINE-${Date.now().toString(36).toUpperCase()}`
+}
+function isProvisionalRollId(v) {
+  return typeof v === 'string' && v.startsWith('OFFLINE-')
+}
+
+// Sticker may only carry a number the ERP has assigned to this roll.
+const stickerBlockReason = computed(() => {
+  const d = lastCompletedRollData.value
+  if (!d) return ''
+  if (!d.roll_no || isProvisionalRollId(d.roll_no)) {
+    return isOnline.value
+      ? 'Waiting for ERP to save this roll and give it a number…'
+      : 'Offline — this roll gets its number when the tablet reconnects. Do not write a number by hand.'
+  }
+  return ''
+})
+
+// After the queue syncs an offline roll, pick up the number ERP gave it.
+async function resolvePendingRollNo() {
+  const d = lastCompletedRollData.value
+  if (!d?.pending_local_id || (d.roll_no && !isProvisionalRollId(d.roll_no))) return
+  try {
+    const row = await db.rolls.filter(r => r._localId === d.pending_local_id && r._syncStatus === 'synced').first()
+    if (row?.id && !isProvisionalRollId(row.id)) {
+      lastCompletedRollData.value = { ...d, roll_no: String(row.id) }
+      saveSession()
+      showToast(`Roll synced — ERP roll number #${row.id}. You can print the sticker now.`)
+    }
+  } catch (e) {
+    console.warn('resolvePendingRollNo failed:', e.message)
   }
 }
+watch([lastSyncAt, pendingCount], resolvePendingRollNo)
 
 // ── Navigate to Stock Entry with WO required items pre-filled ────────────
 async function goToStockEntry() {
@@ -1865,6 +1925,12 @@ async function submitReconcile() {
 // ── Print / QR ────────────────────────────────────────────────────────────
 async function generatePrintLabel() {
   if (!lastCompletedRollData.value) return
+  await resolvePendingRollNo()
+  if (stickerBlockReason.value) {
+    showToast(stickerBlockReason.value, 'warning')
+    if (isOnline.value) flushQueue()
+    return
+  }
   const pd = rollStore.productData
   const d  = lastCompletedRollData.value
   printData.value = {
@@ -1887,6 +1953,11 @@ async function generatePrintLabel() {
 }
 
 async function printLabel() {
+  if (!printData.value?.rollNo || isProvisionalRollId(printData.value.rollNo)) {
+    showToast('This roll has no ERP roll number yet — sticker not printed.', 'error')
+    showQRModal.value = false
+    return
+  }
   const w = window.open('', '_blank')
   if (!w) { showToast('Allow pop-ups to print.', 'error'); return }
   const d  = printData.value

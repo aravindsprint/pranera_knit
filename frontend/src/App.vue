@@ -4,8 +4,25 @@
     <transition name="banner">
       <div v-if="!isOnline" class="status-banner status-banner--offline">
         <span class="status-banner__icon">⚡</span>
-        <span>Offline — changes will sync when reconnected</span>
+        <span>Offline — rolls are NOT in ERP yet. Stickers print after reconnect.</span>
         <span v-if="pendingCount > 0" class="status-banner__pill">{{ pendingCount }} pending</span>
+      </div>
+    </transition>
+
+    <!-- Online, but the queue can't sync because the session expired -->
+    <transition name="banner">
+      <div v-if="isOnline && pendingCount > 0 && !auth.isLoggedIn" class="status-banner status-banner--offline">
+        <span class="status-banner__icon">⚠</span>
+        <span>{{ pendingCount }} item(s) not in ERP — log in again to sync them</span>
+      </div>
+    </transition>
+
+    <!-- Items that gave up after repeated errors -->
+    <transition name="banner">
+      <div v-if="failedCount > 0" class="status-banner status-banner--offline">
+        <span class="status-banner__icon">⚠</span>
+        <span>{{ failedCount }} item(s) failed to sync to ERP</span>
+        <button class="status-banner__btn" @click="retryFailed">Retry</button>
       </div>
     </transition>
 
@@ -25,7 +42,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { useSync, isOnline, isSyncing, pendingCount } from '@/composables/useSync'
+import { useSync, isOnline, isSyncing, pendingCount, failedCount, retryFailed } from '@/composables/useSync'
 import { initCSRF, isLoggedIn } from '@/api/frappe'
 useSync()
 
@@ -148,6 +165,15 @@ input, select, textarea { font-family: inherit; }
   padding: 1px 10px;
   font-size: 11px;
   font-weight: 600;
+}
+.status-banner__btn {
+  background: #fff;
+  color: var(--red-600);
+  border: none;
+  border-radius: 20px;
+  padding: 2px 12px;
+  font-size: 12px;
+  font-weight: 700;
 }
 .status-banner__spinner {
   width: 14px; height: 14px;
