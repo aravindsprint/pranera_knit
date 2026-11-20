@@ -210,6 +210,55 @@ def _next_roll_no():
     return str(n)
 
 
+def _insert_with_fresh_roll_no(roll, attempts=8):
+    """Insert a new Roll under the next free number, retrying on a collision.
+
+    Two tablets ending rolls at the same moment both read MAX(name)+1 and the
+    second insert hits a duplicate key. Previously that error reached the PWA,
+    which fell back to a locally guessed number (how Roll 209052 / 209093
+    got a sticker with another roll's number, 19-Nov-2026). Retry with a
+    fresh number instead."""
+    for i in range(attempts):
+        roll.roll_no = _next_roll_no()
+        roll.name = None
+        roll.flags.name_set = False
+        try:
+            frappe.db.savepoint("roll_no_alloc")
+            roll.insert(ignore_permissions=True)
+            return roll
+        except (frappe.DuplicateEntryError, frappe.NameError):
+            frappe.db.rollback(save_point="roll_no_alloc")
+            if i == attempts - 1:
+                raise
+
+
+@frappe.whitelist()
+def create_roll(job_card, batch_no=None):
+    """Backs `knit_create_roll` (replaces the Server Script of that name):
+    same response, but collision-safe roll number allocation."""
+    frappe.has_permission("Roll", throw=True)
+    if not job_card:
+        frappe.throw(_("job_card is required"))
+    jc = frappe.get_doc("Job Card", job_card)
+
+    roll = frappe.new_doc("Roll")
+    roll.job_card = job_card
+    roll.work_order = jc.work_order
+    roll.item_code = jc.production_item
+    roll.item_name = jc.item_name or ""
+    roll.batch = batch_no or ""
+    roll.start_time = now_datetime()
+    _insert_with_fresh_roll_no(roll)
+    frappe.db.commit()
+
+    return [{
+        "name": roll.name,
+        "idx": roll.name,
+        "start_time": str(roll.start_time),
+        "batch_no": batch_no or "",
+    }]
+
+
 def _job_card_lineage(job_card):
     """The job card plus every job card it was amended from. Rolls of a
     cancelled job card are moved to its amendment (job_card_events.
@@ -307,7 +356,6 @@ def save_roll_data(**kwargs):
         roll = frappe.get_doc("Roll", existing.name)
     else:
         roll = frappe.new_doc("Roll")
-        roll.roll_no = _next_roll_no()
         roll.job_card = job_card
         roll.work_order = fd.work_order
 
@@ -372,10 +420,16 @@ def save_roll_data(**kwargs):
     if existing:
         roll.save(ignore_permissions=True)
     else:
-        roll.insert(ignore_permissions=True)
+        _insert_with_fresh_roll_no(roll)
 
     frappe.db.commit()
-    return {"success": True, "name": roll.name}
+    # `reassigned_from`: the number the device sent, when ERP had to give the
+    # roll a different one. The PWA must print `name`, never its own number.
+    return {
+        "success": True,
+        "name": roll.name,
+        "reassigned_from": roll_no if (roll_no and roll_no != roll.name) else None,
+    }
 
 
 @frappe.whitelist()

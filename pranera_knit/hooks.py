@@ -188,6 +188,10 @@ override_whitelisted_methods = {
     # Replaces the "knit-save-roll-data" Server Script: same behaviour, but
     # refuses to overwrite a roll that belongs to a different job card.
     "knit_save_roll_data": "pranera_knit.api.knit.save_roll_data",
+    # Replaces the "knit-create-roll" Server Script: same response, but a
+    # roll-number collision between two tablets is retried server-side instead
+    # of pushing the PWA onto a locally guessed (wrong) roll number.
+    "knit_create_roll": "pranera_knit.api.knit.create_roll",
     # Replaces the "knit_get_work_orders" Server Script: same columns, but a
     # Job Card Operator only gets the Work Orders of their own Job Cards.
     "knit_get_work_orders": "pranera_knit.api.knit.get_work_orders",
