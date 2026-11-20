@@ -574,13 +574,10 @@ export async function getLastRollNo() {
   }
 }
 
-export function nextOfflineRollNo() {
-  // Increment the cached value and persist it so parallel tabs don't collide
-  const current = parseInt(localStorage.getItem(ROLL_SEQ_KEY) || '0', 10)
-  const next    = current + 1
-  localStorage.setItem(ROLL_SEQ_KEY, String(next))
-  return next
-}
+// nextOfflineRollNo() was removed: guessing the next roll number on the
+// device collided with numbers the ERP gave other machines meanwhile. Offline
+// rolls now run under an OFFLINE-… provisional id (CreateRollPage) and get
+// their real number from knit_save_roll_data when they sync.
 
 export function isCachedRollNoStale() {
   const ts = parseInt(localStorage.getItem(ROLL_SEQ_TS) || '0', 10)

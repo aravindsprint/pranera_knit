@@ -12,6 +12,7 @@ import {
 export const isOnline = ref(navigator.onLine)
 export const isSyncing = ref(false)
 export const pendingCount = ref(0)
+export const failedCount = ref(0)
 export const lastSyncAt = ref(null)
 
 // Normalize a list response into a plain array of rows. Our getList() helper
@@ -100,6 +101,18 @@ function scheduleProbe() {
 async function refreshPendingCount() {
   pendingCount.value = await db.syncQueue
     .where('_status').equals('pending').count()
+  failedCount.value = await db.syncQueue
+    .where('_status').equals('failed').count()
+}
+
+// Items that hit the retry limit used to sit as 'failed' forever with no sign
+// in the UI — that is how rolls stayed off the ERP for a whole shift. Put them
+// back in the queue (from the banner's Retry button).
+export async function retryFailed() {
+  await db.syncQueue.where('_status').equals('failed')
+    .modify({ _status: 'pending', _retries: 0 })
+  await refreshPendingCount()
+  if (isOnline.value) flushQueue()
 }
 
 // ── Queue any mutation for deferred sync ─────────────────────────────────────
@@ -128,8 +141,9 @@ export async function enqueue(endpoint, method = 'POST', payload = {}) {
 
 // ── Save a roll locally, queue sync to ERP ───────────────────────────────────
 export async function saveRollOffline(rollData) {
-  // Use the offline roll number as the local ID (it's the sequential number from nextOfflineRollNo)
-  const localId = String(rollData.roll_no || `ROLL-LOCAL-${Date.now()}`)
+  // Local ID = the ERP-reserved roll number, or the page's OFFLINE-… provisional
+  // id. It is NOT a roll number until ERP confirms it on sync.
+  const localId = String(rollData.roll_no || `OFFLINE-${Date.now().toString(36).toUpperCase()}`)
   await db.rolls.add({
     ...rollData,
     id: localId,
@@ -200,9 +214,12 @@ export async function flushQueue() {
             const realName = erpResult?.message?.name
             // Update local roll record with real ERP name and update sequence cache
             if (item.payload._localId && realName) {
+              // Keep _localId so the page can find which ERP number the
+              // offline roll was given and only then allow its sticker.
               await db.rolls
                 .where('id').equals(item.payload._localId)
-                .modify({ id: realName, _syncStatus: 'synced' })
+                .modify({ id: realName, _localId: item.payload._localId, _syncStatus: 'synced',
+                          _reassignedFrom: erpResult?.message?.reassigned_from || null })
               // Update the cached last roll number so future offline rolls stay in sequence
               const n = parseInt(realName, 10)
               if (!isNaN(n)) {
@@ -367,5 +384,5 @@ export function useSync() {
     clearTimeout(reachTimer)
   })
 
-  return { isOnline, isSyncing, pendingCount, lastSyncAt, flushQueue, syncLookupTables }
+  return { isOnline, isSyncing, pendingCount, failedCount, lastSyncAt, flushQueue, retryFailed, syncLookupTables }
 }
