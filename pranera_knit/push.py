@@ -196,7 +196,15 @@ def _creators(outward_requests):
 
 
 def _knit_down_detail(doc):
+    if doc.get("knit_type") == "Collar Cuff":
+        return (f"{doc.work_order} · {doc.workstation} · {doc.size or ''} · "
+                f"N {flt(doc.no_of_needles):g} · C {flt(doc.no_of_course):g} · LL {doc.loop_length}")
     return f"{doc.work_order} · {doc.workstation} · GSM {flt(doc.gsm):g} · LL {doc.loop_length}"
+
+
+def _knit_down_path(doc):
+    page = "collar-cuff-knit-down" if doc.get("knit_type") == "Collar Cuff" else "knit-down"
+    return f"/knit-app/{page}?name={doc.name}"
 
 
 def on_knit_down_insert(doc, method=None):
@@ -211,7 +219,7 @@ def _knit_down_insert_alert(doc):
     send(users_with_roles(KNIT_DOWN_ROLES, exclude=[doc.requested_by]),
          "Knit down ready for approval",
          f"{doc.name}: {_knit_down_detail(doc)} ({(doc.item_name or '').strip()[:60]})",
-         f"/knit-app/knit-down?name={doc.name}", tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
+         _knit_down_path(doc), tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
 
 
 def on_knit_down_update(doc, method=None):
@@ -228,4 +236,4 @@ def _knit_down_decision_alert(doc):
     if doc.approver_remarks:
         body += f" — {doc.approver_remarks}"
     send([doc.requested_by], f"Knit down {doc.status.lower()}", body,
-         f"/knit-app/knit-down?name={doc.name}", tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
+         _knit_down_path(doc), tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))

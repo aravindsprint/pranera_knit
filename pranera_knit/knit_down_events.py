@@ -1,7 +1,14 @@
 """
 pranera_knit/knit_down_events.py
 
-Rules for Knit Down Approval (doctype from patches/v1_19/add_knit_down_approval.py).
+Rules for Knit Down Approval (doctype from patches/v1_19/add_knit_down_approval.py,
+collar / cuff fields from patches/v1_20/add_collar_cuff_knit_down.py).
+
+Two kinds, one doctype (knit_type, set from the Work Order's operation):
+  Fabric       operation KNITTING            Dia, Gauge, GSM, Loop Length
+  Collar Cuff  COLLAR / CUFF KNITTING        Size, Needles, Course, Texture,
+                                             Loop Length, Ply, Gauge
+Each has its own Knit App page (knit-down / collar-cuff-knit-down).
 
 The flow
 --------
@@ -40,15 +47,51 @@ from frappe.utils import flt, getdate, now_datetime
 APPROVER_ROLE = "Knit Down Approver"
 APPROVER_ROLES = {APPROVER_ROLE, "System Manager"}
 KNIT_OPERATION = "KNITTING"
+FABRIC = "Fabric"
+COLLAR_CUFF = "Collar Cuff"
+OPERATIONS_BY_TYPE = {
+    FABRIC: (KNIT_OPERATION,),
+    COLLAR_CUFF: ("COLLAR KNITTING", "CUFF KNITTING"),
+}
 LIVE_STATUSES = ("Pending", "Approved")
 CLOSED_STATUSES = ("Approved", "Rejected")
 PERCENT_TOLERANCE = 1.0
 
 # Knit down values the knitting team enters; frozen once decided.
 ENTRY_FIELDS = ("work_order", "workstation", "job_card", "dia", "gauge", "gsm", "loop_length",
+                "size", "no_of_needles", "no_of_course", "texture", "no_of_ply",
                 "photo", "knitting_remarks")
-SPEC_FIELDS = (("required_dia", "required_dia"), ("required_gg", "required_gg"),
-               ("required_gsm", "required_gsm"), ("required_ll", "required_ll"))
+# (Work Order field, Knit Down field) copied for the approver to compare.
+SPEC_FIELDS = {
+    FABRIC: (("required_dia", "required_dia"), ("required_gg", "required_gg"),
+             ("required_gsm", "required_gsm"), ("required_ll", "required_ll")),
+    COLLAR_CUFF: (("width", "required_size"), ("no_of_needles", "required_needles"),
+                  ("no_of_course", "required_course"), ("no_of_ply", "required_ply"),
+                  ("required_gg", "required_gg"), ("required_ll", "required_ll")),
+}
+
+
+def operations_for(knit_type):
+    return OPERATIONS_BY_TYPE.get(knit_type or FABRIC, OPERATIONS_BY_TYPE[FABRIC])
+
+
+def knit_type_of_operation(operation):
+    op = (operation or "").strip().upper()
+    for knit_type, ops in OPERATIONS_BY_TYPE.items():
+        if op in ops:
+            return knit_type
+    return None
+
+
+def knit_type_for(work_order):
+    """Fabric / Collar Cuff from the Work Order's knitting operation, or None."""
+    for op in frappe.get_all("Work Order Operation",
+                             filters={"parent": work_order, "parenttype": "Work Order"},
+                             pluck="operation", order_by="idx asc"):
+        knit_type = knit_type_of_operation(op)
+        if knit_type:
+            return knit_type
+    return None
 
 
 def can_approve(user=None):
@@ -98,6 +141,10 @@ def _validate_work_order(doc):
         frappe.throw(_("Work Order {0} is {1}").format(doc.work_order, wo.status))
     doc.production_item = wo.production_item
     doc.item_name = (wo.item_name or "").strip()
+    knit_type = knit_type_for(doc.work_order)
+    if not knit_type:
+        frappe.throw(_("Work Order {0} has no knitting operation").format(doc.work_order))
+    doc.knit_type = knit_type
 
 
 def _link_job_card(doc):
@@ -118,24 +165,39 @@ def _link_job_card(doc):
 
 
 def _copy_required_spec(doc):
+    pairs = SPEC_FIELDS[doc.knit_type or FABRIC]
     meta = frappe.get_meta("Work Order")
-    fields = [src for src, _dst in SPEC_FIELDS if meta.has_field(src)]
+    fields = [src for src, _dst in pairs if meta.has_field(src)]
     if not fields:
         return
     values = frappe.db.get_value("Work Order", doc.work_order, fields, as_dict=True) or {}
-    for src, dst in SPEC_FIELDS:
+    for src, dst in pairs:
         if src in values:
             v = values[src]
             doc.set(dst, ("{:g}".format(flt(v)) if v not in (None, "") else None) if dst == "required_ll" else v)
 
 
 def _validate_values(doc):
-    for field, label in (("dia", _("Dia")), ("gauge", _("Gauge")), ("gsm", _("GSM"))):
-        # The app posts these as text ("163"); store real numbers so later
-        # code (push alerts, comparisons) doesn't trip over a str.
+    # The app posts numbers as text ("163"); store real numbers so later
+    # code (push alerts, comparisons) doesn't trip over a str.
+    for field in ("dia", "gauge", "gsm", "no_of_needles", "no_of_course", "no_of_ply"):
         doc.set(field, flt(doc.get(field)))
+    for field in ("size", "texture"):
+        doc.set(field, (doc.get(field) or "").strip() or None)
+
+    if doc.knit_type == COLLAR_CUFF:
+        numbers = (("no_of_needles", _("No of Needles")), ("no_of_course", _("No of Course")),
+                   ("no_of_ply", _("No of Ply")), ("gauge", _("Gauge")))
+        texts = (("size", _("Size")), ("texture", _("Texture")))
+    else:
+        numbers = (("dia", _("Dia")), ("gauge", _("Gauge")), ("gsm", _("GSM")))
+        texts = ()
+    for field, label in numbers:
         if doc.get(field) <= 0:
             frappe.throw(_("{0} must be greater than 0").format(label))
+    for field, label in texts:
+        if not doc.get(field):
+            frappe.throw(_("{0} is required").format(label))
     doc.loop_length = (doc.loop_length or "").strip()
     if not doc.loop_length:
         frappe.throw(_("Loop Length is required"))
