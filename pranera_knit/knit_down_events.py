@@ -10,6 +10,12 @@ Two kinds, one doctype (knit_type, set from the Work Order's operation):
                                              Loop Length, Ply, Gauge
 Each has its own Knit App page (knit-down / collar-cuff-knit-down).
 
+Approval by location (patches/v1_22): a Knit Down Approver can only
+approve / reject knit downs whose location (the Work Order's
+custom_location, copied to the knit down) is one of theirs in Knit Down
+Settings → Approver Locations. Knit downs with no location can only be
+decided by a System Manager. System Manager can decide any.
+
 The flow
 --------
 Before bulk knitting a Work Order on a machine, the knitting team runs a
@@ -94,8 +100,44 @@ def knit_type_for(work_order):
     return None
 
 
-def can_approve(user=None):
+SETTINGS = "Knit Down Settings"
+BYPASS_ROLE = "System Manager"
+
+
+def is_approver(user=None):
+    """Has an approving role at all (Knit Down Approver or System Manager)."""
     return bool(APPROVER_ROLES & set(frappe.get_roles(user or frappe.session.user)))
+
+
+def approver_locations(user=None):
+    """Locations this user approves knit downs for (Knit Down Settings)."""
+    user = user or frappe.session.user
+    if not frappe.db.exists("DocType", "Knit Down Approver Location"):
+        return set()
+    return set(frappe.get_all("Knit Down Approver Location",
+                              filters={"parenttype": SETTINGS, "user": user}, pluck="location"))
+
+
+def can_approve(user=None, location=None):
+    """Can `user` decide a knit down at `location`? System Manager: always.
+    Knit Down Approver: only for one of their locations (none set on the
+    knit down → no)."""
+    user = user or frappe.session.user
+    roles = set(frappe.get_roles(user))
+    if BYPASS_ROLE in roles:
+        return True
+    if APPROVER_ROLE not in roles or not location:
+        return False
+    return location in approver_locations(user)
+
+
+def approvers_for(location):
+    """Users who may decide a knit down at `location` (for alerts)."""
+    users = set()
+    if location and frappe.db.exists("DocType", "Knit Down Approver Location"):
+        users = set(frappe.get_all("Knit Down Approver Location",
+                                   filters={"parenttype": SETTINGS, "location": location}, pluck="user"))
+    return users
 
 
 # ── Validation ────────────────────────────────────────────────────────────
@@ -141,6 +183,8 @@ def _validate_work_order(doc):
         frappe.throw(_("Work Order {0} is {1}").format(doc.work_order, wo.status))
     doc.production_item = wo.production_item
     doc.item_name = (wo.item_name or "").strip()
+    if frappe.get_meta("Knit Down Approval").has_field("location"):
+        doc.location = frappe.db.get_value("Work Order", doc.work_order, "custom_location") or None
     knit_type = knit_type_for(doc.work_order)
     if not knit_type:
         frappe.throw(_("Work Order {0} has no knitting operation").format(doc.work_order))
@@ -260,8 +304,10 @@ def _validate_decision(doc, before):
         return
     if old_status != "Pending" or doc.status not in CLOSED_STATUSES:
         frappe.throw(_("Invalid status change {0} → {1}").format(old_status, doc.status))
-    if not can_approve():
-        frappe.throw(_("Only a {0} can approve or reject a knit down").format(APPROVER_ROLE),
+    if not can_approve(location=doc.get("location")):
+        frappe.throw(_("You can't approve or reject knit downs for {0}. Ask a {1} for that location "
+                       "(Knit Down Settings) or a System Manager.")
+                     .format(doc.get("location") or _("a Work Order with no location"), APPROVER_ROLE),
                      frappe.PermissionError)
     if doc.status == "Rejected" and not (doc.approver_remarks or "").strip():
         frappe.throw(_("Add a remark saying why the knit down is rejected"))

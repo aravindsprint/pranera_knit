@@ -216,7 +216,12 @@ def on_knit_down_insert(doc, method=None):
 
 
 def _knit_down_insert_alert(doc):
-    send(users_with_roles(KNIT_DOWN_ROLES, exclude=[doc.requested_by]),
+    # The approvers for this knit down's location (Knit Down Settings). If
+    # none are set for it, every Knit Down Approver as before.
+    from pranera_knit.knit_down_events import approvers_for
+    everyone = users_with_roles(KNIT_DOWN_ROLES, exclude=[doc.requested_by])
+    local = [u for u in everyone if u in approvers_for(doc.get("location"))]
+    send(local or everyone,
          "Knit down ready for approval",
          f"{doc.name}: {_knit_down_detail(doc)} ({(doc.item_name or '').strip()[:60]})",
          _knit_down_path(doc), tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))

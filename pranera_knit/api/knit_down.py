@@ -17,7 +17,8 @@ from frappe import _
 from frappe.utils import cint, flt
 
 from pranera_knit.knit_down_events import (
-    FABRIC, SPEC_FIELDS, bom_yarns, can_approve, job_card_status, knit_type_for,
+    FABRIC, SPEC_FIELDS, approver_locations, bom_yarns, can_approve, is_approver, job_card_status,
+    knit_type_for,
     knit_type_of_operation, latest_for, operations_for,
 )
 
@@ -29,7 +30,7 @@ LIST_FIELDS = ["name", "status", "work_order", "workstation", "job_card", "item_
                "dia", "gauge", "gsm", "loop_length", "required_dia", "required_gg", "required_gsm",
                "required_ll", "knit_type", "size", "no_of_needles", "no_of_course", "texture",
                "no_of_ply", "required_size", "required_needles", "required_course", "required_ply",
-               "requested_by", "requested_on", "approved_by", "approved_on",
+               "location", "requested_by", "requested_on", "approved_by", "approved_on",
                "approver_remarks", "photo"]
 OPEN_WO_STATUSES = ("Not Started", "In Process")
 
@@ -37,7 +38,10 @@ OPEN_WO_STATUSES = ("Not Started", "In Process")
 @frappe.whitelist()
 def get_setup():
     return {
-        "can_approve": can_approve(),
+        # Has an approving role; whether a given knit down can be decided
+        # also depends on its location (row / doc can_approve).
+        "can_approve": is_approver(),
+        "approver_locations": sorted(approver_locations()),
         "can_create": frappe.has_permission(DOCTYPE, "create"),
     }
 
@@ -83,6 +87,8 @@ def get_work_order_defaults(work_order):
         frappe.throw(_("Work Order {0} not found").format(work_order))
     wo.item_name = (wo.item_name or "").strip()
     wo.knit_type = knit_type
+    wo.location = frappe.db.get_value("Work Order", work_order, "custom_location") \
+        if meta.has_field("custom_location") else None
     # Expose the Work Order's values under the knit down's required_* names.
     for src, dst in pairs:
         if src in wo:
@@ -134,9 +140,11 @@ def reject_knit_down(name, remarks=None):
 
 
 def _decide(name, status, remarks):
-    if not can_approve():
-        frappe.throw(_("Only a Knit Down Approver can approve or reject a knit down"), frappe.PermissionError)
     doc = frappe.get_doc(DOCTYPE, name)
+    if not can_approve(location=doc.get("location")):
+        frappe.throw(_("You can't approve or reject knit downs for {0}")
+                     .format(doc.get("location") or _("a Work Order with no location")),
+                     frappe.PermissionError)
     if doc.status != "Pending":
         frappe.throw(_("Knit Down {0} is already {1}").format(name, doc.status))
     doc.status = status
@@ -156,7 +164,7 @@ def get_knit_down(name):
     out["item_name"] = (doc.item_name or "").strip()
     out["requested_by_name"] = frappe.utils.get_fullname(doc.requested_by) if doc.requested_by else ""
     out["approved_by_name"] = frappe.utils.get_fullname(doc.approved_by) if doc.approved_by else ""
-    out["can_approve"] = doc.status == "Pending" and can_approve()
+    out["can_approve"] = doc.status == "Pending" and can_approve(location=doc.get("location"))
     out["can_edit"] = doc.status == "Pending" and bool(doc.has_permission("write"))
     return out
 
@@ -187,6 +195,7 @@ def list_knit_downs(status=None, txt=None, limit=60, knit_type=None):
         r.requested_by_name = names.get(r.requested_by, "")
         r.approved_by_name = names.get(r.approved_by, "")
         r.yarns = yarns.get(r.name, [])
+        r.can_approve = r.status == "Pending" and can_approve(location=r.get("location"))
     return rows
 
 

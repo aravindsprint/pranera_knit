@@ -28,6 +28,7 @@ PAGES = [
     ("create-pick-order", "Create Pick Order", "/knit-app/create-pick-order", "Production"),
     ("outward-request", "Outward Request", "/knit-app/outward-request", "Production"),
     ("vehicle-gate-entry", "Vehicle Gate Entry", "/knit-app/vehicle-gate-entry", "Production"),
+    ("loading-scan", "Loading Scan", "/knit-app/loading-scan", "Production"),
     ("spares-issue", "Needle / Sinker Issue", "/knit-app/spares-issue", "Production"),
     ("knit-down", "Fabric Knit Down", "/knit-app/knit-down", "Production"),
     ("collar-cuff-knit-down", "Collar Cuff Knit Down", "/knit-app/collar-cuff-knit-down", "Production"),

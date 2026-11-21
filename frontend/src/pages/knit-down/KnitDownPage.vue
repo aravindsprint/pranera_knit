@@ -35,6 +35,7 @@
         <div class="kd-card__ids">
           <span><i class="pi pi-file"></i> {{ r.work_order }}</span>
           <span><i class="pi pi-cog"></i> {{ r.workstation }}</span>
+          <span v-if="r.location"><i class="pi pi-map-marker"></i> {{ r.location }}</span>
         </div>
 
         <div class="spec-grid">
@@ -65,7 +66,7 @@
           </span>
         </div>
 
-        <div v-if="r.status === 'Pending' && setup.can_approve" class="decide-row" @click.stop>
+        <div v-if="r.status === 'Pending' && r.can_approve" class="decide-row" @click.stop>
           <button class="btn btn-reject" @click="startDecision(r, 'Rejected')"><i class="pi pi-times"></i> Reject</button>
           <button class="btn btn-approve" @click="startDecision(r, 'Approved')"><i class="pi pi-check"></i> Approve</button>
         </div>
@@ -100,6 +101,7 @@
           <div class="wo-picked__main">
             <div class="wo-picked__name">{{ form.work_order }}</div>
             <div class="wo-picked__sub">{{ form.item_name }}</div>
+            <div v-if="form.location" class="wo-picked__sub"><i class="pi pi-map-marker"></i> {{ form.location }}</div>
           </div>
           <button v-if="editable && !form.name" class="btn-remove" title="Change" @click="clearWorkOrder"><i class="pi pi-times"></i></button>
         </div>
@@ -207,6 +209,10 @@
         </div>
       </div>
 
+      <div v-if="form.name && form.status === 'Pending' && setup.can_approve && !form.can_approve" class="card muted small">
+        <i class="pi pi-lock"></i>
+        {{ form.location ? `Only approvers for ${form.location} or a System Manager can approve this knit down.` : 'This work order has no location, so only a System Manager can approve it.' }}
+      </div>
       <div v-if="form.name && form.can_approve" class="card decide-card">
         <button class="btn btn-reject" @click="startDecision(form, 'Rejected')"><i class="pi pi-times"></i> Reject</button>
         <button class="btn btn-approve" @click="startDecision(form, 'Approved')"><i class="pi pi-check"></i> Approve</button>
@@ -311,7 +317,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const setup = reactive({ can_approve: false, can_create: false })
+const setup = reactive({ can_approve: false, can_create: false, approver_locations: [] })
 const rows = ref([])
 const listStatus = ref('Pending')
 const listSearch = ref('')
@@ -331,7 +337,7 @@ function blankForm() {
     required_dia: null, required_gg: null, required_gsm: null, required_ll: null,
     size: '', no_of_needles: '', no_of_course: '', texture: '', no_of_ply: '',
     required_size: null, required_needles: null, required_course: null, required_ply: null,
-    knit_type: props.knitType,
+    knit_type: props.knitType, location: '',
     yarns: [], requested_by_name: '', requested_on: '', approved_by: '', approved_by_name: '',
     approved_on: '', approver_remarks: '', can_edit: true, can_approve: false,
   }
@@ -473,6 +479,7 @@ async function pickWorkOrder(name, workstation = '') {
       required_size: wo.required_size ?? null, required_needles: wo.required_needles ?? null,
       required_course: wo.required_course ?? null, required_ply: wo.required_ply ?? null,
       knit_type: wo.knit_type || props.knitType,
+      location: wo.location || '',
       // Dia / Gauge are the machine's — start from the WO's values.
       dia: form.dia || (+wo.required_dia ? wo.required_dia : ''),
       gauge: form.gauge || (+wo.required_gg ? wo.required_gg : ''),
