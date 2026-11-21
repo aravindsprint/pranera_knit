@@ -868,8 +868,9 @@ const KD_API = 'pranera_knit.api.knit_down'
 export const getKnitDownSetup = () =>
   call(`${KD_API}.get_setup`).then(r => r.message)
 
-export const searchKnitWorkOrders = (txt) =>
-  call(`${KD_API}.search_work_orders`, { txt: txt || undefined }).then(r => r.message || [])
+export const searchKnitWorkOrders = (txt, knitType) =>
+  call(`${KD_API}.search_work_orders`, { txt: txt || undefined, knit_type: knitType || undefined })
+    .then(r => r.message || [])
 
 export const getKnitDownDefaults = (workOrder) =>
   call(`${KD_API}.get_work_order_defaults`, { work_order: workOrder }).then(r => r.message)
@@ -880,8 +881,10 @@ export const saveKnitDown = (payload) =>
 export const getKnitDown = (name) =>
   call(`${KD_API}.get_knit_down`, { name }).then(r => r.message)
 
-export const listKnitDowns = ({ status, txt } = {}) =>
-  call(`${KD_API}.list_knit_downs`, { status: status || undefined, txt: txt || undefined })
+export const listKnitDowns = ({ status, txt, knitType } = {}) =>
+  call(`${KD_API}.list_knit_downs`, {
+    status: status || undefined, txt: txt || undefined, knit_type: knitType || undefined,
+  })
     .then(r => r.message || [])
 
 export const approveKnitDown = (name, remarks) =>

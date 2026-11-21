@@ -1,8 +1,8 @@
 <template>
   <div class="page">
     <AppHeader
-      :title="mode === 'list' ? 'Knit Down Approval' : (form.name || 'New Knit Down')"
-      active="knit-down" :username="auth.username" :designation="auth.designation" :show-back="true"
+      :title="mode === 'list' ? page.title : (form.name || `New ${page.title}`)"
+      :active="page.key" :username="auth.username" :designation="auth.designation" :show-back="true"
     />
 
     <!-- ══════════════════════ LIST ══════════════════════ -->
@@ -20,7 +20,7 @@
         </div>
         <input
           v-model="listSearch" class="form-input" style="margin-top:10px"
-          placeholder="Search WO, machine, fabric..." @input="onListSearch"
+          placeholder="Search WO, machine, item..." @input="onListSearch"
         />
       </div>
 
@@ -107,7 +107,7 @@
           <div class="search-box">
             <i class="pi pi-search"></i>
             <input
-              v-model="woSearch" class="form-input" placeholder="Search WO, fabric or machine..."
+              v-model="woSearch" class="form-input" placeholder="Search WO, item or machine..."
               @input="onWoSearch" @focus="loadWos(woSearch)"
             />
           </div>
@@ -121,7 +121,7 @@
               </span>
             </button>
           </div>
-          <div v-else-if="woSearched" class="muted small" style="margin-top:8px">No open knitting work orders found.</div>
+          <div v-else-if="woSearched" class="muted small" style="margin-top:8px">{{ page.noWo }}</div>
         </template>
 
         <template v-if="form.work_order">
@@ -145,10 +145,10 @@
       <!-- Knit down values -->
       <div v-if="form.work_order" class="card">
         <div class="grid-2">
-          <div v-for="f in SPEC_INPUTS" :key="f.key">
+          <div v-for="f in specInputs" :key="f.key">
             <label class="form-label">
               {{ f.label }} <span class="req">*</span>
-              <span v-if="form[f.req] !== null && form[f.req] !== '' && form[f.req] !== undefined" class="req-hint">req {{ fmtNum(form[f.req]) }}</span>
+              <span v-if="f.req && form[f.req] && +form[f.req] !== 0" class="req-hint">req {{ fmtNum(form[f.req]) }}</span>
             </label>
             <input
               v-model="form[f.key]" class="form-input" :class="{ 'form-input--off': specOff(f) }"
@@ -280,12 +280,32 @@ const FILTERS = [
   { label: 'Rejected', value: 'Rejected' },
   { label: 'All', value: '' },
 ]
-const SPEC_INPUTS = [
-  { key: 'dia', req: 'required_dia', label: 'Dia', placeholder: '34' },
-  { key: 'gauge', req: 'required_gg', label: 'Gauge', placeholder: '28' },
-  { key: 'gsm', req: 'required_gsm', label: 'GSM', placeholder: '154', tolerance: 5 },
-  { key: 'loop_length', req: 'required_ll', label: 'Loop Length (cm)', placeholder: '21/13', text: true },
-]
+const COLLAR_CUFF = 'Collar Cuff'
+// One component, two Knit App pages (router props: knitType).
+const PAGE_INFO = {
+  Fabric: { key: 'knit-down', title: 'Fabric Knit Down', noWo: 'No open fabric knitting work orders found.' },
+  [COLLAR_CUFF]: { key: 'collar-cuff-knit-down', title: 'Collar Cuff Knit Down', noWo: 'No open collar / cuff knitting work orders found.' },
+}
+const SPEC_INPUTS = {
+  Fabric: [
+    { key: 'dia', req: 'required_dia', label: 'Dia', placeholder: '34' },
+    { key: 'gauge', req: 'required_gg', label: 'Gauge', placeholder: '28' },
+    { key: 'gsm', req: 'required_gsm', label: 'GSM', placeholder: '154', tolerance: 5 },
+    { key: 'loop_length', req: 'required_ll', label: 'Loop Length (cm)', placeholder: '21/13', text: true },
+  ],
+  [COLLAR_CUFF]: [
+    { key: 'size', req: 'required_size', label: 'Size', placeholder: '16.75X3.5', text: true },
+    { key: 'no_of_needles', req: 'required_needles', label: 'No of Needles', placeholder: '305' },
+    { key: 'no_of_course', req: 'required_course', label: 'Courses', placeholder: '133' },
+    { key: 'texture', label: 'Texture', placeholder: '16.5', text: true },
+    { key: 'loop_length', req: 'required_ll', label: 'Loop Length', placeholder: '85', text: true },
+    { key: 'no_of_ply', req: 'required_ply', label: 'No of Ply', placeholder: '5' },
+    { key: 'gauge', req: 'required_gg', label: 'GG', placeholder: '14' },
+  ],
+}
+
+const props = defineProps({ knitType: { type: String, default: 'Fabric' } })
+const page = computed(() => PAGE_INFO[props.knitType] || PAGE_INFO.Fabric)
 
 const auth = useAuthStore()
 const route = useRoute()
@@ -309,6 +329,9 @@ function blankForm() {
     name: '', status: 'Pending', work_order: '', item_name: '', workstation: '', job_card: '',
     dia: '', gauge: '', gsm: '', loop_length: '', photo: '', knitting_remarks: '',
     required_dia: null, required_gg: null, required_gsm: null, required_ll: null,
+    size: '', no_of_needles: '', no_of_course: '', texture: '', no_of_ply: '',
+    required_size: null, required_needles: null, required_course: null, required_ply: null,
+    knit_type: props.knitType,
     yarns: [], requested_by_name: '', requested_on: '', approved_by: '', approved_by_name: '',
     approved_on: '', approver_remarks: '', can_edit: true, can_approve: false,
   }
@@ -320,14 +343,17 @@ const editable = computed(() => (form.name ? form.can_edit : setup.can_create))
 const yarnTotal = computed(() => form.yarns.reduce((s, y) => s + (parseFloat(y.actual_percent) || 0), 0))
 const yarnTotalOk = computed(() => Math.abs(yarnTotal.value - 100) <= 1)
 
+// A record keeps its own type even if opened from the other page.
+const specInputs = computed(() => SPEC_INPUTS[form.knit_type] || SPEC_INPUTS[props.knitType] || SPEC_INPUTS.Fabric)
+
 const missing = computed(() => {
   const m = []
   if (!form.work_order) m.push('Work Order')
   if (!form.workstation) m.push('Machine')
-  if (!(parseFloat(form.dia) > 0)) m.push('Dia')
-  if (!(parseFloat(form.gauge) > 0)) m.push('Gauge')
-  if (!(parseFloat(form.gsm) > 0)) m.push('GSM')
-  if (!String(form.loop_length || '').trim()) m.push('Loop Length')
+  for (const f of specInputs.value) {
+    const ok = f.text ? String(form[f.key] ?? '').trim() : parseFloat(form[f.key]) > 0
+    if (!ok) m.push(f.label)
+  }
   if (form.yarns.length && !yarnTotalOk.value) m.push('Yarn % totalling 100')
   return m
 })
@@ -354,7 +380,7 @@ function deviation(actual, required) {
   return ((a - r) / r) * 100
 }
 function specOff(f) {
-  if (f.text) return false
+  if (f.text || !f.req) return false
   const d = deviation(form[f.key], form[f.req])
   return d !== null && Math.abs(d) > (f.tolerance ?? 0)
 }
@@ -363,6 +389,22 @@ function specOffText(f) {
   return `${d > 0 ? '+' : ''}${d.toFixed(1)}% vs required`
 }
 function specRows(r) {
+  if (r.knit_type === COLLAR_CUFF) {
+    const row = (label, actual, required) => {
+      const off = !!required && +required !== 0 && +required !== +actual
+        && String(required).trim().toUpperCase() !== String(actual ?? '').trim().toUpperCase()
+      return { label, actual: actual ?? '', required: off ? `${required}` : '', off }
+    }
+    return [
+      row('Size', r.size, r.required_size),
+      row('Needles', fmtNum(r.no_of_needles), r.required_needles),
+      row('Course', fmtNum(r.no_of_course), r.required_course),
+      { label: 'Texture', actual: r.texture || '', required: '', off: false },
+      { label: 'LL', actual: r.loop_length, required: r.required_ll ? `${r.required_ll}` : '', off: false },
+      row('Ply', fmtNum(r.no_of_ply), r.required_ply),
+      { label: 'GG', actual: fmtNum(r.gauge), required: '', off: false },
+    ]
+  }
   const gsmDev = deviation(r.gsm, r.required_gsm)
   return [
     { label: 'Dia', actual: fmtNum(r.dia), required: r.required_dia && +r.required_dia !== +r.dia ? fmtNum(r.required_dia) : '', off: r.required_dia && +r.required_dia !== +r.dia },
@@ -386,7 +428,7 @@ function fmtTime(dt) { return dt ? String(dt).split(' ')[1]?.slice(0, 5) || '' :
 async function loadList() {
   loadingList.value = true
   try {
-    rows.value = await listKnitDowns({ status: listStatus.value, txt: listSearch.value })
+    rows.value = await listKnitDowns({ status: listStatus.value, txt: listSearch.value, knitType: props.knitType })
   } catch (e) {
     error.value = e.message
   } finally {
@@ -408,7 +450,7 @@ const woSearched = ref(false)
 async function loadWos(txt) {
   woLoading.value = true
   try {
-    woResults.value = await searchKnitWorkOrders(txt)
+    woResults.value = await searchKnitWorkOrders(txt, props.knitType)
     woSearched.value = true
   } catch (e) {
     error.value = e.message
@@ -428,8 +470,12 @@ async function pickWorkOrder(name, workstation = '') {
       work_order: wo.name, item_name: wo.item_name,
       required_dia: wo.required_dia ?? null, required_gg: wo.required_gg ?? null,
       required_gsm: wo.required_gsm ?? null, required_ll: wo.required_ll ?? null,
+      required_size: wo.required_size ?? null, required_needles: wo.required_needles ?? null,
+      required_course: wo.required_course ?? null, required_ply: wo.required_ply ?? null,
+      knit_type: wo.knit_type || props.knitType,
       // Dia / Gauge are the machine's — start from the WO's values.
-      dia: form.dia || wo.required_dia || '', gauge: form.gauge || wo.required_gg || '',
+      dia: form.dia || (+wo.required_dia ? wo.required_dia : ''),
+      gauge: form.gauge || (+wo.required_gg ? wo.required_gg : ''),
       yarns: d.yarns.map(y => ({ ...y, actual_percent: y.bom_percent })),
       workstation: '', job_card: '',
     })
@@ -513,7 +559,9 @@ async function save() {
       workstation: form.workstation,
       job_card: form.job_card || '',
       dia: form.dia, gauge: form.gauge, gsm: form.gsm,
-      loop_length: String(form.loop_length).trim(),
+      loop_length: String(form.loop_length ?? '').trim(),
+      size: String(form.size ?? '').trim(), texture: String(form.texture ?? '').trim(),
+      no_of_needles: form.no_of_needles, no_of_course: form.no_of_course, no_of_ply: form.no_of_ply,
       photo: form.photo || '',
       knitting_remarks: form.knitting_remarks || '',
       yarns: form.yarns.map(y => ({ item_code: y.item_code, actual_percent: y.actual_percent })),
@@ -586,6 +634,17 @@ onMounted(async () => {
   syncWithRoute()
 })
 watch(() => [route.query.name, route.query.new, route.query.work_order], syncWithRoute)
+// Fabric ↔ Collar Cuff reuses this component (same view, new props): start clean.
+watch(() => props.knitType, () => {
+  Object.assign(form, blankForm())
+  machines.value = []
+  rows.value = []
+  woResults.value = []
+  woSearched.value = false
+  woSearch.value = ''
+  listSearch.value = ''
+  syncWithRoute()
+})
 </script>
 
 <style scoped>

@@ -20,3 +20,4 @@ pranera_knit.patches.v1_16.add_workstation_status_page
 pranera_knit.patches.v1_17.add_fabric_and_collar_cuff_supervisor_roles
 pranera_knit.patches.v1_18.add_operator_job_cards_page
 pranera_knit.patches.v1_19.add_knit_down_approval
+pranera_knit.patches.v1_20.add_collar_cuff_knit_down
