@@ -6,6 +6,8 @@
 # later, the auto-created PL is cancelled, re-issued and re-emailed.
 #
 # Trigger: Stock Entry (Manufacture) on_submit -> background job after commit.
+# Cancelling a Manufacture entry cancels the auto-created PL first (before_cancel)
+# and re-issues it afterwards if the WO is still finished (on_cancel).
 #
 # Calculation mirrors existing PL docs (e.g. PL/4949):
 #   sent      = Material Transfer for Manufacture + extra issues (Material
@@ -36,6 +38,39 @@ def on_stock_entry_submit(doc, method=None):
         job_id=f"process_loss::{doc.work_order}",
         deduplicate=True,
     )
+
+
+def on_stock_entry_before_cancel(doc, method=None):
+    """Cancelling a Manufacture entry used to fail: the submitted Process
+    Loss linked to its Work Order blocks it, and no role may cancel a
+    Process Loss. Our own auto-created PLs for the Work Order are cancelled
+    first (they are re-issued after the cancel if the Work Order is still
+    finished); a PL made by hand stops the cancel with a clear message."""
+    if doc.purpose != "Manufacture" or not doc.work_order:
+        return
+    names = _existing_process_losses(doc.work_order)
+    manual = [n for n in names if not _is_auto(n)]
+    if manual:
+        frappe.throw(
+            frappe._("Work Order {0} has a Process Loss made by hand ({1}). Ask an Accounts Manager "
+                     "to cancel it before cancelling this Manufacture entry.").format(
+                doc.work_order, ", ".join(manual)),
+            title=frappe._("Process Loss exists"),
+        )
+    for name in names:
+        pl = frappe.get_doc(LOSS_DOCTYPE, name)
+        pl.flags.ignore_permissions = True
+        if pl.docstatus == 1:
+            pl.cancel()
+        else:
+            frappe.delete_doc(LOSS_DOCTYPE, name, ignore_permissions=True, force=True)
+        doc.add_comment("Info", f"Cancelled auto-created Process Loss {name} with this entry.")
+
+
+def on_stock_entry_cancel(doc, method=None):
+    """Re-issue the Process Loss from what is left, if the Work Order still
+    counts as finished after this entry is cancelled."""
+    on_stock_entry_submit(doc, method)
 
 
 # ---------------------------------------------------------------------------
