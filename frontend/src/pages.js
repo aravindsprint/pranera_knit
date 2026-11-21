@@ -9,6 +9,7 @@ export const PAGES = [
   { key: 'create-pick-order',   label: 'Create Pick Order',   icon: '📝', path: '/knit-app/create-pick-order',   section: 'PRODUCTION' },
   { key: 'outward-request',     label: 'Outward Request',     icon: '🚚', path: '/knit-app/outward-request',     section: 'PRODUCTION' },
   { key: 'vehicle-gate-entry',  label: 'Vehicle Gate Entry',  icon: '🚛', path: '/knit-app/vehicle-gate-entry',  section: 'PRODUCTION' },
+  { key: 'loading-scan',        label: 'Loading Scan',        icon: '🔍', path: '/knit-app/loading-scan',        section: 'PRODUCTION' },
   { key: 'spares-issue',        label: 'Needle / Sinker Issue', icon: '🪡', path: '/knit-app/spares-issue',      section: 'PRODUCTION' },
   { key: 'knit-down',           label: 'Fabric Knit Down',    icon: '🧵', path: '/knit-app/knit-down',           section: 'PRODUCTION' },
   { key: 'collar-cuff-knit-down', label: 'Collar Cuff Knit Down', icon: '👔', path: '/knit-app/collar-cuff-knit-down', section: 'PRODUCTION' },

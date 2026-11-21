@@ -757,6 +757,10 @@ export const listOutwardRequests = ({ requestStatus, txt, sameDayApproval } = {}
 export const getOutwardRequestConfig = () =>
   call(`${OR_API}.get_outward_request_config`).then(r => r.message)
 
+// Counted Kgs already booked on other requests for a date (daily limit hint).
+export const getOutwardDayKgs = (date, name) =>
+  call(`${OR_API}.get_day_kgs`, { date, name: name || undefined }).then(r => r.message)
+
 export const approveOutwardSameDay = (name, remarks) =>
   call(`${OR_API}.approve_same_day`, { name, remarks: remarks || undefined }).then(r => r.message)
 
@@ -916,3 +920,20 @@ export async function uploadFile(file, filename) {
   if (!res.ok || data.exc) throw new Error(extractServerError(data, res.statusText))
   return data.message?.file_url
 }
+
+// ── Loading Scan ─────────────────────────────────────────────────────────────
+// pranera_knit/api/loading_scan.py — security scans rolls onto a vehicle and
+// cross-checks them against the Vehicle Gate Entry's outbound Stock Entries.
+const LS_API = 'pranera_knit.api.loading_scan'
+
+export const listLoadingGateEntries = (txt) =>
+  call(`${LS_API}.list_gate_entries`, { txt: txt || undefined }).then(r => r.message || [])
+
+export const getLoadingChecklist = (gateEntry) =>
+  call(`${LS_API}.get_checklist`, { gate_entry: gateEntry }).then(r => r.message)
+
+export const scanLoadingRoll = (gateEntry, code) =>
+  call(`${LS_API}.scan`, { gate_entry: gateEntry, code }).then(r => r.message)
+
+export const undoLoadingScan = (gateEntry, rollNo) =>
+  call(`${LS_API}.undo_scan`, { gate_entry: gateEntry, roll_no: rollNo }).then(r => r.message)

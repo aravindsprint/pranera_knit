@@ -37,7 +37,7 @@
         </div>
         <div v-if="r.same_day_approval" class="req-card__approval">
           <span class="pill pill--soft" :class="approvalClass(r.same_day_approval)">
-            <i class="pi pi-clock"></i> Same-day {{ approvalLabel(r.same_day_approval) }}
+            <i class="pi pi-clock"></i> {{ approvalLabel(r.same_day_approval) }}
           </span>
         </div>
         <div class="req-card__to">
@@ -103,18 +103,19 @@
         </div>
         <div v-if="store.meta.same_day_approval" class="approval-box" :class="`approval-box--${store.meta.same_day_approval.toLowerCase()}`">
           <div class="approval-box__head">
-            <span class="form-label" style="margin:0">Same-day Approval</span>
+            <span class="form-label" style="margin:0">Approval</span>
             <span class="pill" :class="approvalClass(store.meta.same_day_approval)">{{ approvalLabel(store.meta.same_day_approval) }}</span>
           </div>
           <div class="approval-box__text">
             <template v-if="store.meta.same_day_approval === 'Pending'">
-              Dated today after {{ store.config?.cutoff_label || '3:00 PM' }} — waiting for
-              {{ store.approverNames || 'an approver' }} since {{ fmtDateTime(store.meta.approval_requested_on) }}.
+              <span v-if="store.meta.approval_reason" class="approval-box__reason">{{ store.meta.approval_reason }}</span>
+              Waiting for {{ store.approverNames || 'an approver' }} since {{ fmtDateTime(store.meta.approval_requested_on) }}.
               A Roll Pick Assignment can be created once it's approved.
             </template>
             <template v-else>
               {{ store.meta.same_day_approval }} by {{ store.meta.approved_by_name }} on {{ fmtDateTime(store.meta.approved_on) }}<template v-if="store.meta.approval_remarks"> — “{{ store.meta.approval_remarks }}”</template>.
-              <template v-if="store.meta.same_day_approval === 'Rejected'"> Change the date to tomorrow or later to continue.</template>
+              <span v-if="store.meta.approval_reason" class="approval-box__reason">{{ store.meta.approval_reason }}</span>
+              <template v-if="store.meta.same_day_approval === 'Rejected'"> Change the date or quantity to continue.</template>
             </template>
           </div>
           <template v-if="store.meta.can_approve">
@@ -182,15 +183,29 @@
             <i class="pi pi-exclamation-circle"></i>
             <span>The date can't be in the past — pick today or a later date.</span>
           </div>
-          <div v-else-if="store.needsApproval" class="hint-text hint-text--warn">
-            <i class="pi pi-clock"></i>
-            <span v-if="store.isApprover">Today's date after {{ store.config.cutoff_label }} — you're an approver, so it will be approved automatically.</span>
-            <span v-else>Today's date after {{ store.config.cutoff_label }} needs approval from {{ store.approverNames || 'an approver' }}. It's sent for approval when you save — use tomorrow's date to skip approval.</span>
-          </div>
-          <div v-else-if="store.afterCutoff && !store.name" class="hint-text">
-            <i class="pi pi-info-circle"></i>
-            <span>After {{ store.config.cutoff_label }}, new requests are dated tomorrow by default.</span>
-          </div>
+          <template v-else>
+            <div v-if="store.lateNeedsApproval" class="hint-text hint-text--warn">
+              <i class="pi pi-clock"></i>
+              <span>Late: requests for this date had to be made by {{ store.config?.cutoff_label || '11:30 PM' }} the day before.</span>
+            </div>
+            <div v-if="store.overLimit" class="hint-text hint-text--warn">
+              <i class="pi pi-exclamation-triangle"></i>
+              <span>Over the daily limit: {{ fmtKgs(store.dayTotalKgs) }} of {{ fmtKgs(store.dailyKgsLimit) }} Kgs for this date (collar / cuff not counted).</span>
+            </div>
+            <div v-else-if="store.dailyKgsLimit > 0 && store.date" class="hint-text">
+              <i class="pi pi-info-circle"></i>
+              <span>This date: {{ fmtKgs(store.dayTotalKgs) }} of {{ fmtKgs(store.dailyKgsLimit) }} Kgs booked (collar / cuff not counted).</span>
+            </div>
+            <div v-if="store.needsApproval" class="hint-text hint-text--warn">
+              <i class="pi pi-user"></i>
+              <span v-if="store.isApprover">You're an approver, so it will be approved automatically.</span>
+              <span v-else>It's sent to {{ store.approverNames || 'an approver' }} for approval when you save.</span>
+            </div>
+            <div v-else-if="!store.name" class="hint-text">
+              <i class="pi pi-info-circle"></i>
+              <span>Requests for a date must be made by {{ store.config?.cutoff_label || '11:30 PM' }} the day before.</span>
+            </div>
+          </template>
         </template>
 
         <label class="form-label" style="margin-top:14px">Fetch Items From <span class="req">*</span></label>
@@ -586,7 +601,7 @@ async function save() {
   const doc = await store.save()
   if (!doc) return
   savedTitle.value = doc.same_day_approval === 'Pending'
-    ? 'Sent for Same-day Approval'
+    ? 'Sent for Approval'
     : 'Outward Request Saved'
   savedName.value = doc.name
   if (wasNew) router.replace({ query: { name: doc.name } })
@@ -596,7 +611,7 @@ async function decide(approve) {
   const doc = await store.decideApproval(approve, approvalRemarks.value.trim())
   if (!doc) return
   approvalRemarks.value = ''
-  savedTitle.value = approve ? 'Same-day Request Approved' : 'Same-day Request Rejected'
+  savedTitle.value = approve ? 'Outward Request Approved' : 'Outward Request Rejected'
   savedName.value = doc.name
 }
 
@@ -604,8 +619,9 @@ function approvalClass(s) {
   return { Pending: 'pill--amber', Approved: 'pill--green', Rejected: 'pill--red' }[s] || ''
 }
 function approvalLabel(s) {
-  return { Pending: 'approval pending', Approved: 'approved', Rejected: 'rejected' }[s] || s
+  return { Pending: 'Approval pending', Approved: 'Approved', Rejected: 'Rejected' }[s] || s
 }
+function fmtKgs(v) { return Math.round(Number(v) || 0).toLocaleString('en-IN') }
 
 function openGateEntry(name) {
   router.push({ path: '/knit-app/vehicle-gate-entry', query: { name } })
@@ -799,6 +815,7 @@ function fmtQty(n) {
 .approval-box--rejected { background: #fef2f2; border-color: #fecaca; }
 .approval-box__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .approval-box__text { font-size: 13px; color: #334155; line-height: 1.5; }
+.approval-box__reason { display: block; white-space: pre-line; font-weight: 600; margin-bottom: 4px; }
 .approval-box__actions { display: flex; gap: 10px; justify-content: flex-end; }
 .btn-outline.btn-danger { color: #dc2626; border-color: #fca5a5; }
 .approval-box__actions .btn { min-height: 40px; }

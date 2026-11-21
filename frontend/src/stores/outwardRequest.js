@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   getOutwardRequestItems, saveOutwardRequest, getOutwardRequest, listOutwardRequests,
   getBuildings, searchWorkOrdersForOutward, searchPurchaseOrdersForOutward,
   getOutwardPickDefaults, createOutwardRollPickAssignment, syncWarehouses, searchAssignableUsers,
-  getOutwardRequestConfig, approveOutwardSameDay, rejectOutwardSameDay,
+  getOutwardRequestConfig, approveOutwardSameDay, rejectOutwardSameDay, getOutwardDayKgs,
 } from '@/api/frappe'
 
 function todayISO() {
@@ -83,15 +83,39 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     !!config.value && serverMinutesNow.value >= toMinutes(config.value.cutoff_time)
   )
   const minDate = computed(() => config.value?.today || todayISO())
-  const defaultDate = computed(() =>
-    afterCutoff.value ? addDaysISO(minDate.value, 1) : minDate.value
-  )
+  // Deadline: the cut-off time (11:30 PM) on the day BEFORE the request date.
+  const defaultDate = computed(() => addDaysISO(minDate.value, afterCutoff.value ? 2 : 1))
   const dateChanged = computed(() => !name.value || date.value !== originalDate.value)
   const dateInPast = computed(() => dateChanged.value && !!date.value && date.value < minDate.value)
-  const needsApproval = computed(() =>
-    dateChanged.value && !!config.value?.require_approval &&
-    date.value === minDate.value && afterCutoff.value
+  const isLate = computed(() =>
+    !!date.value && (date.value <= minDate.value ||
+      (date.value === addDaysISO(minDate.value, 1) && afterCutoff.value))
   )
+  const lateNeedsApproval = computed(() =>
+    dateChanged.value && !!config.value?.require_approval && isLate.value
+  )
+
+  // Daily Kgs limit (collar / cuff are in Pcs, so only Kgs rows count here;
+  // the server also excludes collar / cuff item groups).
+  const dailyKgsLimit = computed(() => Number(config.value?.daily_kgs_limit || 0))
+  const dayBookedKgs = ref(0)
+  const myKgs = computed(() => items.value
+    .filter(r => String(r.stock_uom || '').toLowerCase() === 'kgs')
+    .reduce((t, r) => t + (Number(r.qty) || 0), 0))
+  const dayTotalKgs = computed(() => dayBookedKgs.value + myKgs.value)
+  const overLimit = computed(() =>
+    dailyKgsLimit.value > 0 && myKgs.value > 0 && dayTotalKgs.value > dailyKgsLimit.value
+  )
+  async function loadDayKgs() {
+    if (!date.value) { dayBookedKgs.value = 0; return }
+    try {
+      const d = await getOutwardDayKgs(date.value, name.value || undefined)
+      dayBookedKgs.value = Number(d?.booked || 0)
+    } catch { dayBookedKgs.value = 0 }
+  }
+  watch(() => [date.value, name.value], loadDayKgs)
+
+  const needsApproval = computed(() => lateNeedsApproval.value || overLimit.value)
   const isApprover = computed(() => !!config.value?.is_approver)
   const approverNames = computed(() =>
     (config.value?.approvers || []).map(a => a.full_name || a.user).join(', ')
@@ -331,6 +355,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       approved_by_name: doc.approved_by_name || doc.approved_by || '',
       approved_on: doc.approved_on,
       approval_remarks: doc.approval_remarks || '',
+      approval_reason: doc.approval_reason || '',
       can_approve: !!doc.can_approve,
     }
   }
@@ -463,6 +488,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     documentName, isEditable, totalsByUom, canSave, existingRequest, sameBuilding,
     rowAllocation, overAllocated, setFromBuilding, onBatchPicked,
     config, afterCutoff, minDate, defaultDate, dateInPast, needsApproval, isApprover, approverNames,
+    isLate, lateNeedsApproval, dailyKgsLimit, dayBookedKgs, myKgs, dayTotalKgs, overLimit, loadDayKgs,
     deciding, decideApproval, loadConfig,
     loadList, loadLookups, searchWorkOrders, searchPurchaseOrders,
     setSourceType, clearItems, fetchItems, removeItem, duplicateItem, save, open, reset,

@@ -328,7 +328,7 @@ def save_outward_request(date=None, to_building=None, work_order=None, purchase_
                          .format(i))
 
     doc = frappe.get_doc("Outward Request", name) if name else frappe.new_doc("Outward Request")
-    # No date given: today before the cut-off time, tomorrow from it onwards.
+    # No date given: tomorrow before the cut-off time, the day after from it onwards.
     doc.date = date or (doc.date if name else approval.default_request_date())
     doc.from_building = from_building or doc.get("from_building") or DEFAULT_FROM_BUILDING
     doc.to_building = to_building
@@ -374,8 +374,9 @@ def get_outward_request(name):
 @frappe.whitelist()
 def get_outward_request_config():
     """Date rules for the form, from the server clock (not the phone's):
-    today, the default date for a new request (tomorrow from the cut-off
-    onwards), the cut-off time, and whether the user is an approver."""
+    today, the default date for a new request, the deadline time (on the
+    day before the request date), the daily Kgs limit, and whether the user
+    is an approver."""
     settings = approval.get_settings()
     now = frappe.utils.now_datetime()
     return {
@@ -386,12 +387,23 @@ def get_outward_request_config():
         "cutoff_label": approval.fmt_cutoff(settings),
         "after_cutoff": approval.is_after_cutoff(now, settings),
         "require_approval": settings.require_approval,
+        "daily_kgs_limit": settings.daily_kgs_limit,
         "default_from_building": DEFAULT_FROM_BUILDING,
         "is_approver": approval.is_approver(settings=settings),
         "approvers": [
             {"user": u, "full_name": frappe.utils.get_fullname(u)} for u in settings.approvers
         ],
     }
+
+
+@frappe.whitelist()
+def get_day_kgs(date, name=None):
+    """Counted Kgs already booked on other requests for `date` (for the
+    form's daily-limit hint)."""
+    if not date:
+        return {"booked": 0, "limit": approval.get_settings().daily_kgs_limit}
+    return {"booked": approval.kgs_booked(date, exclude=name),
+            "limit": approval.get_settings().daily_kgs_limit}
 
 
 @frappe.whitelist()
