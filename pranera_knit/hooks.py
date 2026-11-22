@@ -58,9 +58,13 @@ doc_events = {
             # Auto-create + email Work Order Process Loss when the WO completes
             "pranera_knit.process_loss.on_stock_entry_submit",
         ],
+        # A Manufacture entry's auto-created Process Loss is cancelled with it
+        # (and re-issued afterwards if the Work Order is still finished).
+        "before_cancel": "pranera_knit.process_loss.on_stock_entry_before_cancel",
         "on_cancel": [
             "pranera_knit.roll_wise_pick_list_events.on_stock_entry_cancel",
             "pranera_knit.outward_request_events.on_stock_entry_change",
+            "pranera_knit.process_loss.on_stock_entry_cancel",
         ],
     },
     # Roll Pick Assignment is owned by the Textiles And Garments app, not
