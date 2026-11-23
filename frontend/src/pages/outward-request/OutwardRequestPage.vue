@@ -11,13 +11,21 @@
         <i class="pi pi-plus"></i> New Outward Request
       </button>
 
+      <div v-if="store.summary" class="qty-summary">
+        <div v-for="u in summaryUoms" :key="u.uom" class="qty-summary__box">
+          <div class="qty-summary__label">Pending {{ uomLabel(u.uom) }}</div>
+          <div class="qty-summary__value">{{ fmtProg(u.pending) }} <small>{{ u.uom }}</small></div>
+          <div class="qty-summary__label">{{ u.requests }} requests</div>
+        </div>
+      </div>
+
       <div class="card card--tight">
         <div class="chips">
           <button
             v-for="f in listFilters" :key="f.value" class="chip"
-            :class="{ 'chip--active': store.listFilter === f.value }"
+            :class="{ 'chip--active': store.listFilter === f.value, 'chip--alert': f.alert && f.count }"
             @click="setFilter(f.value)"
-          >{{ f.label }}</button>
+          >{{ f.label }}<span v-if="f.count !== undefined" class="chip__n">{{ f.count }}</span></button>
         </div>
         <input
           v-model="store.listSearch" class="form-input" style="margin-top:10px"
@@ -48,6 +56,25 @@
         <div class="req-card__meta">
           <span>{{ r.work_order ? 'WO' : 'PO' }} · {{ r.work_order || r.purchase_order }}</span>
           <span>{{ fmtDate(r.date) }}</span>
+        </div>
+        <div v-if="r.age_days > 0" class="req-card__age" :class="{ 'req-card__age--late': r.age_days > OVERDUE_DAYS }">
+          <i class="pi pi-clock"></i> {{ r.age_days }} {{ r.age_days === 1 ? 'day' : 'days' }} past the request date
+        </div>
+        <div v-if="r.progress && r.progress.length" class="qty-table">
+          <div class="qty-row qty-row--head"><span></span><span>Requested</span><span>Picked</span><span>Sent</span><span>Pending</span></div>
+          <template v-for="q in r.progress" :key="q.uom">
+            <div class="qty-row">
+              <span class="qty-uom">{{ q.uom }}</span>
+              <span>{{ fmtProg(q.requested) }}</span>
+              <span>{{ fmtProg(q.picked) }}<small v-if="diffLabel(q)" class="qty-diff" :class="diffClass(q)">{{ diffLabel(q) }}</small></span>
+              <span>{{ fmtProg(q.sent) }}</span>
+              <strong :class="{ 'qty-done': q.pending <= 0.001 }">{{ fmtProg(q.pending) }}</strong>
+            </div>
+            <div class="qty-bar">
+              <div class="qty-bar__sent" :style="{ width: pct(q.sent, q.requested) }"></div>
+              <div class="qty-bar__picked" :style="{ width: pct(Math.max(q.picked - q.sent, 0), q.requested) }"></div>
+            </div>
+          </template>
         </div>
         <div v-if="r.vehicle_nos && r.vehicle_nos.length" class="req-card__vehicle">
           <i class="pi pi-truck"></i> {{ r.vehicle_nos.join(', ') }}
@@ -84,6 +111,49 @@
         <div class="stepper">
           <div v-for="(s, i) in STEPS" :key="s" class="step" :class="{ 'step--done': stepIndex >= i }">
             <span class="step__dot"></span><span class="step__label">{{ s }}</span>
+          </div>
+        </div>
+        <div v-if="store.meta.progress.by_uom.length" class="qty-box">
+          <div class="form-label" style="margin-bottom:6px">
+            Quantities
+            <span v-if="store.meta.age_days > 0" class="req-card__age" :class="{ 'req-card__age--late': store.meta.age_days > OVERDUE_DAYS }" style="margin-left:6px">
+              · {{ store.meta.age_days }} {{ store.meta.age_days === 1 ? 'day' : 'days' }} past the request date
+            </span>
+          </div>
+          <div class="qty-table">
+            <div class="qty-row qty-row--head"><span></span><span>Requested</span><span>Picked</span><span>Sent</span><span>Pending</span></div>
+            <template v-for="q in store.meta.progress.by_uom" :key="q.uom">
+              <div class="qty-row">
+                <span class="qty-uom">{{ q.uom }}</span>
+                <span>{{ fmtProg(q.requested) }}</span>
+                <span>{{ fmtProg(q.picked) }}<small v-if="diffLabel(q)" class="qty-diff" :class="diffClass(q)">{{ diffLabel(q) }}</small></span>
+                <span>{{ fmtProg(q.sent) }}</span>
+                <strong :class="{ 'qty-done': q.pending <= 0.001 }">{{ fmtProg(q.pending) }}</strong>
+              </div>
+              <div class="qty-bar">
+                <div class="qty-bar__sent" :style="{ width: pct(q.sent, q.requested) }"></div>
+                <div class="qty-bar__picked" :style="{ width: pct(Math.max(q.picked - q.sent, 0), q.requested) }"></div>
+              </div>
+            </template>
+          </div>
+          <div class="qty-legend"><span><i class="qty-dot qty-dot--sent"></i> Sent</span><span><i class="qty-dot qty-dot--picked"></i> Picked, not sent</span></div>
+          <button class="qty-toggle" @click="showLines = !showLines">
+            <i class="pi" :class="showLines ? 'pi-chevron-up' : 'pi-chevron-down'"></i>
+            {{ showLines ? 'Hide' : 'Show' }} by item / batch ({{ store.meta.progress.lines.length }})
+          </button>
+          <div v-if="showLines" class="qty-lines">
+            <div v-for="ln in store.meta.progress.lines" :key="`${ln.item_code}|${ln.batch}|${ln.uom}`" class="qty-line" :class="{ 'qty-line--done': ln.pending <= 0.001 && ln.requested > 0 }">
+              <div class="qty-line__name">{{ ln.item_name || ln.item_code }}</div>
+              <div class="muted small">{{ ln.item_code }}<template v-if="ln.batch"> · {{ ln.batch }}</template><template v-if="ln.rolls"> · {{ ln.rolls }} rolls</template></div>
+              <div class="qty-row">
+                <span class="qty-uom">{{ ln.uom }}</span>
+                <span>{{ fmtProg(ln.requested) }}</span>
+                <span>{{ fmtProg(ln.picked) }}</span>
+                <span>{{ fmtProg(ln.sent) }}</span>
+                <strong :class="{ 'qty-done': ln.pending <= 0.001 }">{{ fmtProg(ln.pending) }}</strong>
+              </div>
+              <div v-if="!ln.requested && ln.picked" class="qty-diff qty-diff--warn small">Picked but not on the request</div>
+            </div>
           </div>
         </div>
         <div v-if="store.meta.vehicles.length" class="vehicle-box">
@@ -481,12 +551,8 @@ import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
 import BatchStockSelect from '@/components/BatchStockSelect.vue'
 
-const FILTERS = [
-  { label: 'All', value: '' },
-  { label: 'Pending', value: 'Pending' },
-  { label: 'Processing', value: 'Processing' },
-  { label: 'Completed', value: 'Completed' },
-]
+const OVERDUE_DAYS = 2
+const showLines = ref(false)
 const STEPS = ['Roll Pick Assigned', 'Picked', 'Completed']
 const approvalRemarks = ref('')
 
@@ -495,9 +561,36 @@ const store = useOutwardRequestStore()
 const route = useRoute()
 const router = useRouter()
 const savedName = ref('')
-const listFilters = computed(() =>
-  store.isApprover ? [...FILTERS, { label: 'Awaiting Approval', value: 'AWAITING_APPROVAL' }] : FILTERS
-)
+// Stage chips with counts from get_outward_summary.
+const listFilters = computed(() => {
+  const sum = store.summary
+  const count = k => sum?.stages?.find(s => s.key === k)?.count
+  const list = [
+    { label: 'All', value: '' },
+    { label: 'Not assigned', value: 'stage:not_assigned', count: count('not_assigned') },
+    { label: 'Assigned', value: 'stage:assigned', count: count('assigned') },
+    { label: 'Picked', value: 'stage:picked', count: count('picked') },
+    { label: 'Completed', value: 'stage:completed' },
+    { label: `Over ${OVERDUE_DAYS} days`, value: 'OVERDUE', count: sum?.overdue, alert: true },
+  ]
+  if (store.isApprover) list.push({ label: 'Awaiting Approval', value: 'AWAITING_APPROVAL' })
+  return list
+})
+const summaryUoms = computed(() => store.summary?.pending || [])
+function uomLabel(u) {
+  return { kgs: 'fabric', pcs: 'collar / cuff' }[String(u || '').toLowerCase()] || u
+}
+function fmtProg(v) {
+  const n = Number(v) || 0
+  return n.toLocaleString('en-IN', { maximumFractionDigits: Math.abs(n) >= 100 ? 0 : 2 })
+}
+function pct(a, b) { return b > 0 ? `${Math.min(100, Math.max(0, (a / b) * 100)).toFixed(1)}%` : '0%' }
+function diffLabel(q) {
+  const d = q.pick_diff_pct
+  if (d === null || d === undefined || Math.abs(d) < 0.5) return ''
+  return `${d > 0 ? '+' : ''}${Math.round(d)}%`
+}
+function diffClass(q) { return Math.abs(q.pick_diff_pct || 0) >= 5 ? 'qty-diff--bad' : 'qty-diff--warn' }
 const savedTitle = ref('Outward Request Saved')
 const assignedToLabel = ref('')
 
@@ -768,6 +861,37 @@ function fmtQty(n) {
 .pill--green { background: #dcfce7; color: #166534; }
 .req-card__vehicle { font-size: 13px; font-weight: 600; color: #0f6e56; display: flex; gap: 6px; align-items: center; }
 .vehicle-box { margin-top: 14px; }
+.qty-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.qty-summary__box { background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.qty-summary__label { font-size: 12px; color: #64748b; }
+.qty-summary__value { font-size: 22px; font-weight: 700; color: #0f172a; }
+.qty-summary__value small { font-size: 13px; font-weight: 500; color: #64748b; }
+.chip--alert { border-color: #fca5a5; color: #b91c1c; background: #fef2f2; }
+.chip--alert.chip--active { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+.chip__n { font-weight: 700; margin-left: 5px; }
+.req-card__age { font-size: 12px; color: #64748b; }
+.req-card__age--late { color: #b91c1c; font-weight: 600; }
+.qty-table { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; text-align: left; }
+.qty-row { display: grid; grid-template-columns: 34px repeat(4, minmax(0, 1fr)); gap: 4px; font-size: 13px; align-items: baseline; color: #0f172a; }
+.qty-row--head { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: .03em; }
+.qty-uom { font-size: 11px; color: #64748b; }
+.qty-done { color: #15803d; }
+.qty-diff { font-size: 10px; margin-left: 3px; font-weight: 600; }
+.qty-diff--warn { color: #b45309; }
+.qty-diff--bad { color: #b91c1c; }
+.qty-bar { height: 5px; border-radius: 999px; background: #f1f5f9; overflow: hidden; display: flex; margin-bottom: 4px; }
+.qty-bar__sent { background: #0f6e56; }
+.qty-bar__picked { background: #9fe1cb; }
+.qty-box { margin-top: 14px; }
+.qty-legend { display: flex; gap: 12px; font-size: 11px; color: #64748b; margin-top: 2px; }
+.qty-dot { display: inline-block; width: 10px; height: 6px; border-radius: 2px; vertical-align: middle; }
+.qty-dot--sent { background: #0f6e56; }
+.qty-dot--picked { background: #9fe1cb; }
+.qty-toggle { margin-top: 8px; background: none; border: 0; color: #0f6e56; font-weight: 600; font-size: 13px; padding: 4px 0; display: inline-flex; gap: 6px; align-items: center; }
+.qty-lines { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.qty-line { border: 1px solid #f1f5f9; border-radius: 10px; padding: 8px 10px; border-left: 3px solid #f59e0b; }
+.qty-line--done { border-left-color: #22c55e; }
+.qty-line__name { font-size: 13px; font-weight: 600; }
 .vehicle-row { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; cursor: pointer; text-align: left; font-family: inherit; font-size: 13px; color: #334155; margin-bottom: 6px; }
 .vehicle-row .pi-truck { color: #0f6e56; }
 .vehicle-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

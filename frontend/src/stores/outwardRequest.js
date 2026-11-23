@@ -5,6 +5,7 @@ import {
   getBuildings, searchWorkOrdersForOutward, searchPurchaseOrdersForOutward,
   getOutwardPickDefaults, createOutwardRollPickAssignment, syncWarehouses, searchAssignableUsers,
   getOutwardRequestConfig, approveOutwardSameDay, rejectOutwardSameDay, getOutwardDayKgs,
+  getOutwardSummary,
 } from '@/api/frappe'
 
 function todayISO() {
@@ -34,7 +35,9 @@ const nextKey = () => `r${++keySeq}`
 export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   // ── List ────────────────────────────────────────────────────────────────
   const requests = ref([])
-  const listFilter = ref('')        // '' | Pending | Processing | Completed | AWAITING_APPROVAL
+  // '' | stage:not_assigned | stage:assigned | stage:picked | stage:completed | OVERDUE | AWAITING_APPROVAL
+  const listFilter = ref('')
+  const summary = ref(null)         // get_outward_summary: pending per UOM, stage counts, overdue
   const listSearch = ref('')
   const loadingList = ref(false)
 
@@ -171,12 +174,18 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     loadingList.value = true
     error.value = ''
     try {
-      const awaiting = listFilter.value === 'AWAITING_APPROVAL'
-      requests.value = await listOutwardRequests({
-        requestStatus: awaiting ? '' : listFilter.value,
-        sameDayApproval: awaiting ? 'Pending' : '',
-        txt: listSearch.value,
-      })
+      const f = listFilter.value
+      const [rows, sum] = await Promise.all([
+        listOutwardRequests({
+          sameDayApproval: f === 'AWAITING_APPROVAL' ? 'Pending' : '',
+          stage: f.startsWith('stage:') ? f.slice(6) : '',
+          overdue: f === 'OVERDUE',
+          txt: listSearch.value,
+        }),
+        getOutwardSummary().catch(() => summary.value),
+      ])
+      requests.value = rows
+      summary.value = sum
     } catch (e) {
       error.value = e.message
     } finally {
@@ -357,6 +366,8 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       approval_remarks: doc.approval_remarks || '',
       approval_reason: doc.approval_reason || '',
       can_approve: !!doc.can_approve,
+      progress: doc.progress || { by_uom: [], lines: [] },
+      age_days: doc.age_days || 0,
     }
   }
 
@@ -481,7 +492,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   return {
     pickPlan, pickForm, warehouses, users, creatingPick, pickError, canCreatePick, pickFormValid,
     startPick, onSubcontractingOrderChange, searchUsers, createPick, cancelPick,
-    requests, listFilter, listSearch, loadingList,
+    requests, listFilter, listSearch, loadingList, summary,
     name, date, fromBuilding, toBuilding, sourceType, workOrder, purchaseOrder, items, receipts, meta,
     buildings, workOrders, purchaseOrders, buildingOptions,
     fetching, saving, error, fetchedFor,
