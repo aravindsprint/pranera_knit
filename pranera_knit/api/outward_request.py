@@ -49,6 +49,7 @@ from frappe import _
 from frappe.utils import flt
 
 from pranera_knit import outward_request_approval as approval
+from pranera_knit import outward_request_progress as progress_mod
 from pranera_knit.outward_request_events import existing_request_for_work_order
 from pranera_knit.vehicle_gate_entry_events import vehicles_for_outward_requests
 
@@ -368,6 +369,13 @@ def get_outward_request(name):
     out["vehicle_gate_entries"] = vehicles_for_outward_requests([name]).get(name, [])
     out["approved_by_name"] = frappe.utils.get_fullname(doc.approved_by) if doc.get("approved_by") else ""
     out["can_approve"] = doc.get("same_day_approval") == approval.PENDING and approval.is_approver()
+    out["progress"] = progress_mod.progress([name]).get(name) or {"by_uom": [], "lines": []}
+    names = {ln["item_code"] for ln in out["progress"]["lines"] if ln.get("item_code")}
+    item_names = dict(frappe.get_all("Item", filters={"name": ["in", list(names) or [""]]},
+                                     fields=["name", "item_name"], as_list=True))
+    for ln in out["progress"]["lines"]:
+        ln["item_name"] = (item_names.get(ln["item_code"]) or "").strip()
+    out["age_days"] = progress_mod.age_days(doc.date, doc.request_status)
     return out
 
 
@@ -419,12 +427,23 @@ def reject_same_day(name, remarks=None):
 
 
 @frappe.whitelist()
-def list_outward_requests(request_status=None, txt=None, limit=50, same_day_approval=None):
+def list_outward_requests(request_status=None, txt=None, limit=50, same_day_approval=None,
+                          stage=None, overdue=None):
+    """stage: not_assigned | assigned | picked | completed (Outward Request
+    status); overdue=1: not completed and dated over 2 days ago. Each row
+    carries its requested / picked / sent / pending quantities (progress)."""
     filters = {}
     if request_status:
         filters["request_status"] = request_status
     if same_day_approval:
         filters["same_day_approval"] = same_day_approval
+    if stage in progress_mod.STAGES:
+        values = [v for v in progress_mod.STAGES[stage][1] if v]
+        filters["status"] = ["in", values] if values else ["is", "not set"]
+    if frappe.utils.cint(overdue):
+        filters["request_status"] = ["!=", "Completed"]
+        filters["date"] = ["<=", progress_mod.overdue_before()]
+        filters["same_day_approval"] = ["!=", "Rejected"]
     or_filters = None
     if txt:
         like = f"%{txt}%"
@@ -443,10 +462,19 @@ def list_outward_requests(request_status=None, txt=None, limit=50, same_day_appr
                                 fields=["name", "full_name"])
     }
     vehicles = vehicles_for_outward_requests([r.name for r in rows])
+    qty = progress_mod.progress([r.name for r in rows])
     for r in rows:
         r["created_by_name"] = full_names.get(r.created_by, r.created_by)
         r["vehicle_nos"] = [v.vehicle_no for v in vehicles.get(r.name, [])]
+        r["progress"] = (qty.get(r.name) or {}).get("by_uom", [])
+        r["age_days"] = progress_mod.age_days(r.date, r.request_status)
     return rows
+
+
+@frappe.whitelist()
+def get_outward_summary():
+    """Open requests: pending Kgs / Pcs, count per stage, over-2-days count."""
+    return progress_mod.summary()
 
 
 # ── Lookups for the form ──────────────────────────────────────────────────

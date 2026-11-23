@@ -25,3 +25,4 @@ pranera_knit.patches.v1_21.outward_request_deadline_and_daily_limit
 pranera_knit.patches.v1_22.add_knit_down_approver_locations
 pranera_knit.patches.v1_23.add_loading_scan
 pranera_knit.patches.v1_24.add_knit_down_gps
+pranera_knit.patches.v1_26.index_outward_request_links
