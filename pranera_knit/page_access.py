@@ -41,6 +41,7 @@ PAGES = [
     ("dashboard", "Dashboard", "/knit-app/dashboard", "Analytics"),
     ("workstation-status", "Machine Status", "/knit-app/workstation-status", "Analytics"),
     ("operator-job-cards", "Operator Job Cards", "/knit-app/operator-job-cards", "Analytics"),
+    ("app-settings", "Settings", "/knit-app/app-settings", "Admin"),
 ]
 BYPASS_ROLES = {"System Manager"}
 

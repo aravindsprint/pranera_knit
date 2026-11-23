@@ -938,3 +938,20 @@ export const scanLoadingRoll = (gateEntry, code) =>
 
 export const undoLoadingScan = (gateEntry, rollNo) =>
   call(`${LS_API}.undo_scan`, { gate_entry: gateEntry, roll_no: rollNo }).then(r => r.message)
+
+// ── App Settings (System Manager) ───────────────────────────────────────────
+// pranera_knit/api/app_settings.py
+const AS_API = 'pranera_knit.api.app_settings'
+export const getAppSettings = () => call(`${AS_API}.get_settings`).then(r => r.message)
+export const searchSettingsUsers = (txt) => call(`${AS_API}.search_users`, { txt }).then(r => r.message || [])
+export const searchSettingsLocations = (txt) => call(`${AS_API}.search_locations`, { txt }).then(r => r.message || [])
+export const searchSettingsRoles = (txt) => call(`${AS_API}.search_roles`, { txt }).then(r => r.message || [])
+export const saveOutwardRequestSettings = (data) =>
+  call(`${AS_API}.save_outward_request_settings`, { data: JSON.stringify(data) }).then(r => r.message)
+export const saveKnitDownSettings = (data) =>
+  call(`${AS_API}.save_knit_down_settings`, { data: JSON.stringify(data) }).then(r => r.message)
+export const saveLocationCoordinates = (location, latitude, longitude) =>
+  call(`${AS_API}.save_location_coordinates`, { location, latitude, longitude }).then(r => r.message)
+export const savePageRoles = (page, roles) =>
+  call(`${AS_API}.save_page_roles`, { page, roles: JSON.stringify(roles) }).then(r => r.message)
+

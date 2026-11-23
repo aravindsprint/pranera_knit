@@ -22,6 +22,7 @@ export const PAGES = [
   { key: 'dashboard',           label: 'Dashboard',           icon: '📈', path: '/knit-app/dashboard',           section: 'ANALYTICS' },
   { key: 'workstation-status',  label: 'Machine Status',      icon: '🏭', path: '/knit-app/workstation-status',  section: 'ANALYTICS' },
   { key: 'operator-job-cards',  label: 'Operator Job Cards',  icon: '👷', path: '/knit-app/operator-job-cards',  section: 'ANALYTICS' },
+  { key: 'app-settings',        label: 'Settings',            icon: '⚙️', path: '/knit-app/app-settings',        section: 'ADMIN' },
 ]
 
 // Screens opened from inside another page follow that page's access.
