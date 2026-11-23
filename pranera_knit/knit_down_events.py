@@ -16,6 +16,13 @@ custom_location, copied to the knit down) is one of theirs in Knit Down
 Settings → Approver Locations. Knit downs with no location can only be
 decided by a System Manager. System Manager can decide any.
 
+GPS (patches/v1_24): with "Require GPS" on in Knit Down Settings, a Knit
+Down Approver's phone must also be within "GPS Range (metres)" (default
+200) of the knit down's Location (Location → Latitude / Longitude) when
+approving or rejecting. The app sends the position; the decision, the
+position and the distance are saved on the knit down. System Manager is
+exempt. Deciding from Desk (no position) is refused for approvers.
+
 The flow
 --------
 Before bulk knitting a Work Order on a machine, the knitting team runs a
@@ -48,7 +55,7 @@ ensure_approved
 """
 import frappe
 from frappe import _
-from frappe.utils import flt, getdate, now_datetime
+from frappe.utils import cint, flt, getdate, now_datetime
 
 APPROVER_ROLE = "Knit Down Approver"
 APPROVER_ROLES = {APPROVER_ROLE, "System Manager"}
@@ -129,6 +136,58 @@ def can_approve(user=None, location=None):
     if APPROVER_ROLE not in roles or not location:
         return False
     return location in approver_locations(user)
+
+
+def gps_settings():
+    if not frappe.db.exists("DocType", SETTINGS) or \
+            not frappe.get_meta(SETTINGS).has_field("require_gps"):
+        return frappe._dict(required=False, radius=200)
+    s = frappe.get_cached_doc(SETTINGS)
+    return frappe._dict(required=bool(s.get("require_gps")), radius=cint(s.get("gps_radius_m")) or 200)
+
+
+def needs_gps(user=None):
+    user = user or frappe.session.user
+    return gps_settings().required and BYPASS_ROLE not in frappe.get_roles(user)
+
+
+def distance_m(lat1, lon1, lat2, lon2):
+    """Great-circle distance in metres (haversine)."""
+    import math
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def check_gps(doc, gps):
+    """Throws unless `gps` ({latitude, longitude, accuracy}) is within range of
+    the knit down's Location. Saves the position and distance on `doc`."""
+    settings = gps_settings()
+    lat, lng = flt((gps or {}).get("latitude")), flt((gps or {}).get("longitude"))
+    if not gps or (not lat and not lng):
+        frappe.throw(_("Your location is needed to approve or reject a knit down. Allow location "
+                       "access for the Knit App in your phone / browser and try again."),
+                     title=_("Location Needed"))
+    loc = frappe.db.get_value("Location", doc.location, ["latitude", "longitude"], as_dict=True) \
+        if doc.get("location") else None
+    if not loc or (not flt(loc.latitude) and not flt(loc.longitude)):
+        frappe.throw(_("{0} has no GPS coordinates yet. Ask an admin to set Latitude / Longitude "
+                       "on Location {0}.").format(doc.get("location") or _("This location")),
+                     title=_("Location Not Set Up"))
+    dist = distance_m(lat, lng, flt(loc.latitude), flt(loc.longitude))
+    for f, v in (("decision_latitude", lat), ("decision_longitude", lng),
+                 ("decision_accuracy_m", flt((gps or {}).get("accuracy"))),
+                 ("decision_distance_m", round(dist))):
+        if doc.meta.has_field(f):
+            doc.set(f, v)
+    if dist > settings.radius:
+        frappe.throw(_("You are about {0} m from {1}. You must be within {2} m of the unit to "
+                       "approve or reject this knit down.")
+                     .format("{:,.0f}".format(dist), doc.location, settings.radius),
+                     title=_("Not at the Unit"))
+    return dist
 
 
 def approvers_for(location):
@@ -309,6 +368,9 @@ def _validate_decision(doc, before):
                        "(Knit Down Settings) or a System Manager.")
                      .format(doc.get("location") or _("a Work Order with no location"), APPROVER_ROLE),
                      frappe.PermissionError)
+    if needs_gps():
+        # Position comes from the Knit App (api/knit_down._decide → flags.gps).
+        check_gps(doc, doc.flags.get("gps"))
     if doc.status == "Rejected" and not (doc.approver_remarks or "").strip():
         frappe.throw(_("Add a remark saying why the knit down is rejected"))
     doc.approved_by = frappe.session.user

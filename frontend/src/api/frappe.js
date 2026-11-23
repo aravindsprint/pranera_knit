@@ -891,11 +891,12 @@ export const listKnitDowns = ({ status, txt, knitType } = {}) =>
   })
     .then(r => r.message || [])
 
-export const approveKnitDown = (name, remarks) =>
-  call(`${KD_API}.approve_knit_down`, { name, remarks: remarks || undefined }).then(r => r.message)
+// gps: { latitude, longitude, accuracy } from the phone (knit down GPS check).
+export const approveKnitDown = (name, remarks, gps) =>
+  call(`${KD_API}.approve_knit_down`, { name, remarks: remarks || undefined, ...(gps || {}) }).then(r => r.message)
 
-export const rejectKnitDown = (name, remarks) =>
-  call(`${KD_API}.reject_knit_down`, { name, remarks }).then(r => r.message)
+export const rejectKnitDown = (name, remarks, gps) =>
+  call(`${KD_API}.reject_knit_down`, { name, remarks, ...(gps || {}) }).then(r => r.message)
 
 export const getKnitDownForJobCard = (jobCard) =>
   call(`${KD_API}.get_job_card_status`, { job_card: jobCard }).then(r => r.message)
