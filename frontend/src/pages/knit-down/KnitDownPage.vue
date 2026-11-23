@@ -62,7 +62,7 @@
         <div class="kd-card__foot">
           <span class="muted">
             {{ r.requested_by_name || r.requested_by }} · {{ fmtDateTime(r.requested_on) }}
-            <template v-if="r.approved_by"> · {{ r.status === 'Approved' ? '✔' : '✖' }} {{ r.approved_by_name }} {{ fmtTime(r.approved_on) }}</template>
+            <template v-if="r.approved_by"> · {{ r.status === 'Approved' ? '✔' : '✖' }} {{ r.approved_by_name }} {{ fmtTime(r.approved_on) }}<template v-if="r.decision_distance_m !== null && r.decision_distance_m !== undefined && r.decision_latitude !== 0"> · {{ r.decision_distance_m }} m from unit</template></template>
           </span>
         </div>
 
@@ -241,6 +241,10 @@
             v-model="decision.remarks" class="form-input" rows="3"
             :placeholder="decision.status === 'Approved' ? 'Remarks (optional)' : 'Why is it rejected? (required)'"
           ></textarea>
+          <div v-if="setup.needs_gps" class="modal-sub" style="margin-top:8px">
+            <i class="pi pi-map-marker"></i>
+            {{ locating ? 'Checking your location…' : `Your phone's location is checked: you must be within ${setup.gps_radius_m} m of the unit.` }}
+          </div>
           <div v-if="decisionError" class="error-banner" style="margin-top:10px">{{ decisionError }}</div>
           <div class="modal-actions">
             <button class="btn btn-outline" @click="decision = null">Cancel</button>
@@ -317,7 +321,7 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const setup = reactive({ can_approve: false, can_create: false, approver_locations: [] })
+const setup = reactive({ can_approve: false, can_create: false, approver_locations: [], needs_gps: false, gps_radius_m: 200 })
 const rows = ref([])
 const listStatus = ref('Pending')
 const listSearch = ref('')
@@ -593,14 +597,37 @@ function startDecision(r, status) {
   decisionError.value = ''
   decision.value = { name: r.name, work_order: r.work_order, workstation: r.workstation, status, remarks: '' }
 }
+// Phone GPS for the "must be at the unit" check (Knit Down Settings).
+const locating = ref(false)
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('This phone / browser can\'t share its location. Use the Knit App in Chrome with location on.'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ latitude: p.coords.latitude, longitude: p.coords.longitude, accuracy: Math.round(p.coords.accuracy || 0) }),
+      err => reject(new Error(err.code === 1
+        ? 'Location permission is blocked. Allow location for erp.pranera.in in your browser settings, then try again.'
+        : 'Could not get your location. Turn on GPS / Location on the phone and try again.')),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    )
+  })
+}
+
 async function confirmDecision() {
   const d = decision.value
   deciding.value = true
   decisionError.value = ''
   try {
+    let gps = null
+    if (setup.needs_gps) {
+      locating.value = true
+      try { gps = await getPosition() } finally { locating.value = false }
+    }
     const doc = d.status === 'Approved'
-      ? await approveKnitDown(d.name, d.remarks.trim())
-      : await rejectKnitDown(d.name, d.remarks.trim())
+      ? await approveKnitDown(d.name, d.remarks.trim(), gps)
+      : await rejectKnitDown(d.name, d.remarks.trim(), gps)
     decision.value = null
     if (mode.value === 'form' && form.name === doc.name) applyDoc(doc)
     const i = rows.value.findIndex(r => r.name === doc.name)

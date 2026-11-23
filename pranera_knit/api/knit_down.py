@@ -17,7 +17,8 @@ from frappe import _
 from frappe.utils import cint, flt
 
 from pranera_knit.knit_down_events import (
-    FABRIC, SPEC_FIELDS, approver_locations, bom_yarns, can_approve, is_approver, job_card_status,
+    FABRIC, SPEC_FIELDS, approver_locations, bom_yarns, can_approve, gps_settings, is_approver,
+    job_card_status, needs_gps,
     knit_type_for,
     knit_type_of_operation, latest_for, operations_for,
 )
@@ -31,7 +32,7 @@ LIST_FIELDS = ["name", "status", "work_order", "workstation", "job_card", "item_
                "required_ll", "knit_type", "size", "no_of_needles", "no_of_course", "texture",
                "no_of_ply", "required_size", "required_needles", "required_course", "required_ply",
                "location", "requested_by", "requested_on", "approved_by", "approved_on",
-               "approver_remarks", "photo"]
+               "approver_remarks", "photo", "decision_distance_m", "decision_latitude"]
 OPEN_WO_STATUSES = ("Not Started", "In Process")
 
 
@@ -42,6 +43,9 @@ def get_setup():
         # also depends on its location (row / doc can_approve).
         "can_approve": is_approver(),
         "approver_locations": sorted(approver_locations()),
+        # The app reads the phone's GPS before approving / rejecting.
+        "needs_gps": needs_gps(),
+        "gps_radius_m": gps_settings().radius,
         "can_create": frappe.has_permission(DOCTYPE, "create"),
     }
 
@@ -130,16 +134,16 @@ def save_knit_down(name=None, yarns=None, **values):
 
 
 @frappe.whitelist()
-def approve_knit_down(name, remarks=None):
-    return _decide(name, "Approved", remarks)
+def approve_knit_down(name, remarks=None, latitude=None, longitude=None, accuracy=None):
+    return _decide(name, "Approved", remarks, latitude, longitude, accuracy)
 
 
 @frappe.whitelist()
-def reject_knit_down(name, remarks=None):
-    return _decide(name, "Rejected", remarks)
+def reject_knit_down(name, remarks=None, latitude=None, longitude=None, accuracy=None):
+    return _decide(name, "Rejected", remarks, latitude, longitude, accuracy)
 
 
-def _decide(name, status, remarks):
+def _decide(name, status, remarks, latitude=None, longitude=None, accuracy=None):
     doc = frappe.get_doc(DOCTYPE, name)
     if not can_approve(location=doc.get("location")):
         frappe.throw(_("You can't approve or reject knit downs for {0}")
@@ -149,6 +153,9 @@ def _decide(name, status, remarks):
         frappe.throw(_("Knit Down {0} is already {1}").format(name, doc.status))
     doc.status = status
     doc.approver_remarks = (remarks or "").strip() or None
+    # Phone position for the GPS check in knit_down_events._validate_decision.
+    if latitude not in (None, "") and longitude not in (None, ""):
+        doc.flags.gps = {"latitude": latitude, "longitude": longitude, "accuracy": accuracy}
     # The approver role may hold only read on the Work Order etc.; the
     # decision itself is permission-checked above.
     doc.save(ignore_permissions=True)
