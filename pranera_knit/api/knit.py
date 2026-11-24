@@ -198,16 +198,10 @@ def create_knit_roll(job_card, batch_no=None):
 
 
 def _next_roll_no():
-    """Next free numeric Roll name (max numeric name + 1)."""
-    row = frappe.db.sql("""
-        SELECT MAX(CAST(name AS UNSIGNED)) AS max_no
-        FROM `tabRoll`
-        WHERE name REGEXP '^[0-9]+$'
-    """, as_dict=True)
-    n = int((row[0].max_no if row else 0) or 0) + 1
-    while frappe.db.exists("Roll", str(n)):
-        n += 1
-    return str(n)
+    """Next continuous roll number, allocated under a lock (see
+    pranera_knit.roll_numbering)."""
+    from pranera_knit.roll_numbering import next_roll_no
+    return next_roll_no()
 
 
 def _insert_with_fresh_roll_no(roll, attempts=8):
@@ -233,7 +227,7 @@ def _insert_with_fresh_roll_no(roll, attempts=8):
 
 
 @frappe.whitelist()
-def create_roll(job_card, batch_no=None):
+def create_roll(job_card, batch_no=None, reuse_open=0):
     """Backs `knit_create_roll` (replaces the Server Script of that name):
     same response, but collision-safe roll number allocation."""
     frappe.has_permission("Roll", throw=True)
@@ -241,14 +235,35 @@ def create_roll(job_card, batch_no=None):
         frappe.throw(_("job_card is required"))
     jc = frappe.get_doc("Job Card", job_card)
 
-    roll = frappe.new_doc("Roll")
-    roll.job_card = job_card
-    roll.work_order = jc.work_order
-    roll.item_code = jc.production_item
-    roll.item_name = jc.item_name or ""
-    roll.batch = batch_no or ""
-    roll.start_time = now_datetime()
-    _insert_with_fresh_roll_no(roll)
+    # Reuse the job card's open (empty, not ended) roll instead of taking a
+    # new number: after a Reset, a double tap or an offline replay the same
+    # roll number continues, so no number is created and then deleted
+    # (that left holes in the continuous roll numbers, 24-Nov-2026).
+    # Only when the PWA asks (plain Start, nothing of this job card queued
+    # offline) — an auto-continued roll right after End Roll must never
+    # reuse: the roll just ended may still look empty here until its queued
+    # save syncs.
+    from pranera_knit.roll_numbering import open_empty_roll
+    existing = open_empty_roll(job_card) if cint(reuse_open) else None
+    if existing:
+        roll = frappe.get_doc("Roll", existing)
+        roll.work_order = jc.work_order
+        roll.item_code = jc.production_item
+        roll.item_name = jc.item_name or ""
+        if batch_no:
+            roll.batch = batch_no
+        # The old start belonged to the reset/abandoned attempt.
+        roll.start_time = now_datetime()
+        roll.save(ignore_permissions=True)
+    else:
+        roll = frappe.new_doc("Roll")
+        roll.job_card = job_card
+        roll.work_order = jc.work_order
+        roll.item_code = jc.production_item
+        roll.item_name = jc.item_name or ""
+        roll.batch = batch_no or ""
+        roll.start_time = now_datetime()
+        _insert_with_fresh_roll_no(roll)
     frappe.db.commit()
 
     return [{

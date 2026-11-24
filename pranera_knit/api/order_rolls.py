@@ -209,15 +209,10 @@ def _order_item(item_code, purchase_order=None, subcontracting_order=None):
 
 
 def _next_roll_no():
-    """Same sequence as the knit_create_po_so_roll / knit-create-roll
-    Server Scripts: highest all-digit Roll name + 1."""
-    max_no = frappe.db.sql(
-        "select max(cast(name as unsigned)) from `tabRoll` where name regexp '^[0-9]+$'"
-    )[0][0] or 0
-    next_no = int(max_no) + 1
-    while frappe.db.exists("Roll", str(next_no)):
-        next_no += 1
-    return str(next_no)
+    """Same continuous sequence as knitting rolls (highest numeric Roll + 1),
+    allocated under the shared lock — see pranera_knit.roll_numbering."""
+    from pranera_knit.roll_numbering import next_roll_no
+    return next_roll_no()
 
 
 @frappe.whitelist()

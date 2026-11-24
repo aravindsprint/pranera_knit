@@ -796,21 +796,10 @@ async function resetSession() {
   if (!confirm('Reset session? This will clear the current roll state and reload the page.')) return
   stopTimer()
   clearInterval(cooldownInterval)
-  // Delete orphan roll (weight = 0) if one was created. A provisional
-  // (offline) id was never created in ERP — nothing to delete.
-  if (currentRollNo.value && !isProvisionalRollId(currentRollNo.value)) {
-    try {
-      // Only delete it if it really is this job card's roll.
-      const r = await call('frappe.client.get_value', {
-        doctype: 'Roll', filters: { name: String(currentRollNo.value) }, fieldname: 'job_card'
-      })
-      const owner = r?.message?.job_card
-      if (owner && owner !== pageJobCard) throw new Error(`roll belongs to ${owner}`)
-      await call('knit_delete_roll', { roll_name: String(currentRollNo.value) })
-    } catch(e) {
-      console.warn('Could not delete orphan roll:', e.message)
-    }
-  }
+  // The empty running roll is NOT deleted any more: deleting it left a hole
+  // in the continuous roll numbers (or gave its number to the next roll).
+  // It stays with this job card and knit_create_roll reuses it on the next
+  // Start, so the same roll number simply continues.
   clearSession()
   location.reload()
 }
@@ -1195,11 +1184,28 @@ async function createKnitRoll({ keepTimer = false } = {}) {
 
   if (!batchNo.value) await createBatch()
 
+  // Reuse this job card's open empty roll (left by a Reset) only on a plain
+  // Start, and only when no completed roll of this job card is still waiting
+  // in the offline queue: ERP still sees such a roll as empty, and reusing it
+  // would put two physical rolls on one number.
+  let reuseOpen = !keepTimer
+  if (reuseOpen) {
+    try {
+      const queued = await db.syncQueue
+        .filter(q => q.endpoint === 'insertIntoRollTable'
+          && ['pending', 'syncing', 'failed'].includes(q._status)
+          && q.payload?.job_card === pd.name)
+        .count()
+      if (queued > 0) reuseOpen = false
+    } catch (_) { reuseOpen = false }
+  }
+
   creatingRoll.value = true
   try {
     const resp = await call('knit_create_roll', {
       job_card: pd.name,
       batch_no: batchNo.value,
+      reuse_open: reuseOpen ? 1 : 0,
     })
     // Operator left this page while the request was in flight — the roll
     // stays an empty orphan on the server; don't touch this page's state.
