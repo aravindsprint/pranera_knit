@@ -97,10 +97,16 @@ def submit_roll_packing_list_v2(jobcard=None, work_order=None, actual_consumptio
             batch_no = r.batch
     total_weight = round(total_weight, 3)
 
-    # The Job Card / Item's stock_uom decides what "Manufacture Qty" means.
-    # For Pcs-tracked items (collars/cuffs) the BOM is per-Pcs, so the
-    # finished qty and the consumption ratio are based on total_pcs.
-    item_stock_uom = rolls[0].stock_uom or frappe.db.get_value("Job Card", jobcard, "stock_uom") or "Kgs"
+    # The Work Order's production Item's stock_uom decides what "Manufacture
+    # Qty" means. For Pcs-tracked items (collars/cuffs) the BOM is per-Pcs, so
+    # the finished qty and the consumption ratio are based on total_pcs.
+    #
+    # Do NOT take the UoM from the first Roll: Roll.stock_uom is captured per
+    # roll and can be wrong. On PO-JOB23286/23287/23294/23295 the first rolls
+    # were logged as "Kgs" for Pcs collars/cuffs, so the roll WEIGHT was posted
+    # as the Manufacture qty (MF/26/28151, 28152, 28153, 28157 on 2026-11-21).
+    # The Job Card and the first Roll are fallbacks only.
+    item_stock_uom = _production_item_stock_uom(work_order, jobcard, rolls)
     is_pcs_uom = (item_stock_uom or "").strip().lower() == "pcs"
     fg_qty = round(float(total_pcs), 3) if is_pcs_uom else total_weight
 
@@ -118,7 +124,7 @@ def submit_roll_packing_list_v2(jobcard=None, work_order=None, actual_consumptio
         for r in rolls:
             rpl.append("roll_packing_list_item", {
                 "item_code": r.item_code,
-                "uom": r.stock_uom or "Kgs",
+                "uom": item_stock_uom or r.stock_uom or "Kgs",
                 "roll_no": r.name,
                 "batch": r.batch or "",
                 "roll_weight": r.roll_weight or 0,
@@ -181,6 +187,19 @@ def submit_roll_packing_list_v2(jobcard=None, work_order=None, actual_consumptio
         "manufacture_qty": fg_qty,
         "used_actuals": use_actuals,
     }
+
+
+def _production_item_stock_uom(work_order, jobcard, rolls):
+    """Stock UoM of the item being manufactured: Work Order production item
+    first, then the Job Card, then the first Roll, then "Kgs"."""
+    fg_item = frappe.db.get_value("Work Order", work_order, "production_item")
+    uom = frappe.db.get_value("Item", fg_item, "stock_uom") if fg_item else None
+    return (
+        uom
+        or frappe.db.get_value("Job Card", jobcard, "stock_uom")
+        or (rolls[0].stock_uom if rolls else None)
+        or "Kgs"
+    )
 
 
 def _check_actuals_within_transferred(work_order, actuals):
