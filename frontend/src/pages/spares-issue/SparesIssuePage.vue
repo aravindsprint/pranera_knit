@@ -613,7 +613,7 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .ack--mine { border: 1.5px solid var(--amber-600); }
 .ack .section-title i { margin-right: 6px; }
 .ack__row { padding: 10px 0; border-top: 1px solid var(--slate-100); display: flex; flex-direction: column; gap: 6px; }
-.ack__row:first-of-type { border-top: none; }
+.section-title + .ack__row { border-top: none; padding-top: 0; }
 .ack__actions { display: flex; gap: 8px; justify-content: flex-end; }
 .ack__reason { font-size: 13px; color: var(--red-600); display: flex; gap: 6px; align-items: flex-start; }
 .status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 6px; }
