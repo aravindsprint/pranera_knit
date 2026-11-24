@@ -433,6 +433,33 @@ def save_roll_data(**kwargs):
 
 
 @frappe.whitelist()
+def log_sync_failure(endpoint=None, error=None, payload=None, created_at=None, retries=None):
+    """Records a PWA offline-queue item that gave up after repeated errors.
+
+    Validation errors (frappe.throw) and "not found" responses are returned
+    to the tablet but never reach the Error Log, so a "1 item(s) failed to
+    sync" banner (24-Nov-2026, PO-JOB23517 tablet) could not be diagnosed
+    from the desk. The PWA now calls this once an item is marked failed.
+    """
+    try:
+        data = json.loads(payload) if isinstance(payload, str) else (payload or {})
+    except Exception:
+        data = {"raw": payload}
+    ref = " ".join(str(data.get(k)) for k in ("job_card", "roll_no") if data.get(k))
+    title = f"Knit PWA sync failed: {endpoint or '?'} {ref}".strip()[:140]
+    message = (
+        f"User: {frappe.session.user}\n"
+        f"Endpoint: {endpoint}\n"
+        f"Queued at (device): {created_at}\n"
+        f"Attempts: {retries}\n"
+        f"Error: {error}\n\n"
+        f"Payload:\n{json.dumps(data, indent=2, default=str)}"
+    )
+    frappe.log_error(title=title, message=message)
+    return {"logged": True}
+
+
+@frappe.whitelist()
 def check_job_card_rolls(job_card):
     """
     Returns roll count, total weight, total pcs for a job card.

@@ -21,10 +21,30 @@
     <transition name="banner">
       <div v-if="failedCount > 0" class="status-banner status-banner--offline">
         <span class="status-banner__icon">⚠</span>
-        <span>{{ failedCount }} item(s) failed to sync to ERP</span>
+        <span class="status-banner__link" @click="openFailed">{{ failedCount }} item(s) failed to sync to ERP — Details</span>
         <button class="status-banner__btn" @click="retryFailed">Retry</button>
       </div>
     </transition>
+
+    <!-- Failed sync items: what failed and why -->
+    <div v-if="failedPanel" class="failed-overlay" @click.self="failedPanel = false">
+      <div class="failed-panel">
+        <div class="failed-panel__hd">
+          <strong>Failed to sync</strong>
+          <button class="failed-panel__close" @click="failedPanel = false">✕</button>
+        </div>
+        <p v-if="!failedItems.length" class="failed-panel__empty">Nothing failed.</p>
+        <div v-for="it in failedItems" :key="it.id" class="failed-item">
+          <div class="failed-item__title">{{ describeItem(it) }}</div>
+          <div class="failed-item__meta">Queued {{ fmtTime(it._createdAt) }} · {{ it._retries || 0 }} attempts</div>
+          <div class="failed-item__err">{{ it._lastError || 'No error recorded (failed before this update). Tap Retry to see it.' }}</div>
+          <div class="failed-item__actions">
+            <button class="failed-item__btn" @click="onRetryOne(it.id)">Retry</button>
+            <button class="failed-item__btn failed-item__btn--danger" @click="onDiscard(it)">Discard</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Sync banner -->
     <transition name="banner">
@@ -42,9 +62,43 @@
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
-import { useSync, isOnline, isSyncing, pendingCount, failedCount, retryFailed } from '@/composables/useSync'
+import { useSync, isOnline, isSyncing, pendingCount, failedCount, retryFailed,
+         getFailedItems, retryOne, discardFailed } from '@/composables/useSync'
 import { initCSRF, isLoggedIn } from '@/api/frappe'
 useSync()
+
+// ── Failed sync items panel ──────────────────────────────────────────────────
+const failedPanel = ref(false)
+const failedItems = ref([])
+const ENDPOINT_LABELS = {
+  insertIntoRollTable: 'Roll save',
+  createQualityInspection: 'Quality Inspection',
+  createRollPickingEntry: 'Roll picking entry',
+  startJobCard: 'Start job card',
+  assignEmployeeToJobCard: 'Assign employee',
+  submitRollPackingList: 'Roll packing list',
+}
+function describeItem(it) {
+  const p = it.payload || {}
+  const parts = [ENDPOINT_LABELS[it.endpoint] || it.endpoint]
+  const jc = p.job_card || p.jobCardId || p.jobcard
+  if (jc) parts.push(jc)
+  if (p.roll_no) parts.push(`roll ${p.roll_no}`)
+  if (p.roll_weight) parts.push(`${p.roll_weight} kg`)
+  return parts.join(' · ')
+}
+function fmtTime(iso) {
+  return iso ? new Date(iso).toLocaleString() : '-'
+}
+async function loadFailed() { failedItems.value = await getFailedItems() }
+async function openFailed() { await loadFailed(); failedPanel.value = true }
+async function onRetryOne(id) { await retryOne(id); await loadFailed() }
+async function onDiscard(it) {
+  if (!confirm(`Discard "${describeItem(it)}"? It will NOT be saved to ERP.`)) return
+  await discardFailed(it.id)
+  await loadFailed()
+  if (!failedItems.value.length) failedPanel.value = false
+}
 
 // Session expired mid-shift (an API call came back unauthenticated): send the
 // operator to the login page and bring them back to where they were. Anything
@@ -166,6 +220,28 @@ input, select, textarea { font-family: inherit; }
   font-size: 11px;
   font-weight: 600;
 }
+.status-banner__link { text-decoration: underline; cursor: pointer; }
+.failed-overlay {
+  position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.45);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.failed-panel {
+  background: #fff; color: #0f172a; width: 100%; max-width: 560px; max-height: 75vh;
+  overflow-y: auto; border-radius: 14px 14px 0 0; padding: 14px 16px 20px;
+}
+.failed-panel__hd { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 16px; }
+.failed-panel__close { background: none; border: 0; font-size: 18px; cursor: pointer; }
+.failed-panel__empty { color: #64748b; }
+.failed-item { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.failed-item__title { font-weight: 600; font-size: 14px; }
+.failed-item__meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+.failed-item__err { font-size: 13px; color: #b91c1c; margin-top: 6px; word-break: break-word; }
+.failed-item__actions { display: flex; gap: 8px; margin-top: 8px; }
+.failed-item__btn {
+  flex: 1; padding: 8px; border-radius: 8px; border: 1px solid #cbd5e1;
+  background: #f8fafc; font-weight: 600; cursor: pointer;
+}
+.failed-item__btn--danger { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
 .status-banner__btn {
   background: #fff;
   color: var(--red-600);

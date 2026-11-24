@@ -513,7 +513,7 @@ import { db } from '@/db'
 import { getLastRollNo, isCachedRollNoStale } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
 import { call, createDoc, ensureCSRF, initCSRF } from '@/api/frappe'
-import { getKnitDownForJobCard } from '@/api/frappe'
+import { getKnitDownForJobCard, isPermanentServerError } from '@/api/frappe'
 import QRCode from 'qrcode'
 import moment from 'moment'
 
@@ -1486,6 +1486,10 @@ async function saveRollToERP(rollData) {
       if (name) return { name: String(name), reassignedFrom: resp.message.reassigned_from || null, localId: null }
       console.warn('knit_save_roll_data returned no roll name, queueing:', resp)
     } catch(e) {
+      // The ERP answered and refused this roll (validation, wrong job card,
+      // missing link…). Queueing it would only fail again later and hide the
+      // message behind "failed to sync" — show it to the operator now.
+      if (isPermanentServerError(e)) throw e
       console.warn('ERP save failed, falling back to offline queue:', e.message)
     }
   }

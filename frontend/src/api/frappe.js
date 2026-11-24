@@ -162,8 +162,30 @@ export async function call(method, args = {}) {
   signalServerReachable(res)
   const data = await res.json().catch(() => ({}))
   await throwIfSessionExpired(res, data)
-  if (!res.ok || data.exc) throw new Error(extractServerError(data, res.statusText))
+  if (!res.ok || data.exc) throw serverError(data, res)
   return data
+}
+
+// An error the ERP actually answered with (validation, not found, permission…),
+// as opposed to a network failure (fetch throws TypeError) or the ERP being
+// down. `httpStatus` lets callers tell "the server refused this" from "the
+// server could not be reached".
+function serverError(data, res) {
+  const e = new Error(extractServerError(data, res.statusText))
+  e.isServerError = true
+  e.httpStatus = res.status
+  e.excType = data?.exc_type || null
+  return e
+}
+
+// True when retrying the same request can never succeed: the ERP answered
+// with a 4xx (ValidationError 417, DoesNotExist 404, DuplicateEntry 409,
+// not-permitted 403…) or an error inside a 200 reply. 5xx and network errors
+// are treated as temporary.
+export function isPermanentServerError(err) {
+  if (!err?.isServerError) return false
+  const s = err.httpStatus || 0
+  return (s >= 400 && s < 500) || (s >= 200 && s < 300)
 }
 
 // Turn Frappe's error payload into a short human-readable message
@@ -925,7 +947,7 @@ export async function uploadFile(file, filename) {
   signalServerReachable(res)
   const data = await res.json().catch(() => ({}))
   await throwIfSessionExpired(res, data)
-  if (!res.ok || data.exc) throw new Error(extractServerError(data, res.statusText))
+  if (!res.ok || data.exc) throw serverError(data, res)
   return data.message?.file_url
 }
 

@@ -6,7 +6,7 @@ import { db } from '@/db'
 import {
   createRollInERP, createQualityInspection,
   createPickingEntry, startJobCard, submitRollPackingList,
-  isLoggedIn, isSessionExpiredError
+  isLoggedIn, isSessionExpiredError, isPermanentServerError
 } from '@/api/frappe'
 
 export const isOnline = ref(navigator.onLine)
@@ -113,6 +113,47 @@ export async function retryFailed() {
     .modify({ _status: 'pending', _retries: 0 })
   await refreshPendingCount()
   if (isOnline.value) flushQueue()
+}
+
+// ── Failed-item details / discard ────────────────────────────────────────────
+export async function getFailedItems() {
+  return db.syncQueue.where('_status').equals('failed').sortBy('_createdAt')
+}
+
+export async function retryOne(id) {
+  await db.syncQueue.update(id, { _status: 'pending', _retries: 0 })
+  await refreshPendingCount()
+  if (isOnline.value) flushQueue()
+}
+
+// Drop an item the ERP will never accept (e.g. it targets a roll that was
+// deleted or belongs to another job card). Retrying such an item only fails
+// again, and the banner would otherwise stay up forever.
+export async function discardFailed(id) {
+  const item = await db.syncQueue.get(id)
+  if (!item) return
+  await db.syncQueue.update(id, { _status: 'discarded', _discardedAt: new Date().toISOString() })
+  if (item.endpoint === 'insertIntoRollTable' && item.payload?._localId) {
+    await db.rolls.where('id').equals(item.payload._localId).modify({ _syncStatus: 'discarded' })
+  }
+  await refreshPendingCount()
+}
+
+// Best-effort: write the failure to the ERP's Error Log so it can be seen
+// from the desk without touching the tablet.
+async function reportSyncFailure(item, error, retries) {
+  try {
+    const { call: frappeCall } = await import('@/api/frappe')
+    await frappeCall('knit_log_sync_failure', {
+      endpoint: item.endpoint,
+      error,
+      retries,
+      created_at: item._createdAt,
+      payload: JSON.stringify(item.payload || {}),
+    })
+  } catch (e) {
+    console.warn('Could not report sync failure to ERP:', e?.message)
+  }
 }
 
 // ── Queue any mutation for deferred sync ─────────────────────────────────────
@@ -278,10 +319,20 @@ export async function flushQueue() {
           break
         }
         const retries = (item._retries || 0) + 1
-        // Exponential backoff — mark as failed after 5 retries
-        const newStatus = retries >= 5 ? 'failed' : 'pending'
-        await db.syncQueue.update(item.id, { _status: newStatus, _retries: retries })
-        console.error(`Sync failed for ${item.endpoint} (attempt ${retries}):`, err.message)
+        // Mark as failed after 5 retries — or at once when the ERP refused the
+        // request itself (validation / not found / duplicate): the same
+        // payload will be refused again, so retrying only hides the reason.
+        const newStatus = (retries >= 5 || isPermanentServerError(err)) ? 'failed' : 'pending'
+        // Keep the server's reason with the item. It used to be only
+        // console.error'd, so a "failed to sync" item could not be diagnosed
+        // from the tablet or from the ERP.
+        const lastError = err?.message || String(err)
+        await db.syncQueue.update(item.id, {
+          _status: newStatus, _retries: retries,
+          _lastError: lastError, _lastTriedAt: new Date().toISOString(),
+        })
+        console.error(`Sync failed for ${item.endpoint} (attempt ${retries}):`, lastError)
+        if (newStatus === 'failed') reportSyncFailure(item, lastError, retries)
       }
     }
 
