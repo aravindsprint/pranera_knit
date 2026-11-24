@@ -853,8 +853,9 @@ export const searchBatchesForItem = (itemCode, txt, { workOrder, purchaseOrder }
   }).then(r => r.message || [])
 
 // ── Needle / Sinker Issue ────────────────────────────────────────────────────
-// pranera_knit/api/spares_issue.py — issues spares to a machine as a submitted
-// Asset Repair (stock consumption); ERPNext posts the Material Issue.
+// pranera_knit/api/spares_issue.py — issues spares to a machine as an Asset
+// Repair (stock consumption). It stays a draft until the receiver acknowledges;
+// then it's submitted and ERPNext posts the Material Issue.
 const SPARES_API = 'pranera_knit.api.spares_issue'
 
 export const getSparesIssueSetup = () =>
@@ -872,8 +873,25 @@ export const linkMachineAsset = (workstation, asset) =>
 export const getRecentSpareIssues = (workstation) =>
   call(`${SPARES_API}.get_recent_issues`, { workstation: workstation || undefined }).then(r => r.message)
 
+// Saves the issue as PENDING for `receiver`; stock moves only when they acknowledge.
 export const issueSpares = (payload) =>
   call(`${SPARES_API}.issue_spares`, payload).then(r => r.message)
+
+export const searchSpareReceivers = (txt) =>
+  call(`${SPARES_API}.search_receivers`, { txt: txt || undefined }).then(r => r.message || [])
+
+export const getPendingSpareIssues = (workstation) =>
+  call(`${SPARES_API}.get_pending_issues`, { workstation: workstation || undefined })
+    .then(r => r.message || { for_me: [], sent_by_me: [] })
+
+export const acknowledgeSpareIssue = (assetRepair) =>
+  call(`${SPARES_API}.acknowledge_issue`, { asset_repair: assetRepair }).then(r => r.message)
+
+export const rejectSpareIssue = (assetRepair, remarks) =>
+  call(`${SPARES_API}.reject_issue`, { asset_repair: assetRepair, remarks }).then(r => r.message)
+
+export const withdrawSpareIssue = (assetRepair) =>
+  call(`${SPARES_API}.withdraw_issue`, { asset_repair: assetRepair }).then(r => r.message)
 
 // Batch dropdown on an Outward Request row: one option per (batch, warehouse)
 // with stock_qty / reserved_qty / available_qty / unallocated_qty and the

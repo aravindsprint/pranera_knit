@@ -13,15 +13,84 @@
           You can view this page, but issuing needs Stock Entry create + submit permission (Stock User). Ask the ERP admin.
         </div>
 
-        <!-- ── Success banner ── -->
-        <div v-if="result" class="card result">
-          <div class="result__head"><i class="pi pi-check-circle"></i> Issued to {{ result.workstation }}</div>
+        <!-- ── Result banner ── -->
+        <div v-if="result" class="card result" :class="{ 'result--pending': result.status === 'Pending' }">
+          <div class="result__head">
+            <i class="pi" :class="result.status === 'Pending' ? 'pi-clock' : 'pi-check-circle'"></i>
+            <span v-if="result.status === 'Pending'">Sent to {{ result.receiver_name }} — waiting for acknowledgement</span>
+            <span v-else>Acknowledged · issued to {{ result.workstation }}</span>
+          </div>
           <div class="result__docs">
             <div><span class="muted">Asset Repair</span> <b>{{ result.asset_repair }}</b></div>
             <div v-if="result.stock_entry"><span class="muted">Material Issue</span> <b>{{ result.stock_entry }}</b></div>
             <div><span class="muted">Value</span> <b>₹{{ fmtMoney(result.total_value) }}</b></div>
+            <div v-if="result.status === 'Pending'" class="muted small">No stock has moved yet. It is issued when {{ result.receiver_name }} acknowledges.</div>
           </div>
           <button class="btn-link" @click="result = null">Dismiss</button>
+        </div>
+
+        <!-- ── Waiting for MY acknowledgement ── -->
+        <div v-if="pending.for_me.length" class="card ack ack--mine">
+          <div class="section-title section-title--row">
+            <span><i class="pi pi-inbox"></i> Waiting for your acknowledgement</span>
+            <span class="badge badge-warning">{{ pending.for_me.length }}</span>
+          </div>
+          <div v-for="p in pending.for_me" :key="p.name" class="ack__row">
+            <div class="recent__top">
+              <b>{{ p.workstation }}</b>
+              <span class="muted small">{{ fmtDate(p.creation) }}</span>
+            </div>
+            <div class="recent__items">
+              <span v-for="it in p.items" :key="it.item_code" class="chip chip--muted">{{ shortCode(it.item_code) }} × {{ fmtQty(it.qty) }}</span>
+            </div>
+            <div class="muted small">From {{ p.issued_by }} · {{ p.name }} · ₹{{ fmtMoney(p.total_value) }}</div>
+            <div v-if="rejecting === p.name" class="ack__reject">
+              <textarea v-model="rejectRemarks" class="form-input" rows="2" placeholder="Why are you rejecting it? (required)"></textarea>
+            </div>
+            <div v-if="ackError[p.name]" class="alert alert-error"><i class="pi pi-exclamation-triangle"></i> {{ ackError[p.name] }}</div>
+            <div class="ack__actions">
+              <template v-if="rejecting === p.name">
+                <button class="btn btn-ghost" :disabled="!!busy[p.name]" @click="rejecting = ''">Back</button>
+                <button class="btn btn-danger" :disabled="!!busy[p.name] || !rejectRemarks.trim()" @click="doReject(p)">
+                  <i class="pi" :class="busy[p.name] === 'reject' ? 'pi-spin pi-spinner' : 'pi-times'"></i> Reject
+                </button>
+              </template>
+              <template v-else>
+                <button class="btn btn-ghost" :disabled="!!busy[p.name]" @click="startReject(p)">Reject</button>
+                <button class="btn btn-primary" :disabled="!!busy[p.name]" @click="doAcknowledge(p)">
+                  <i class="pi" :class="busy[p.name] === 'ack' ? 'pi-spin pi-spinner' : 'pi-check'"></i> I received these
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Sent by me, not yet acknowledged ── -->
+        <div v-if="pending.sent_by_me.length" class="card ack">
+          <div class="section-title section-title--row">
+            <span><i class="pi pi-send"></i> Sent · not yet acknowledged</span>
+            <span class="badge badge-secondary">{{ pending.sent_by_me.length }}</span>
+          </div>
+          <div v-for="p in pending.sent_by_me" :key="p.name" class="ack__row">
+            <div class="recent__top">
+              <b>{{ p.workstation }} → {{ p.receiver_name }}</b>
+              <span class="status" :class="'status--' + p.custom_ack_status.toLowerCase()">{{ p.custom_ack_status }}</span>
+            </div>
+            <div class="recent__items">
+              <span v-for="it in p.items" :key="it.item_code" class="chip chip--muted">{{ shortCode(it.item_code) }} × {{ fmtQty(it.qty) }}</span>
+            </div>
+            <div class="muted small">{{ p.name }} · {{ fmtDate(p.creation) }}</div>
+            <div v-if="p.custom_ack_status === 'Rejected' && p.custom_ack_remarks" class="ack__reason">
+              <i class="pi pi-comment"></i> {{ p.custom_ack_remarks }}
+            </div>
+            <div v-if="ackError[p.name]" class="alert alert-error"><i class="pi pi-exclamation-triangle"></i> {{ ackError[p.name] }}</div>
+            <div class="ack__actions">
+              <button class="btn btn-ghost" :disabled="!!busy[p.name]" @click="doWithdraw(p)">
+                <i class="pi" :class="busy[p.name] === 'withdraw' ? 'pi-spin pi-spinner' : 'pi-undo'"></i>
+                {{ p.custom_ack_status === 'Rejected' ? 'Clear' : 'Withdraw' }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- ── 1. Machine ── -->
@@ -122,6 +191,10 @@
           <label class="form-label" style="margin-top:12px">Remarks</label>
           <textarea v-model="remarks" class="form-input" rows="2" placeholder="Track, feeder, what happened… (optional)"></textarea>
 
+          <label class="form-label" style="margin-top:12px">Receiver</label>
+          <AutoComplete v-model="receiver" :options="receiverOptions" placeholder="Who is taking the needles / sinkers?" />
+          <div class="muted small" style="margin-top:4px">They acknowledge on their own login; stock is issued only then.</div>
+
           <div v-if="cartRows.length" class="summary">
             <div v-for="r in cartRows" :key="r.item_code" class="summary__row">
               <span>{{ shortCode(r.item_code) }}</span>
@@ -134,7 +207,7 @@
           <div v-if="submitError" class="alert alert-error" style="margin-top:12px"><i class="pi pi-exclamation-triangle"></i> {{ submitError }}</div>
 
           <button class="btn btn-primary btn-full btn-lg" style="margin-top:14px" :disabled="!canSubmit" @click="confirming = true">
-            <i class="pi pi-send"></i> Issue to {{ machine || 'machine' }}
+            <i class="pi pi-send"></i> Send to {{ receiverName || 'receiver' }} for acknowledgement
           </button>
           <div v-if="blockReason" class="muted small center" style="margin-top:8px">{{ blockReason }}</div>
         </div>
@@ -152,7 +225,7 @@
             <div class="recent__items">
               <span v-for="it in r.items" :key="it.item_code" class="chip chip--muted">{{ shortCode(it.item_code) }} × {{ fmtQty(it.qty) }}</span>
             </div>
-            <div class="muted small">{{ r.issued_by }}<span v-if="r.stock_entry"> · {{ r.stock_entry }}</span> · ₹{{ fmtMoney(r.total_repair_cost) }}</div>
+            <div class="muted small">{{ r.issued_by }}<span v-if="r.received_by"> → {{ r.received_by }} <i class="pi pi-check-circle ok"></i></span><span v-if="r.stock_entry"> · {{ r.stock_entry }}</span> · ₹{{ fmtMoney(r.total_repair_cost) }}</div>
           </div>
         </div>
       </template>
@@ -161,18 +234,18 @@
     <!-- ── Confirm sheet ── -->
     <div v-if="confirming" class="sheet-backdrop" @click.self="confirming = false">
       <div class="sheet">
-        <div class="sheet__title">Issue to {{ machine }}?</div>
+        <div class="sheet__title">Send to {{ receiverName }} for {{ machine }}?</div>
         <div class="muted small">Asset {{ machineRow?.asset }} · {{ reason }}</div>
         <div class="sheet__list">
           <div v-for="r in cartRows" :key="r.item_code" class="summary__row">
             <span>{{ shortCode(r.item_code) }}</span><b>{{ r.qty }} pcs</b>
           </div>
         </div>
-        <div class="muted small">This submits an Asset Repair and a Material Issue from {{ setup.source_warehouse }}. It can only be undone by cancelling them in ERPNext.</div>
+        <div class="muted small">This saves the issue as pending. {{ receiverName }} has to acknowledge it on their login; only then are the Asset Repair and the Material Issue from {{ setup.source_warehouse }} posted. You can withdraw it until then.</div>
         <div class="sheet__actions">
           <button class="btn btn-ghost" :disabled="submitting" @click="confirming = false">Back</button>
           <button class="btn btn-primary" :disabled="submitting" @click="submit">
-            <i class="pi" :class="submitting ? 'pi-spin pi-spinner' : 'pi-check'"></i> Confirm issue
+            <i class="pi" :class="submitting ? 'pi-spin pi-spinner' : 'pi-check'"></i> Send
           </button>
         </div>
       </div>
@@ -186,7 +259,8 @@ import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   getSparesIssueSetup, getSpareStock, searchMachineAssets, linkMachineAsset,
-  getRecentSpareIssues, issueSpares,
+  getRecentSpareIssues, issueSpares, searchSpareReceivers, getPendingSpareIssues,
+  acknowledgeSpareIssue, rejectSpareIssue, withdrawSpareIssue,
 } from '@/api/frappe'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
@@ -222,6 +296,15 @@ const recent = ref([])
 const recentLoading = ref(false)
 const frequentItems = ref([])
 
+// receiver acknowledgement
+const receivers = ref([])
+const receiver = ref('')
+const pending = reactive({ for_me: [], sent_by_me: [] })
+const busy = reactive({})      // asset_repair -> 'ack' | 'reject' | 'withdraw'
+const ackError = reactive({})  // asset_repair -> message
+const rejecting = ref('')
+const rejectRemarks = ref('')
+
 // ── computed ──
 const machineOptions = computed(() => setup.machines.map(m => ({
   value: m.workstation,
@@ -232,6 +315,14 @@ const assetOptions = computed(() => assets.value.map(a => ({
   value: a.name,
   label: `${a.name} · ${a.asset_name}${a.linked_workstation ? ` (linked to ${a.linked_workstation})` : ''}`,
 })))
+const receiverOptions = computed(() => receivers.value.map(u => ({
+  value: u.name,
+  label: u.full_name && u.full_name !== u.name ? `${u.full_name} · ${u.name}` : u.name,
+})))
+const receiverName = computed(() => {
+  const u = receivers.value.find(x => x.name === receiver.value)
+  return u ? (u.full_name || u.name) : ''
+})
 const stockByCode = computed(() => Object.fromEntries(stock.value.map(s => [s.item_code, s])))
 const filteredStock = computed(() => {
   const q = search.value.trim().toLowerCase()
@@ -252,6 +343,7 @@ const blockReason = computed(() => {
   if (cartRows.value.some(r => r.qty > (stockByCode.value[r.item_code]?.qty || 0) || r.qty !== Math.floor(r.qty)))
     return 'A quantity is more than the stock, or not a whole number.'
   if (!reason.value) return 'Pick a reason.'
+  if (!receiver.value) return 'Pick the receiver who will acknowledge.'
   return ''
 })
 const canSubmit = computed(() => !blockReason.value && !submitting.value)
@@ -267,7 +359,9 @@ onMounted(async () => {
     setupLoading.value = false
   }
   loadStock()
+  loadPending()
   searchMachineAssets().then(a => { assets.value = a }).catch(() => {})
+  searchSpareReceivers().then(u => { receivers.value = u }).catch(() => {})
   const q = String(route.query.machine || '').toUpperCase()
   if (q && setup.machines.some(m => m.workstation === q)) { machine.value = q; onMachinePicked(q) }
 })
@@ -281,6 +375,16 @@ async function loadStock() {
     stockError.value = e.message
   } finally {
     stockLoading.value = false
+  }
+}
+
+async function loadPending() {
+  try {
+    const r = await getPendingSpareIssues()
+    pending.for_me = r.for_me || []
+    pending.sent_by_me = r.sent_by_me || []
+  } catch {
+    // keep whatever was shown; the issue form still works
   }
 }
 
@@ -359,6 +463,7 @@ async function submit() {
       workstation: machineRow.value.workstation,
       asset: machineRow.value.asset,
       items: cartRows.value.map(r => ({ item_code: r.item_code, qty: r.qty })),
+      receiver: receiver.value,
       reason: reason.value,
       remarks: remarks.value || undefined,
     })
@@ -367,14 +472,54 @@ async function submit() {
     remarks.value = ''
     confirming.value = false
     window.scrollTo({ top: 0, behavior: 'smooth' })
-    loadStock()
-    loadRecent()
+    loadPending()
   } catch (e) {
     submitError.value = e.message
     confirming.value = false
   } finally {
     submitting.value = false
   }
+}
+
+// ── acknowledgement ──
+async function runAck(p, kind, fn) {
+  busy[p.name] = kind
+  delete ackError[p.name]
+  try {
+    return await fn()
+  } catch (e) {
+    ackError[p.name] = e.message
+    return null
+  } finally {
+    delete busy[p.name]
+  }
+}
+
+async function doAcknowledge(p) {
+  const r = await runAck(p, 'ack', () => acknowledgeSpareIssue(p.name))
+  if (!r) return
+  result.value = r
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+  loadPending()
+  loadStock()
+  if (machine.value === p.workstation) loadRecent()
+}
+
+function startReject(p) {
+  rejecting.value = p.name
+  rejectRemarks.value = ''
+}
+
+async function doReject(p) {
+  const r = await runAck(p, 'reject', () => rejectSpareIssue(p.name, rejectRemarks.value.trim()))
+  if (!r) return
+  rejecting.value = ''
+  loadPending()
+}
+
+async function doWithdraw(p) {
+  const r = await runAck(p, 'withdraw', () => withdrawSpareIssue(p.name))
+  if (r) loadPending()
 }
 
 // ── formatting ──
@@ -462,6 +607,19 @@ textarea.form-input { resize: vertical; font-family: inherit; }
 .summary__total { display: flex; justify-content: space-between; font-weight: 700; padding-top: 6px; border-top: 1px solid var(--slate-100); }
 
 .result { border-color: var(--emerald-100); background: var(--emerald-100); }
+.result--pending { border-color: var(--amber-100); background: var(--amber-100); }
+.result--pending .result__head { color: #92400e; }
+
+.ack--mine { border: 1.5px solid var(--amber-600); }
+.ack .section-title i { margin-right: 6px; }
+.ack__row { padding: 10px 0; border-top: 1px solid var(--slate-100); display: flex; flex-direction: column; gap: 6px; }
+.ack__row:first-of-type { border-top: none; }
+.ack__actions { display: flex; gap: 8px; justify-content: flex-end; }
+.ack__reason { font-size: 13px; color: var(--red-600); display: flex; gap: 6px; align-items: flex-start; }
+.status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 6px; }
+.status--pending { background: var(--amber-100); color: var(--amber-600); }
+.status--rejected { background: var(--red-100); color: var(--red-600); }
+.ok { color: var(--green-700); font-size: 11px; }
 .result__head { font-weight: 700; color: var(--emerald-700); display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
 .result__docs { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 

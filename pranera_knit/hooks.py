@@ -167,6 +167,11 @@ fixtures = [
                     # Needle / Sinker Issue page (api/spares_issue.py)
                     "Workstation-custom_asset",
                     "Asset Repair-custom_workstation",
+                    # Receiver acknowledgement on the same page
+                    "Asset Repair-custom_receiver",
+                    "Asset Repair-custom_ack_status",
+                    "Asset Repair-custom_acknowledged_on",
+                    "Asset Repair-custom_ack_remarks",
                 ],
             ],
         ],
