@@ -20,7 +20,8 @@ keeps the ledger scan small even though the In Transit warehouses hold years
 of history.
 
 Quantities are in the item's stock UOM (Kgs for fabric, Pcs for collar /
-cuff); totals are therefore shown per UOM.
+cuff); totals are therefore shown per UOM. A leftover under 0.01 (or under
+one piece for Pcs / Nos) is rounding dust and counts as inwarded.
 """
 from datetime import datetime, timedelta
 
@@ -33,6 +34,11 @@ QTY_EPS = 0.0005
 CHUNK = 400
 DEFAULT_RANGES = "7,15,30,60"
 STATUSES = ("Pending", "Partly Inwarded", "Inwarded")
+# Leftovers smaller than this are rounding dust from old transfers (e.g.
+# 0.001 kg, or 0.48 of a collar), not goods waiting in transit: count the
+# dispatch as fully inwarded. Counted units (Pcs / Nos) need a whole piece.
+WHOLE_UNITS = {"pcs", "nos", "unit", "piece", "pieces"}
+RESIDUE = 0.01
 
 
 def execute(filters=None):
@@ -244,7 +250,8 @@ def _bucket_labels(ranges):
 
 def _row(lot, as_on, ranges):
     pending = round(max(lot.left, 0.0), 3)
-    if pending <= QTY_EPS:
+    tolerance = 1 if (lot.stock_uom or "").strip().lower() in WHOLE_UNITS else RESIDUE
+    if pending < tolerance:
         pending, status = 0.0, "Inwarded"
     elif lot.inwarded > QTY_EPS:
         status = "Partly Inwarded"
