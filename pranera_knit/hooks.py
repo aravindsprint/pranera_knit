@@ -37,6 +37,11 @@ doctype_js = {
 #   knit-jobcard-qi-recreate (After Insert)  — auto-create draft QI on amendment
 # Keep those Server Scripts disabled (not deleted) as a reference backup.
 doc_events = {
+    # Keep roll numbers continuous: only the last, empty, unused roll may be
+    # deleted (pranera_knit.roll_numbering).
+    "Roll": {
+        "on_trash": "pranera_knit.roll_numbering.validate_roll_delete",
+    },
     "Job Card": {
         "before_cancel": "pranera_knit.job_card_events.on_before_cancel",
         "after_cancel":  "pranera_knit.job_card_events.on_after_cancel",
