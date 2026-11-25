@@ -73,6 +73,42 @@ def open_empty_roll(job_card):
     return rows[0][0] if rows else None
 
 
+def handover_roll(job_card):
+    """Shift handover: the open (empty, not ended) roll left on a SUBMITTED
+    job card of the same work order and the same machine (workstation).
+
+    Works for every shift change (day → night, night → morning, and a roll
+    running across several shifts): whoever submits with the roll still on
+    the machine hands it to the next job card's first Start, which continues
+    the same roll number instead of taking a new one."""
+    jc = frappe.db.get_value("Job Card", job_card, ["work_order", "workstation"], as_dict=True)
+    if not jc or not jc.work_order or not jc.workstation:
+        return None
+    rows = frappe.db.sql("""
+        SELECT r.name FROM `tabRoll` r
+        JOIN `tabJob Card` j ON j.name = r.job_card
+        WHERE j.docstatus = 1
+          AND j.name != %(jc)s
+          AND j.work_order = %(wo)s
+          AND j.workstation = %(ws)s
+          AND r.docstatus = 0
+          AND IFNULL(r.roll_weight, 0) = 0
+          AND IFNULL(r.total_qty, 0) = 0
+          AND r.end_time IS NULL
+          AND r.name REGEXP '^[0-9]+$'
+          -- Before the shift-end fix, submit packed EVERY roll of the job
+          -- card, the running one included, as 0 kg. Those old empty rolls
+          -- sit in a Roll Packing List and must never be handed over.
+          AND NOT EXISTS (
+              SELECT 1 FROM `tabRoll Packing List Item` rpli
+              WHERE rpli.roll_no = r.name
+          )
+        ORDER BY CAST(r.name AS UNSIGNED) DESC
+        LIMIT 1
+    """, {"jc": job_card, "wo": jc.work_order, "ws": jc.workstation})
+    return rows[0][0] if rows else None
+
+
 # ── Delete guard (doc_events: Roll.on_trash) ──────────────────────────────────
 
 _LINKS = (

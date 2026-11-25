@@ -32,7 +32,7 @@ from frappe import _
 from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
-from pranera_knit.job_card_permissions import is_supervisor, work_order_condition
+from pranera_knit.job_card_permissions import is_supervisor, work_order_condition, job_card_condition
 
 
 # ── App access ────────────────────────────────────────────────────────────────
@@ -109,6 +109,63 @@ def get_work_orders():
     return rows
 
 
+def _workstation_from_scan(scanned):
+    """Workstation for a scanned machine QR. Accepts the full workstation
+    name ("SJ01/2828/PL"), the machine code alone ("SJ01"), a
+    "Workstation:<name>" prefix, or a desk URL ending in the name."""
+    from urllib.parse import unquote
+    v = unquote(str(scanned or "")).strip()
+    if "/app/workstation/" in v:
+        v = v.split("/app/workstation/", 1)[1]
+    if v.lower().startswith("workstation:"):
+        v = v.split(":", 1)[1]
+    v = v.strip().strip("/")
+    if not v:
+        return None
+    ws = frappe.db.get_value("Workstation", v, "name")   # case-insensitive in MariaDB
+    if ws:
+        return ws
+    code = v.split("/")[0]
+    rows = frappe.db.sql(
+        "SELECT name FROM `tabWorkstation` WHERE SUBSTRING_INDEX(name, '/', 1) = %s",
+        code,
+    )
+    return rows[0][0] if len(rows) == 1 else None
+
+
+@frappe.whitelist()
+def get_job_card_by_workstation(scanned):
+    """Backs `knit_scan_workstation`: the operator scans the QR on a machine
+    and gets the open job card assigned to them on that machine.
+
+    Visibility follows job_card_permissions: a Job Card Operator only gets
+    job cards they are assigned to (Time Logs / Assign To); supervisors get
+    every open job card on the machine."""
+    ws = _workstation_from_scan(scanned)
+    if not ws:
+        return {"workstation": None, "job_cards": [],
+                "message": _("Machine {0} not found.").format(scanned)}
+    cond = job_card_condition(table="jc")
+    rows = frappe.db.sql(
+        f"""
+        SELECT jc.name, jc.work_order, jc.production_item, jc.item_name,
+               jc.commercial_name, jc.color, jc.width, jc.status, jc.workstation,
+               jc.for_quantity, jc.total_completed_qty AS produced_qty,
+               jc.project, jc.docstatus, jc.quality_inspection, jc.stock_uom
+        FROM `tabJob Card` jc
+        WHERE jc.workstation = %(ws)s
+          AND jc.docstatus = 0
+          AND jc.status NOT IN ('Completed', 'Cancelled')
+          {"AND " + cond if cond else ""}
+        ORDER BY FIELD(jc.status, 'Work In Progress') DESC, jc.modified DESC
+        LIMIT 20
+        """,
+        {"ws": ws}, as_dict=True,
+    )
+    msg = "" if rows else _("No open job card is assigned to you on {0}. Ask your supervisor to assign one.").format(ws)
+    return {"workstation": ws, "job_cards": rows, "message": msg}
+
+
 @frappe.whitelist()
 def assign_employee_to_job_card(job_card, employee_id):
     """Put the operator on a Job Card (backs `knit_assign_employee_to_job_card`,
@@ -137,6 +194,28 @@ def assign_employee_to_job_card(job_card, employee_id):
     emp = frappe.db.get_value("Employee", employee_id, ["name", "employee_name"], as_dict=True)
     if not emp:
         frappe.throw(_("Employee {0} not found").format(employee_id))
+
+    # One open job card per operator per machine, so scanning a machine
+    # always lands the operator on exactly one job card. Several machines
+    # per operator stay allowed.
+    if jc.workstation:
+        busy = frappe.db.sql("""
+            SELECT jc.name FROM `tabJob Card` jc
+            JOIN `tabJob Card Time Log` tl
+              ON tl.parent = jc.name AND tl.parenttype = 'Job Card'
+            WHERE tl.employee = %(emp)s
+              AND jc.workstation = %(ws)s
+              AND jc.name != %(jc)s
+              AND jc.docstatus = 0
+              AND jc.status NOT IN ('Completed', 'Cancelled')
+            LIMIT 1
+        """, {"emp": emp.name, "ws": jc.workstation, "jc": job_card})
+        if busy:
+            frappe.throw(
+                _("{0} already has job card {1} open on {2}. Complete or submit it first.").format(
+                    emp.employee_name or emp.name, busy[0][0], jc.workstation),
+                title=_("Operator Busy On This Machine"),
+            )
 
     for row in frappe.get_all("Job Card Time Log",
                               filters={"parent": job_card, "parenttype": "Job Card",
@@ -243,9 +322,30 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
     # offline) — an auto-continued roll right after End Roll must never
     # reuse: the roll just ended may still look empty here until its queued
     # save syncs.
-    from pranera_knit.roll_numbering import open_empty_roll
+    from pranera_knit.roll_numbering import open_empty_roll, handover_roll, _lock
     existing = open_empty_roll(job_card) if cint(reuse_open) else None
-    if existing:
+    handed_over = False
+    if not existing and cint(reuse_open):
+        # Shift handover: continue the roll the previous shift left running
+        # on this machine (their job card was submitted without ending it).
+        _lock()
+        prev = handover_roll(job_card)
+        if prev:
+            roll = frappe.get_doc("Roll", prev)
+            from_jc = roll.job_card
+            roll.job_card = job_card
+            roll.work_order = jc.work_order
+            roll.item_code = jc.production_item
+            roll.item_name = jc.item_name or ""
+            if batch_no:
+                roll.batch = batch_no
+            # start_time is kept: the roll started on the previous shift.
+            roll.save(ignore_permissions=True)
+            roll.add_comment("Info", _("Handed over from job card {0} to {1} (shift change)").format(from_jc, job_card))
+            handed_over = True
+    if handed_over:
+        pass
+    elif existing:
         roll = frappe.get_doc("Roll", existing)
         roll.work_order = jc.work_order
         roll.item_code = jc.production_item
@@ -271,7 +371,50 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
         "idx": roll.name,
         "start_time": str(roll.start_time),
         "batch_no": batch_no or "",
+        "handed_over": 1 if handed_over else 0,
     }]
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_open_roll(job_card, roll):
+    """Backs `knit_delete_open_roll`: the Create Roll page's Reset (↺) deletes
+    the job card's running, still-empty roll.
+
+    Numbering stays continuous: only the LAST roll number is deleted, so the
+    next roll simply takes the same number again. If another machine has
+    already taken a newer number, the roll is kept (deleting it would leave a
+    hole) and the job card's next Start reuses it (open_empty_roll)."""
+    from pranera_knit.roll_numbering import _lock, _max_roll_no
+
+    roll = str(roll or "").strip()
+    if not job_card or not roll.isdigit():
+        return {"deleted": False, "message": _("No running roll to delete.")}
+
+    # Same lock as roll-number allocation: no other tablet can take the next
+    # number between the "is it the last roll?" check and the delete.
+    _lock()
+    row = frappe.db.get_value(
+        "Roll", roll,
+        ["job_card", "roll_weight", "total_qty", "end_time"], as_dict=True,
+    )
+    if not row:
+        return {"deleted": False, "message": _("Roll {0} no longer exists.").format(roll)}
+    if row.job_card not in _job_card_lineage(job_card):
+        frappe.throw(_("Roll {0} does not belong to job card {1}.").format(roll, job_card))
+    if flt(row.roll_weight) or flt(row.total_qty) or row.end_time:
+        return {"deleted": False,
+                "message": _("Roll {0} is already ended/weighed — it was not deleted.").format(roll)}
+    if int(roll) < _max_roll_no():
+        return {"deleted": False,
+                "message": _("Roll {0} was kept: a newer roll number already exists. "
+                             "This job card's next Start will reuse it.").format(roll)}
+
+    # Permission is checked above (own job card's empty roll); operators
+    # without Roll delete rights must still be able to reset. on_trash
+    # (validate_roll_delete) still runs and refuses linked rolls.
+    frappe.delete_doc("Roll", roll, ignore_permissions=True)
+    frappe.db.commit()
+    return {"deleted": True, "message": _("Roll {0} deleted.").format(roll)}
 
 
 def _job_card_lineage(job_card):

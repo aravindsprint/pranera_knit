@@ -1,21 +1,17 @@
 {
-  "_html5-qrcode-scanner-DNkrq8sm.js": {
-    "file": "chunks/html5-qrcode-scanner-DNkrq8sm.js",
-    "name": "html5-qrcode-scanner"
-  },
   "_index.esm2017-BJtptJo2.js": {
     "file": "chunks/index.esm2017-BJtptJo2.js",
     "name": "index.esm2017"
   },
-  "_pickOrder-yrPGCPVf.js": {
-    "file": "chunks/pickOrder-yrPGCPVf.js",
+  "_pickOrder-DmEDssXR.js": {
+    "file": "chunks/pickOrder-DmEDssXR.js",
     "name": "pickOrder",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "index-VcRBJzMb.js",
+    "file": "index-Dkv1cc-d.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -43,7 +39,7 @@
       "src/pages/NoAccessPage.vue"
     ],
     "css": [
-      "assets/index-BJJZJBGq.css"
+      "assets/index-evjhWJMF.css"
     ],
     "assets": [
       "assets/primeicons-BZF8q66I.eot",
@@ -92,7 +88,7 @@
     "src": "node_modules/primeicons/fonts/primeicons.woff2"
   },
   "src/pages/NoAccessPage.vue": {
-    "file": "chunks/NoAccessPage-RDa4XhFC.js",
+    "file": "chunks/NoAccessPage-CiPi-lyV.js",
     "name": "NoAccessPage",
     "src": "src/pages/NoAccessPage.vue",
     "isDynamicEntry": true,
@@ -104,7 +100,7 @@
     ]
   },
   "src/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue": {
-    "file": "chunks/CollarCuffDashboardPage-DXUdJhr3.js",
+    "file": "chunks/CollarCuffDashboardPage-DzasTBmQ.js",
     "name": "CollarCuffDashboardPage",
     "src": "src/pages/collar-cuff-dashboard/CollarCuffDashboardPage.vue",
     "isDynamicEntry": true,
@@ -116,7 +112,7 @@
     ]
   },
   "src/pages/create-pick-order/CreatePickOrderPage.vue": {
-    "file": "chunks/CreatePickOrderPage-CSTsLJvu.js",
+    "file": "chunks/CreatePickOrderPage-Db7-OqnY.js",
     "name": "CreatePickOrderPage",
     "src": "src/pages/create-pick-order/CreatePickOrderPage.vue",
     "isDynamicEntry": true,
@@ -128,7 +124,7 @@
     ]
   },
   "src/pages/dashboard/DashboardPage.vue": {
-    "file": "chunks/DashboardPage-BQ5YmHll.js",
+    "file": "chunks/DashboardPage-U4RqN3oq.js",
     "name": "DashboardPage",
     "src": "src/pages/dashboard/DashboardPage.vue",
     "isDynamicEntry": true,
@@ -140,7 +136,7 @@
     ]
   },
   "src/pages/knit-down/KnitDownPage.vue": {
-    "file": "chunks/KnitDownPage-B0SnpYVX.js",
+    "file": "chunks/KnitDownPage-DGyfzCDF.js",
     "name": "KnitDownPage",
     "src": "src/pages/knit-down/KnitDownPage.vue",
     "isDynamicEntry": true,
@@ -152,33 +148,32 @@
     ]
   },
   "src/pages/loading-scan/LoadingScanPage.vue": {
-    "file": "chunks/LoadingScanPage-M09XAL3Z.js",
+    "file": "chunks/LoadingScanPage-BbV_xav_.js",
     "name": "LoadingScanPage",
     "src": "src/pages/loading-scan/LoadingScanPage.vue",
     "isDynamicEntry": true,
     "imports": [
-      "index.html",
-      "_html5-qrcode-scanner-DNkrq8sm.js"
+      "index.html"
     ],
     "css": [
       "assets/LoadingScanPage-BizbPRFw.css"
     ]
   },
   "src/pages/my-pick-orders/MyPickOrdersPage.vue": {
-    "file": "chunks/MyPickOrdersPage-CMcebf66.js",
+    "file": "chunks/MyPickOrdersPage-D6YvlFSp.js",
     "name": "MyPickOrdersPage",
     "src": "src/pages/my-pick-orders/MyPickOrdersPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_pickOrder-yrPGCPVf.js"
+      "_pickOrder-DmEDssXR.js"
     ],
     "css": [
       "assets/MyPickOrdersPage-BzAEw4Ux.css"
     ]
   },
   "src/pages/operator-job-cards/OperatorJobCardsPage.vue": {
-    "file": "chunks/OperatorJobCardsPage-gkMqFaIl.js",
+    "file": "chunks/OperatorJobCardsPage-BRVr294J.js",
     "name": "OperatorJobCardsPage",
     "src": "src/pages/operator-job-cards/OperatorJobCardsPage.vue",
     "isDynamicEntry": true,
@@ -190,7 +185,7 @@
     ]
   },
   "src/pages/outward-request/OutwardRequestPage.vue": {
-    "file": "chunks/OutwardRequestPage-D8ETsLiD.js",
+    "file": "chunks/OutwardRequestPage-BSkP-5Hs.js",
     "name": "OutwardRequestPage",
     "src": "src/pages/outward-request/OutwardRequestPage.vue",
     "isDynamicEntry": true,
@@ -202,7 +197,7 @@
     ]
   },
   "src/pages/process-loss/ProcessLossPage.vue": {
-    "file": "chunks/ProcessLossPage-BFjMn8hx.js",
+    "file": "chunks/ProcessLossPage-DqOE5RJq.js",
     "name": "ProcessLossPage",
     "src": "src/pages/process-loss/ProcessLossPage.vue",
     "isDynamicEntry": true,
@@ -214,7 +209,7 @@
     ]
   },
   "src/pages/production-report/ProductionReportPage.vue": {
-    "file": "chunks/ProductionReportPage-nEXgUY19.js",
+    "file": "chunks/ProductionReportPage-CpYkDZfT.js",
     "name": "ProductionReportPage",
     "src": "src/pages/production-report/ProductionReportPage.vue",
     "isDynamicEntry": true,
@@ -226,7 +221,7 @@
     ]
   },
   "src/pages/production-roll-summary/ProductionRollSummaryPage.vue": {
-    "file": "chunks/ProductionRollSummaryPage-Ji1i6EfN.js",
+    "file": "chunks/ProductionRollSummaryPage-DC4_1DRU.js",
     "name": "ProductionRollSummaryPage",
     "src": "src/pages/production-roll-summary/ProductionRollSummaryPage.vue",
     "isDynamicEntry": true,
@@ -238,34 +233,32 @@
     ]
   },
   "src/pages/roll-wise-pick-list/RollWisePickListPage.vue": {
-    "file": "chunks/RollWisePickListPage-zRIY4kA0.js",
+    "file": "chunks/RollWisePickListPage-CzWptweq.js",
     "name": "RollWisePickListPage",
     "src": "src/pages/roll-wise-pick-list/RollWisePickListPage.vue",
     "isDynamicEntry": true,
     "imports": [
-      "index.html",
-      "_html5-qrcode-scanner-DNkrq8sm.js"
+      "index.html"
     ],
     "css": [
       "assets/RollWisePickListPage-BettIBe8.css"
     ]
   },
   "src/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue": {
-    "file": "chunks/RollWisePickOrderExecutionPage-CuLIXD7n.js",
+    "file": "chunks/RollWisePickOrderExecutionPage-DbbgBK1g.js",
     "name": "RollWisePickOrderExecutionPage",
     "src": "src/pages/roll-wise-pick-order-execution/RollWisePickOrderExecutionPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_pickOrder-yrPGCPVf.js",
-      "_html5-qrcode-scanner-DNkrq8sm.js"
+      "_pickOrder-DmEDssXR.js"
     ],
     "css": [
       "assets/RollWisePickOrderExecutionPage-BkrJTx9a.css"
     ]
   },
   "src/pages/spares-issue/SparesIssuePage.vue": {
-    "file": "chunks/SparesIssuePage-DX7uiX1I.js",
+    "file": "chunks/SparesIssuePage-D6O1yL1O.js",
     "name": "SparesIssuePage",
     "src": "src/pages/spares-issue/SparesIssuePage.vue",
     "isDynamicEntry": true,
@@ -277,20 +270,19 @@
     ]
   },
   "src/pages/stock/StockPage.vue": {
-    "file": "chunks/StockPage-Cm9199JJ.js",
+    "file": "chunks/StockPage-DLZrBK-P.js",
     "name": "StockPage",
     "src": "src/pages/stock/StockPage.vue",
     "isDynamicEntry": true,
     "imports": [
-      "index.html",
-      "_html5-qrcode-scanner-DNkrq8sm.js"
+      "index.html"
     ],
     "css": [
       "assets/StockPage-BcaT9N4T.css"
     ]
   },
   "src/pages/vehicle-gate-entry/VehicleGateEntryPage.vue": {
-    "file": "chunks/VehicleGateEntryPage-CIcvejlL.js",
+    "file": "chunks/VehicleGateEntryPage-BpsQszG-.js",
     "name": "VehicleGateEntryPage",
     "src": "src/pages/vehicle-gate-entry/VehicleGateEntryPage.vue",
     "isDynamicEntry": true,
@@ -302,7 +294,7 @@
     ]
   },
   "src/pages/workstation-status/WorkstationStatusPage.vue": {
-    "file": "chunks/WorkstationStatusPage-D9MGktO2.js",
+    "file": "chunks/WorkstationStatusPage-CeBGUfRM.js",
     "name": "WorkstationStatusPage",
     "src": "src/pages/workstation-status/WorkstationStatusPage.vue",
     "isDynamicEntry": true,
@@ -314,7 +306,7 @@
     ]
   },
   "src/push.js": {
-    "file": "chunks/push-Bv5ifMO3.js",
+    "file": "chunks/push-6w4ULZX_.js",
     "name": "push",
     "src": "src/push.js",
     "isDynamicEntry": true,

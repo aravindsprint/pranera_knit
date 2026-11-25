@@ -207,9 +207,14 @@ override_whitelisted_methods = {
     # roll-number collision between two tablets is retried server-side instead
     # of pushing the PWA onto a locally guessed (wrong) roll number.
     "knit_create_roll": "pranera_knit.api.knit.create_roll",
+    # Create Roll page Reset (↺): delete the job card's running empty roll
+    # (only when it is the last roll number, so numbering stays continuous).
+    "knit_delete_open_roll": "pranera_knit.api.knit.delete_open_roll",
     # Replaces the "knit_get_work_orders" Server Script: same columns, but a
     # Job Card Operator only gets the Work Orders of their own Job Cards.
     "knit_get_work_orders": "pranera_knit.api.knit.get_work_orders",
+    # Home page "Scan Machine": the operator's open job card on a scanned workstation.
+    "knit_scan_workstation": "pranera_knit.api.knit.get_job_card_by_workstation",
     # Replaces the "knit_assign_employee_to_job_card" Server Script: same
     # behaviour, but only supervisors (by role) may assign, and only on job
     # cards they can see (Fabric = Kgs, Collar Cuff = Pcs).
