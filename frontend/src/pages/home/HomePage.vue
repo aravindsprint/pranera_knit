@@ -65,6 +65,7 @@
         <div class="home-header__title">Job Cards</div>
         <div class="home-header__sub">{{ auth.username }} · {{ auth.designation }}</div>
       </div>
+      <button class="h-icon-btn" @click="openMachineScanner" title="Scan machine">📷</button>
       <button class="h-icon-btn" @click="refresh" :disabled="homeStore.loading">↻</button>
     </header>
 
@@ -103,6 +104,8 @@
         <option value="Completed">Completed</option>
       </select>
     </div>
+
+    <div class="home-offline-bar home-offline-bar--error" v-if="scanMsg" @click="scanMsg = ''">{{ scanMsg }}</div>
 
     <!-- Content -->
     <div class="home-content">
@@ -152,6 +155,22 @@
       <button class="home-nav__item" @click="drawerOpen = true"><span>☰</span><span>Menu</span></button>
     </nav>
 
+  </div>
+
+  <!-- ── Scan Machine Modal ── -->
+  <div class="assign-overlay" v-if="machineScan.open" @click.self="closeMachineScanner">
+    <div class="assign-modal">
+      <div class="assign-modal__hd">
+        <div>
+          <div class="assign-modal__title">Scan Machine</div>
+          <div class="assign-modal__sub">Scan the QR on the machine to open your job card</div>
+        </div>
+        <button class="assign-modal__close" @click="closeMachineScanner">✕</button>
+      </div>
+      <div id="machine-scan-region" style="width:100%;border-radius:10px;overflow:hidden"></div>
+      <div v-if="machineScan.busy" style="text-align:center;margin-top:10px;color:#64748b">Finding job card…</div>
+      <div v-if="machineScan.error" style="margin-top:10px;color:#b91c1c;font-size:13px">{{ machineScan.error }}</div>
+    </div>
   </div>
 
   <!-- ── Assign Employee Modal ── -->
@@ -225,7 +244,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import NotificationToggle from '@/components/NotificationToggle.vue'
@@ -237,6 +256,7 @@ import { useQIStore } from '@/stores/qualityInspection'
 import { isOnline, checkReachable } from '@/composables/useSync'
 import { call } from '@/api/frappe'
 import { db } from '@/db'
+import { Html5Qrcode } from 'html5-qrcode'
 
 const router = useRouter()
 const route = useRoute()
@@ -479,6 +499,80 @@ async function openCreateRoll(jc) {
   rollStore.setProductData(jc)
   router.push('/knit-app/create-roll')
 }
+// ── Scan Machine → assigned job card ─────────────────────────────────────
+const machineScan = ref({ open: false, busy: false, error: '' })
+const scanMsg = ref('')
+let machineQr = null
+
+async function openMachineScanner() {
+  scanMsg.value = ''
+  machineScan.value = { open: true, busy: false, error: '' }
+  await nextTick()
+  try {
+    machineQr = new Html5Qrcode('machine-scan-region')
+    await machineQr.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 240, height: 240 }, aspectRatio: 1.0 },
+      onMachineScanned,
+      () => {}
+    )
+  } catch (err) {
+    machineScan.value.error = 'Could not access the camera: ' + (err?.message || err)
+  }
+}
+async function stopMachineScanner() {
+  if (!machineQr) return
+  try { if (machineQr.isScanning) await machineQr.stop(); machineQr.clear() } catch (_) {}
+  machineQr = null
+}
+async function closeMachineScanner() {
+  await stopMachineScanner()
+  machineScan.value.open = false
+}
+onBeforeUnmount(stopMachineScanner)
+
+// Offline fallback: match the scan against the cached job card list.
+function matchCachedByMachine(scanned) {
+  const v = String(scanned || '').trim().toLowerCase()
+  const code = v.split('/')[0]
+  return homeStore.jobCards.filter(jc => {
+    const ws = String(jc.workstation || '').toLowerCase()
+    return (ws === v || ws.split('/')[0] === code)
+      && jc.docstatus === 0 && !['Completed', 'Cancelled'].includes(jc.status)
+  })
+}
+
+async function onMachineScanned(text) {
+  if (machineScan.value.busy) return
+  machineScan.value.busy = true
+  await stopMachineScanner()
+  let cards = [], ws = '', msg = ''
+  try {
+    if (isOnline.value) {
+      const r = await call('knit_scan_workstation', { scanned: text })
+      const d = r?.message || {}
+      cards = d.job_cards || []; ws = d.workstation || text; msg = d.message || ''
+    } else {
+      cards = matchCachedByMachine(text); ws = cards[0]?.workstation || text
+    }
+  } catch (e) {
+    cards = matchCachedByMachine(text); ws = cards[0]?.workstation || text
+    if (!cards.length) msg = 'Scan failed: ' + (e.message || e)
+  }
+  machineScan.value = { open: false, busy: false, error: '' }
+
+  if (cards.length === 1) {
+    await openCreateRoll(cards[0])
+  } else if (cards.length > 1) {
+    // More than one open job card on this machine — show only those.
+    search.value = ws
+    statusFilter.value = ''
+    scanMsg.value = `${cards.length} job cards on ${ws} — tap the one to work on.`
+  } else {
+    scanMsg.value = msg || `No open job card is assigned to you on ${ws}.`
+  }
+}
+
 function createQI(jc) { qiStore.setProductData(jc); router.push('/knit-app/create-qi') }
 async function logout() {
   await auth.logout()

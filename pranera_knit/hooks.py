@@ -213,6 +213,8 @@ override_whitelisted_methods = {
     # Replaces the "knit_get_work_orders" Server Script: same columns, but a
     # Job Card Operator only gets the Work Orders of their own Job Cards.
     "knit_get_work_orders": "pranera_knit.api.knit.get_work_orders",
+    # Home page "Scan Machine": the operator's open job card on a scanned workstation.
+    "knit_scan_workstation": "pranera_knit.api.knit.get_job_card_by_workstation",
     # Replaces the "knit_assign_employee_to_job_card" Server Script: same
     # behaviour, but only supervisors (by role) may assign, and only on job
     # cards they can see (Fabric = Kgs, Collar Cuff = Pcs).
