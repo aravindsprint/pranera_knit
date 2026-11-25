@@ -73,6 +73,34 @@ def open_empty_roll(job_card):
     return rows[0][0] if rows else None
 
 
+def handover_roll(job_card):
+    """Shift handover: the open (empty, not ended) roll left on a SUBMITTED
+    job card of the same work order and the same machine (workstation).
+
+    The day operator submits their job card while the roll is still on the
+    machine; the night operator's first Start continues that same roll
+    number instead of taking a new one."""
+    jc = frappe.db.get_value("Job Card", job_card, ["work_order", "workstation"], as_dict=True)
+    if not jc or not jc.work_order or not jc.workstation:
+        return None
+    rows = frappe.db.sql("""
+        SELECT r.name FROM `tabRoll` r
+        JOIN `tabJob Card` j ON j.name = r.job_card
+        WHERE j.docstatus = 1
+          AND j.name != %(jc)s
+          AND j.work_order = %(wo)s
+          AND j.workstation = %(ws)s
+          AND r.docstatus = 0
+          AND IFNULL(r.roll_weight, 0) = 0
+          AND IFNULL(r.total_qty, 0) = 0
+          AND r.end_time IS NULL
+          AND r.name REGEXP '^[0-9]+$'
+        ORDER BY CAST(r.name AS UNSIGNED) DESC
+        LIMIT 1
+    """, {"jc": job_card, "wo": jc.work_order, "ws": jc.workstation})
+    return rows[0][0] if rows else None
+
+
 # ── Delete guard (doc_events: Roll.on_trash) ──────────────────────────────────
 
 _LINKS = (

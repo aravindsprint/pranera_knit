@@ -243,9 +243,30 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
     # offline) — an auto-continued roll right after End Roll must never
     # reuse: the roll just ended may still look empty here until its queued
     # save syncs.
-    from pranera_knit.roll_numbering import open_empty_roll
+    from pranera_knit.roll_numbering import open_empty_roll, handover_roll, _lock
     existing = open_empty_roll(job_card) if cint(reuse_open) else None
-    if existing:
+    handed_over = False
+    if not existing and cint(reuse_open):
+        # Shift handover: continue the roll the previous shift left running
+        # on this machine (their job card was submitted without ending it).
+        _lock()
+        prev = handover_roll(job_card)
+        if prev:
+            roll = frappe.get_doc("Roll", prev)
+            from_jc = roll.job_card
+            roll.job_card = job_card
+            roll.work_order = jc.work_order
+            roll.item_code = jc.production_item
+            roll.item_name = jc.item_name or ""
+            if batch_no:
+                roll.batch = batch_no
+            # start_time is kept: the roll started on the previous shift.
+            roll.save(ignore_permissions=True)
+            roll.add_comment("Info", _("Handed over from job card {0} to {1} (shift change)").format(from_jc, job_card))
+            handed_over = True
+    if handed_over:
+        pass
+    elif existing:
         roll = frappe.get_doc("Roll", existing)
         roll.work_order = jc.work_order
         roll.item_code = jc.production_item
@@ -271,7 +292,50 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
         "idx": roll.name,
         "start_time": str(roll.start_time),
         "batch_no": batch_no or "",
+        "handed_over": 1 if handed_over else 0,
     }]
+
+
+@frappe.whitelist(methods=["POST"])
+def delete_open_roll(job_card, roll):
+    """Backs `knit_delete_open_roll`: the Create Roll page's Reset (↺) deletes
+    the job card's running, still-empty roll.
+
+    Numbering stays continuous: only the LAST roll number is deleted, so the
+    next roll simply takes the same number again. If another machine has
+    already taken a newer number, the roll is kept (deleting it would leave a
+    hole) and the job card's next Start reuses it (open_empty_roll)."""
+    from pranera_knit.roll_numbering import _lock, _max_roll_no
+
+    roll = str(roll or "").strip()
+    if not job_card or not roll.isdigit():
+        return {"deleted": False, "message": _("No running roll to delete.")}
+
+    # Same lock as roll-number allocation: no other tablet can take the next
+    # number between the "is it the last roll?" check and the delete.
+    _lock()
+    row = frappe.db.get_value(
+        "Roll", roll,
+        ["job_card", "roll_weight", "total_qty", "end_time"], as_dict=True,
+    )
+    if not row:
+        return {"deleted": False, "message": _("Roll {0} no longer exists.").format(roll)}
+    if row.job_card not in _job_card_lineage(job_card):
+        frappe.throw(_("Roll {0} does not belong to job card {1}.").format(roll, job_card))
+    if flt(row.roll_weight) or flt(row.total_qty) or row.end_time:
+        return {"deleted": False,
+                "message": _("Roll {0} is already ended/weighed — it was not deleted.").format(roll)}
+    if int(roll) < _max_roll_no():
+        return {"deleted": False,
+                "message": _("Roll {0} was kept: a newer roll number already exists. "
+                             "This job card's next Start will reuse it.").format(roll)}
+
+    # Permission is checked above (own job card's empty roll); operators
+    # without Roll delete rights must still be able to reset. on_trash
+    # (validate_roll_delete) still runs and refuses linked rolls.
+    frappe.delete_doc("Roll", roll, ignore_permissions=True)
+    frappe.db.commit()
+    return {"deleted": True, "message": _("Roll {0} deleted.").format(roll)}
 
 
 def _job_card_lineage(job_card):

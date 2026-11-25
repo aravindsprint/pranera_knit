@@ -80,12 +80,17 @@ def submit_roll_packing_list_v2(jobcard=None, work_order=None, actual_consumptio
 
     rolls = frappe.db.sql(
         "SELECT name, item_code, batch, roll_weight, total_qty, stock_uom, start_time, end_time "
-        "FROM `tabRoll` WHERE job_card = %(jobcard)s ORDER BY name asc",
+        "FROM `tabRoll` WHERE job_card = %(jobcard)s "
+        # Skip the roll still running on the machine (empty, not ended): at a
+        # shift change it is handed over to the next shift's job card
+        # (roll_numbering.handover_roll) and must not be packed here as 0 kg.
+        "AND NOT (IFNULL(roll_weight, 0) = 0 AND IFNULL(total_qty, 0) = 0 AND end_time IS NULL) "
+        "ORDER BY name asc",
         {"jobcard": jobcard},
         as_dict=1,
     )
     if not rolls:
-        frappe.throw("No rolls found for this job card")
+        frappe.throw("No completed rolls found for this job card (a roll still running on the machine is not counted)")
 
     total_weight = 0.0
     total_pcs = 0
