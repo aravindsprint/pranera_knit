@@ -32,7 +32,7 @@ from frappe import _
 from frappe.utils import now_datetime, today, get_datetime, nowtime, cint, flt
 
 from pranera_knit.api.yarn_consumption import _transferred_batch_for_item
-from pranera_knit.job_card_permissions import is_supervisor, work_order_condition
+from pranera_knit.job_card_permissions import is_supervisor, work_order_condition, job_card_condition
 
 
 # ── App access ────────────────────────────────────────────────────────────────
@@ -107,6 +107,63 @@ def get_work_orders():
         as_dict=True,
     )
     return rows
+
+
+def _workstation_from_scan(scanned):
+    """Workstation for a scanned machine QR. Accepts the full workstation
+    name ("SJ01/2828/PL"), the machine code alone ("SJ01"), a
+    "Workstation:<name>" prefix, or a desk URL ending in the name."""
+    from urllib.parse import unquote
+    v = unquote(str(scanned or "")).strip()
+    if "/app/workstation/" in v:
+        v = v.split("/app/workstation/", 1)[1]
+    if v.lower().startswith("workstation:"):
+        v = v.split(":", 1)[1]
+    v = v.strip().strip("/")
+    if not v:
+        return None
+    ws = frappe.db.get_value("Workstation", v, "name")   # case-insensitive in MariaDB
+    if ws:
+        return ws
+    code = v.split("/")[0]
+    rows = frappe.db.sql(
+        "SELECT name FROM `tabWorkstation` WHERE SUBSTRING_INDEX(name, '/', 1) = %s",
+        code,
+    )
+    return rows[0][0] if len(rows) == 1 else None
+
+
+@frappe.whitelist()
+def get_job_card_by_workstation(scanned):
+    """Backs `knit_scan_workstation`: the operator scans the QR on a machine
+    and gets the open job card assigned to them on that machine.
+
+    Visibility follows job_card_permissions: a Job Card Operator only gets
+    job cards they are assigned to (Time Logs / Assign To); supervisors get
+    every open job card on the machine."""
+    ws = _workstation_from_scan(scanned)
+    if not ws:
+        return {"workstation": None, "job_cards": [],
+                "message": _("Machine {0} not found.").format(scanned)}
+    cond = job_card_condition(table="jc")
+    rows = frappe.db.sql(
+        f"""
+        SELECT jc.name, jc.work_order, jc.production_item, jc.item_name,
+               jc.commercial_name, jc.color, jc.width, jc.status, jc.workstation,
+               jc.for_quantity, jc.total_completed_qty AS produced_qty,
+               jc.project, jc.docstatus, jc.quality_inspection, jc.stock_uom
+        FROM `tabJob Card` jc
+        WHERE jc.workstation = %(ws)s
+          AND jc.docstatus = 0
+          AND jc.status NOT IN ('Completed', 'Cancelled')
+          {"AND " + cond if cond else ""}
+        ORDER BY FIELD(jc.status, 'Work In Progress') DESC, jc.modified DESC
+        LIMIT 20
+        """,
+        {"ws": ws}, as_dict=True,
+    )
+    msg = "" if rows else _("No open job card is assigned to you on {0}. Ask your supervisor to assign one.").format(ws)
+    return {"workstation": ws, "job_cards": rows, "message": msg}
 
 
 @frappe.whitelist()
