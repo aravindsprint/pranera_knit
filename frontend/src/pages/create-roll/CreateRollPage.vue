@@ -180,6 +180,15 @@
         >
           ✓ End Roll & Submit Job Card
         </button>
+        <!-- Shift change: submit this job card, roll keeps running on the machine -->
+        <button
+          class="cr-btn cr-btn--ghost cr-btn--full"
+          style="margin-top:10px"
+          @click="shiftEndSubmit"
+          :disabled="jobSubmitBusy || submitting"
+        >
+          🌙 Shift End — Submit Job Card, Roll Continues
+        </button>
       </div>
 
       <!-- ── END ROLL FORM ── -->
@@ -550,6 +559,7 @@ const submitting    = ref(false)
 // synchronous — two taps landing in the same frame can't both get through.
 const jobSubmitBusy = ref(false)
 let submitInFlight  = false
+let shiftEndPending = false   // shift-end submit in progress (roll left running)
 const consumptionModal = ref({ open: false, loading: false, saving: false, rows: [], error: '' })
 const beforeModal = ref({ open: false, loading: false, saving: false, rows: [], error: '', mode: 'startJob' })
 const returnCreating = ref(false)
@@ -1267,14 +1277,22 @@ async function createKnitRoll({ keepTimer = false } = {}) {
     rollWeight.value         = null
     totalQty.value           = null
     mistakeQty.value         = 0
-    if (!keepTimer) {
+    const handedOver = !!rollData?.handed_over
+    if (handedOver && rollData?.start_time) {
+      // Roll left running by the previous shift — keep its real start time.
+      const t = new Date(String(rollData.start_time).replace(' ', 'T').split('.')[0])
+      actualRollStartTime = isNaN(t) ? new Date() : t
+      runningTime.value = Math.max(0, Math.floor((Date.now() - actualRollStartTime.getTime()) / 1000))
+      formattedRunningTime.value = formatTime(runningTime.value)
+      startTimer()
+    } else if (!keepTimer) {
       actualRollStartTime        = new Date()
       runningTime.value          = 0
       formattedRunningTime.value = '00:00:00'
       startTimer()
     }
     saveSession()
-    showToast(keepTimer ? `Roll #${rollIdx} started!` : `Roll #${rollIdx} started!`)
+    showToast(handedOver ? `Continuing Roll #${rollIdx} from previous shift` : `Roll #${rollIdx} started!`)
   } catch(e) {
     if (pageUnmounted) return
     // Server unreachable / call failed. Do NOT guess the next roll number:
@@ -1595,6 +1613,38 @@ async function startNextRollAfterPrint() {
   await createKnitRoll()
 }
 
+// ── Shift end: submit without ending the running roll ─────────────────────
+// The roll stays on the machine. It is NOT packed with this job card (server
+// skips empty, not-ended rolls) and the next shift's job card on the same
+// machine + work order continues the same roll number on its first Start.
+async function shiftEndSubmit() {
+  const rollNo = currentRollNo.value
+  if (!/^[0-9]+$/.test(String(rollNo ?? ''))) {
+    showToast('This roll has no ERP roll number yet (offline). Wait for sync before handing over.', 'error')
+    return
+  }
+  if (!isOnline.value) {
+    showToast('You are offline. Shift-end submit needs the ERP connection.', 'error')
+    return
+  }
+  if (!confirm(`Shift end: submit this job card and leave Roll #${rollNo} running for the next shift?`)) return
+
+  stopTimer()
+  isRollActive.value = false
+  shiftEndPending = true
+  saveSession()
+  await submitJobCard()
+  // First job card of a WO opens the consumption modal and submits from
+  // there — leave the roll handed over while that modal is open.
+  if (!isJobSubmitted.value && !submitInFlight && !consumptionModal.value.open) {
+    shiftEndPending = false
+    // Submit failed/cancelled — the roll is still this job card's running roll.
+    isRollActive.value = true
+    if (actualRollStartTime) startTimer()
+    saveSession()
+  }
+}
+
 // ── Submit Job Card ───────────────────────────────────────────────────────
 async function submitJobCard() {
   // Lock BEFORE the first await — the pre-checks below take a couple of
@@ -1719,6 +1769,13 @@ const consumptionValid = computed(() => {
 
 function closeConsumptionModal() {
   consumptionModal.value.open = false
+  // Shift-end submit abandoned — the roll is still this job card's running roll.
+  if (shiftEndPending && !isJobSubmitted.value) {
+    shiftEndPending = false
+    isRollActive.value = true
+    if (actualRollStartTime) startTimer()
+    saveSession()
+  }
 }
 
 // Skip = submit using BOM planned qty (no actuals sent)

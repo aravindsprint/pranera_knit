@@ -243,9 +243,30 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
     # offline) — an auto-continued roll right after End Roll must never
     # reuse: the roll just ended may still look empty here until its queued
     # save syncs.
-    from pranera_knit.roll_numbering import open_empty_roll
+    from pranera_knit.roll_numbering import open_empty_roll, handover_roll, _lock
     existing = open_empty_roll(job_card) if cint(reuse_open) else None
-    if existing:
+    handed_over = False
+    if not existing and cint(reuse_open):
+        # Shift handover: continue the roll the previous shift left running
+        # on this machine (their job card was submitted without ending it).
+        _lock()
+        prev = handover_roll(job_card)
+        if prev:
+            roll = frappe.get_doc("Roll", prev)
+            from_jc = roll.job_card
+            roll.job_card = job_card
+            roll.work_order = jc.work_order
+            roll.item_code = jc.production_item
+            roll.item_name = jc.item_name or ""
+            if batch_no:
+                roll.batch = batch_no
+            # start_time is kept: the roll started on the previous shift.
+            roll.save(ignore_permissions=True)
+            roll.add_comment("Info", _("Handed over from job card {0} to {1} (shift change)").format(from_jc, job_card))
+            handed_over = True
+    if handed_over:
+        pass
+    elif existing:
         roll = frappe.get_doc("Roll", existing)
         roll.work_order = jc.work_order
         roll.item_code = jc.production_item
@@ -271,6 +292,7 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
         "idx": roll.name,
         "start_time": str(roll.start_time),
         "batch_no": batch_no or "",
+        "handed_over": 1 if handed_over else 0,
     }]
 
 
