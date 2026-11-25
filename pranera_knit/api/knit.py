@@ -274,6 +274,48 @@ def create_roll(job_card, batch_no=None, reuse_open=0):
     }]
 
 
+@frappe.whitelist(methods=["POST"])
+def delete_open_roll(job_card, roll):
+    """Backs `knit_delete_open_roll`: the Create Roll page's Reset (↺) deletes
+    the job card's running, still-empty roll.
+
+    Numbering stays continuous: only the LAST roll number is deleted, so the
+    next roll simply takes the same number again. If another machine has
+    already taken a newer number, the roll is kept (deleting it would leave a
+    hole) and the job card's next Start reuses it (open_empty_roll)."""
+    from pranera_knit.roll_numbering import _lock, _max_roll_no
+
+    roll = str(roll or "").strip()
+    if not job_card or not roll.isdigit():
+        return {"deleted": False, "message": _("No running roll to delete.")}
+
+    # Same lock as roll-number allocation: no other tablet can take the next
+    # number between the "is it the last roll?" check and the delete.
+    _lock()
+    row = frappe.db.get_value(
+        "Roll", roll,
+        ["job_card", "roll_weight", "total_qty", "end_time"], as_dict=True,
+    )
+    if not row:
+        return {"deleted": False, "message": _("Roll {0} no longer exists.").format(roll)}
+    if row.job_card not in _job_card_lineage(job_card):
+        frappe.throw(_("Roll {0} does not belong to job card {1}.").format(roll, job_card))
+    if flt(row.roll_weight) or flt(row.total_qty) or row.end_time:
+        return {"deleted": False,
+                "message": _("Roll {0} is already ended/weighed — it was not deleted.").format(roll)}
+    if int(roll) < _max_roll_no():
+        return {"deleted": False,
+                "message": _("Roll {0} was kept: a newer roll number already exists. "
+                             "This job card's next Start will reuse it.").format(roll)}
+
+    # Permission is checked above (own job card's empty roll); operators
+    # without Roll delete rights must still be able to reset. on_trash
+    # (validate_roll_delete) still runs and refuses linked rolls.
+    frappe.delete_doc("Roll", roll, ignore_permissions=True)
+    frappe.db.commit()
+    return {"deleted": True, "message": _("Roll {0} deleted.").format(roll)}
+
+
 def _job_card_lineage(job_card):
     """The job card plus every job card it was amended from. Rolls of a
     cancelled job card are moved to its amendment (job_card_events.

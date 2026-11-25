@@ -793,13 +793,44 @@ function clearSession() {
 
 // ── Reset session ─────────────────────────────────────────────────────────
 async function resetSession() {
-  if (!confirm('Reset session? This will clear the current roll state and reload the page.')) return
+  const rollNo = currentRollNo.value
+  // Only a running, not-yet-ended roll with a real (numeric) ERP number is
+  // deleted. Offline/provisional rolls exist only on this tablet.
+  const canDelete = isRollActive.value && !showEndRollForm.value
+    && rollNo != null && /^[0-9]+$/.test(String(rollNo))
+  const msg = canDelete
+    ? `Reset session and DELETE running Roll #${rollNo}? This cannot be undone.`
+    : 'Reset session? This will clear the current roll state and reload the page.'
+  if (!confirm(msg)) return
+
+  if (canDelete) {
+    // A completed roll of this job card still waiting in the offline queue
+    // looks empty to the ERP — never delete while one is pending.
+    let queued = 0
+    try {
+      queued = await db.syncQueue
+        .filter(q => q.endpoint === 'insertIntoRollTable'
+          && ['pending', 'syncing', 'failed'].includes(q._status)
+          && q.payload?.job_card === pageJobCard)
+        .count()
+    } catch (_) { queued = 1 }
+
+    if (!isOnline.value || queued > 0) {
+      if (!confirm(`Roll #${rollNo} can't be deleted now (${!isOnline.value ? 'offline' : 'rolls still syncing'}). It will be reused on the next Start. Reset anyway?`)) return
+    } else {
+      try {
+        const r = await call('knit_delete_open_roll', { job_card: pageJobCard, roll: rollNo })
+        const res = r?.message || {}
+        if (!res.deleted) alert(res.message || `Roll #${rollNo} was not deleted.`)
+      } catch (e) {
+        alert(`Could not delete Roll #${rollNo}: ${e.message || e}. Session was not reset.`)
+        return
+      }
+    }
+  }
+
   stopTimer()
   clearInterval(cooldownInterval)
-  // The empty running roll is NOT deleted any more: deleting it left a hole
-  // in the continuous roll numbers (or gave its number to the next roll).
-  // It stays with this job card and knit_create_roll reuses it on the next
-  // Start, so the same roll number simply continues.
   clearSession()
   location.reload()
 }
