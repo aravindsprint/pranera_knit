@@ -76,6 +76,8 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   // Set when the fetched Work Order already has an Outward Request — only
   // one is allowed per Work Order, so the form can't be saved.
   const existingRequest = ref('')
+  // Work Order requests: { item_code: required qty } from its Required Items.
+  const requiredQtyByItem = ref({})
 
   // Server time now = server time at fetch + time elapsed on this device.
   const serverMinutesNow = computed(() => {
@@ -156,12 +158,42 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   const overAllocated = computed(() =>
     items.value.filter(r => { const a = rowAllocation(r); return a && a.short > 0.001 })
   )
+  // Only NAP% warehouses may be used (server: outward_request_events.WAREHOUSE_PREFIX).
+  const WAREHOUSE_PREFIX = 'NAP'
+  const isAllowedWarehouse = (w) => !w || String(w).toUpperCase().startsWith(WAREHOUSE_PREFIX)
+  const badWarehouseRows = computed(() => items.value.filter(r => !isAllowedWarehouse(r.warehouse)))
+
+  // Work Order requests: an item may be left out (partial send from NAP),
+  // but an item that's on the request must total its Required Qty — summed
+  // over its rows, since one item can be split across batches.
+  const enteredByItem = computed(() => {
+    const t = {}
+    for (const r of items.value) t[r.item_code] = (t[r.item_code] || 0) + (Number(r.qty) || 0)
+    return t
+  })
+  function itemQtyCheck(itemCode) {
+    if (sourceType.value !== 'Work Order') return null
+    const required = requiredQtyByItem.value[itemCode]
+    const entered = Math.round((enteredByItem.value[itemCode] || 0) * 1000) / 1000
+    if (required === undefined) return { entered, required: null, ok: false }
+    return { entered, required, ok: Math.abs(entered - required) <= 0.001 }
+  }
+  const qtyMismatches = computed(() => {
+    if (sourceType.value !== 'Work Order' || !Object.keys(requiredQtyByItem.value).length) return []
+    const uom = {}
+    for (const r of items.value) if (!(r.item_code in uom)) uom[r.item_code] = r.stock_uom || ''
+    return Object.keys(enteredByItem.value)
+      .map(code => ({ item_code: code, stock_uom: uom[code], ...itemQtyCheck(code) }))
+      .filter(c => !c.ok)
+  })
+
   const sameBuilding = computed(() => !!fromBuilding.value && fromBuilding.value === toBuilding.value)
   const canSave = computed(() =>
     isEditable.value && !!date.value && !dateInPast.value && !!fromBuilding.value && !!toBuilding.value &&
     !sameBuilding.value && !!documentName.value && !existingRequest.value &&
     items.value.length > 0 &&
-    items.value.every(r => r.item_code && Number(r.qty) > 0 && (!r.batch || r.warehouse))
+    items.value.every(r => r.item_code && Number(r.qty) > 0 && (!r.batch || r.warehouse)) &&
+    !overAllocated.value.length && !badWarehouseRows.value.length && !qtyMismatches.value.length
   )
   const buildingOptions = computed(() =>
     buildings.value.map(b => ({
@@ -240,6 +272,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     receipts.value = []
     fetchedFor.value = ''
     existingRequest.value = ''
+    requiredQtyByItem.value = {}
   }
 
   // A row's batch must sit in a warehouse of the From building, so changing
@@ -278,6 +311,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
       items.value = (res.items || []).map(r => ({ ...r, stock_info: r.stock_info || null, _key: nextKey() }))
       receipts.value = res.receipts || []
       existingRequest.value = res.existing_request || ''
+      requiredQtyByItem.value = res.required_qty_by_item || {}
       fetchedFor.value = documentName.value
     } catch (e) {
       clearItems()
@@ -346,6 +380,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     purchaseOrder.value = doc.purchase_order || ''
     fetchedFor.value = doc.purchase_order || doc.work_order || ''
     existingRequest.value = ''
+    requiredQtyByItem.value = doc.required_qty_by_item || {}
     items.value = (doc.items || []).map(r => ({
       _key: nextKey(),
       item_code: r.item_code, batch: r.batch || '', warehouse: r.warehouse || '', building: r.building || '',
@@ -498,6 +533,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
     fetching, saving, error, fetchedFor,
     documentName, isEditable, totalsByUom, canSave, existingRequest, sameBuilding,
     rowAllocation, overAllocated, setFromBuilding, onBatchPicked,
+    requiredQtyByItem, itemQtyCheck, qtyMismatches, badWarehouseRows, isAllowedWarehouse,
     config, afterCutoff, minDate, defaultDate, dateInPast, needsApproval, isApprover, approverNames,
     isLate, lateNeedsApproval, dailyKgsLimit, dayBookedKgs, myKgs, dayTotalKgs, overLimit, loadDayKgs,
     deciding, decideApproval, loadConfig,

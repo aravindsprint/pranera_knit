@@ -32,6 +32,14 @@ from frappe.utils import now_datetime, flt
 PENDING, PROCESSING, COMPLETED = "Pending", "Processing", "Completed"
 ASSIGNED, PICKED = "Roll Pick Assigned", "Picked"
 
+# Every row's warehouse must be a NAP warehouse (name LIKE 'NAP%').
+WAREHOUSE_PREFIX = "NAP"
+QTY_TOLERANCE = 0.001
+
+
+def is_allowed_warehouse(warehouse):
+    return bool(warehouse) and warehouse.upper().startswith(WAREHOUSE_PREFIX)
+
 
 # ── Outward Request itself ────────────────────────────────────────────────
 
@@ -58,6 +66,10 @@ def validate_outward_request(doc, method=None):
     # One request per Work Order; From ≠ To; row warehouses in From.
     validate_one_request_per_work_order(doc)
     _validate_from_and_warehouses(doc)
+    # NAP% warehouses only; qty ≤ free stock; Work Order qty match.
+    _validate_warehouse_prefix(doc)
+    _validate_free_stock(doc)
+    _validate_work_order_qty(doc)
 
     if doc.is_new():
         doc.created_by = doc.created_by or frappe.session.user
@@ -120,6 +132,90 @@ def _validate_from_and_warehouses(doc):
         if from_building and building and building != from_building:
             frappe.throw(_("Row {0}: Warehouse {1} is in {2}, not in From building {3}")
                          .format(row.idx, wh, building, from_building))
+
+
+def _validate_warehouse_prefix(doc):
+    for row in doc.get("items") or []:
+        wh = row.get("warehouse")
+        if wh and not is_allowed_warehouse(wh):
+            frappe.throw(_("Row {0}: Warehouse {1} is not allowed — only {2}% warehouses can be used")
+                         .format(row.idx, wh, WAREHOUSE_PREFIX))
+
+
+def _validate_free_stock(doc):
+    """What this request takes from each (batch, warehouse), summed over its
+    rows, must not exceed that pair's free qty: Stock Ledger balance minus
+    what other not-yet-Completed Outward Requests reserve there (the same
+    "free" number the batch dropdown shows)."""
+    from pranera_knit.api.outward_request import _batch_balances, _reservations, _stock_info
+
+    taken, first_row = {}, {}
+    for row in doc.get("items") or []:
+        if not (row.batch and row.get("warehouse")):
+            continue
+        key = (row.batch, row.warehouse)
+        taken[key] = taken.get(key, 0.0) + flt(row.qty)
+        first_row.setdefault(key, row)
+    if not taken:
+        return
+
+    batches = list({b for b, _w in taken})
+    stock = {(b.batch, b.warehouse): b.qty for b in _batch_balances(batches)}
+    reservations = _reservations(batches, exclude_request=doc.name if not doc.is_new() else None)
+    for key, qty in taken.items():
+        batch, wh = key
+        free = _stock_info(batch, wh, stock.get(key, 0), reservations.get(batch, []))["available_qty"]
+        if flt(qty) - flt(free) > QTY_TOLERANCE:
+            row = first_row[key]
+            frappe.throw(
+                _("Row {0}: Qty {1} {2} of Batch {3} in {4} is more than the free stock {5} {2}")
+                .format(row.idx, round(flt(qty), 3), row.stock_uom or "", batch, wh,
+                        round(max(flt(free), 0), 3)),
+                title=_("Not enough free stock"),
+            )
+
+
+def work_order_required_qty(work_order):
+    """{item_code: total required_qty} from the Work Order's Required Items."""
+    out = {}
+    for r in frappe.get_all(
+        "Work Order Item",
+        filters={"parenttype": "Work Order", "parent": work_order},
+        fields=["item_code", "required_qty"],
+    ):
+        out[r.item_code] = round(out.get(r.item_code, 0.0) + flt(r.required_qty), 3)
+    return out
+
+
+def _validate_work_order_qty(doc):
+    """Work Order requests: an item may be left out (only part of the
+    Required Items is sent from NAP), but an item that IS on the request
+    must total exactly its Required Qty — summed over its rows, since one
+    item can be split across several batches."""
+    if not doc.get("work_order"):
+        return
+    required = work_order_required_qty(doc.work_order)
+
+    entered, uom = {}, {}
+    for row in doc.get("items") or []:
+        if row.item_code not in required:
+            frappe.throw(_("Row {0}: Item {1} is not in Work Order {2}'s Required Items")
+                         .format(row.idx, row.item_code, doc.work_order))
+        entered[row.item_code] = entered.get(row.item_code, 0.0) + flt(row.qty)
+        uom.setdefault(row.item_code, row.stock_uom or "")
+
+    mismatched = [
+        _("{0}: entered {1}, required {2} {3}").format(
+            item, round(qty, 3), required[item], uom[item])
+        for item, qty in entered.items()
+        if abs(round(qty, 3) - required[item]) > QTY_TOLERANCE
+    ]
+    if mismatched:
+        frappe.throw(
+            _("Qty must match the Work Order {0}'s Required Qty for each item sent:")
+            .format(doc.work_order) + " " + "; ".join(mismatched),
+            title=_("Qty doesn't match the Work Order"),
+        )
 
 
 def on_trash_outward_request(doc, method=None):
