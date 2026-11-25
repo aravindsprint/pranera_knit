@@ -347,7 +347,16 @@
             <span>Item Code</span><span>Batch · Warehouse</span><span class="num">Qty</span><span>UOM</span><span></span>
           </div>
           <div v-for="(row, i) in store.items" :key="row._key || i" class="item-row">
-            <span class="item-row__code">{{ row.item_code }}</span>
+            <span class="item-row__code">
+              {{ row.item_code }}
+              <small
+                v-if="isFirstRowOfItem(i) && store.itemQtyCheck(row.item_code)"
+                class="item-row__req" :class="{ 'item-row__req--bad': !store.itemQtyCheck(row.item_code).ok }"
+              >
+                <template v-if="store.itemQtyCheck(row.item_code).required === null">Not in Work Order's Required Items</template>
+                <template v-else>Required {{ fmtQty(store.itemQtyCheck(row.item_code).required) }} · Entered {{ fmtQty(store.itemQtyCheck(row.item_code).entered) }}</template>
+              </small>
+            </span>
             <BatchStockSelect
               v-model:batch="row.batch" v-model:warehouse="row.warehouse"
               :item-code="row.item_code" :disabled="!store.isEditable"
@@ -360,6 +369,8 @@
             <input
               v-model.number="row.qty" type="number" min="0" step="0.001"
               class="form-input form-input--sm num item-row__qty" :disabled="!store.isEditable"
+              :class="{ 'item-row__qty--bad': (store.rowAllocation(row)?.short || 0) > 0.001 }"
+              :max="row.stock_info ? row.stock_info.available_qty : undefined"
             />
             <span class="item-row__uom">{{ row.stock_uom }}</span>
             <span class="item-row__actions">
@@ -404,9 +415,24 @@
       </div>
 
       <div class="card" v-if="store.isEditable">
-        <div v-if="store.overAllocated.length" class="hint-text hint-text--warn" style="margin:0 0 10px">
+        <div v-if="store.overAllocated.length" class="hint-text hint-text--error" style="margin:0 0 10px">
           <i class="pi pi-exclamation-triangle"></i>
-          <span>{{ store.overAllocated.length }} row(s) ask for more than is free after other requests' reservations. You can still save — check with the store before picking.</span>
+          <span>{{ store.overAllocated.length }} row(s) ask for more than the free stock. Reduce the qty or pick another batch.</span>
+        </div>
+        <div v-if="store.badWarehouseRows.length" class="hint-text hint-text--error" style="margin:0 0 10px">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>Only NAP warehouses can be used — re-pick the batch for {{ store.badWarehouseRows.map(r => r.item_code).join(', ') }}.</span>
+        </div>
+        <div v-if="store.qtyMismatches.length" class="hint-text hint-text--error" style="margin:0 0 10px">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>
+            Qty must match the Work Order's Required Qty for every item you send (you can remove items you're not sending):
+            <template v-for="(m, k) in store.qtyMismatches" :key="m.item_code">
+              <br /><b>{{ m.item_code }}</b> —
+              <template v-if="m.required === null">not in the Work Order's Required Items</template>
+              <template v-else>entered {{ fmtQty(m.entered) }}, required {{ fmtQty(m.required) }} {{ m.stock_uom }}</template>
+            </template>
+          </span>
         </div>
         <button class="btn btn-primary btn-full" :disabled="!store.canSave || store.saving" @click="save">
           <i v-if="store.saving" class="pi pi-spin pi-spinner"></i>
@@ -550,6 +576,12 @@ import { useOutwardRequestStore } from '@/stores/outwardRequest'
 import AppHeader from '@/components/AppHeader.vue'
 import AutoComplete from '@/components/AutoComplete.vue'
 import BatchStockSelect from '@/components/BatchStockSelect.vue'
+
+// Show an item's Required / Entered qty once, on its first row.
+function isFirstRowOfItem(i) {
+  const code = store.items[i]?.item_code
+  return store.items.findIndex(r => r.item_code === code) === i
+}
 
 const OVERDUE_DAYS = 2
 const showLines = ref(false)
@@ -805,6 +837,9 @@ function fmtQty(n) {
 .items__header { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8; padding: 0 0 6px; border-bottom: 1px solid #f1f5f9; }
 .item-row { padding: 8px 0; border-bottom: 1px solid #f1f5f9; }
 .item-row__code { font-size: 13px; font-weight: 600; color: #0f172a; overflow-wrap: anywhere; }
+.item-row__req { display: block; margin-top: 2px; font-size: 11px; font-weight: 600; color: #166534; }
+.item-row__req--bad { color: #dc2626; }
+.item-row__qty--bad { border-color: #dc2626 !important; color: #dc2626; }
 .item-row__uom { font-size: 12px; color: #64748b; }
 @media (max-width: 520px) {
   .items__header { display: none; }

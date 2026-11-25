@@ -50,7 +50,9 @@ from frappe.utils import flt
 
 from pranera_knit import outward_request_approval as approval
 from pranera_knit import outward_request_progress as progress_mod
-from pranera_knit.outward_request_events import existing_request_for_work_order
+from pranera_knit.outward_request_events import (
+    existing_request_for_work_order, is_allowed_warehouse, work_order_required_qty,
+)
 from pranera_knit.vehicle_gate_entry_events import vehicles_for_outward_requests
 
 # From building pre-filled on every new request from this page.
@@ -79,6 +81,7 @@ def get_outward_request_items(work_order=None, purchase_order=None, from_buildin
             return {"source": "Work Order", "receipts": [], "items": [],
                     "existing_request": existing}
         res = _items_from_work_order(work_order)
+        res["required_qty_by_item"] = work_order_required_qty(work_order)
     else:
         res = _items_from_purchase_order(purchase_order)
 
@@ -189,7 +192,8 @@ def _fill_single_warehouse(rows, from_building):
     balances = _batch_balances([r["batch"] for r in batched], from_building=from_building)
     by_batch = {}
     for b in balances:
-        by_batch.setdefault(b.batch, []).append(b.warehouse)
+        if is_allowed_warehouse(b.warehouse):
+            by_batch.setdefault(b.batch, []).append(b.warehouse)
     for r in batched:
         whs = by_batch.get(r["batch"], [])
         if len(whs) == 1:
@@ -376,6 +380,7 @@ def get_outward_request(name):
     for ln in out["progress"]["lines"]:
         ln["item_name"] = (item_names.get(ln["item_code"]) or "").strip()
     out["age_days"] = progress_mod.age_days(doc.date, doc.request_status)
+    out["required_qty_by_item"] = work_order_required_qty(doc.work_order) if doc.work_order else {}
     return out
 
 
@@ -777,7 +782,7 @@ def search_batch_stock(item_code, txt=None, work_order=None, purchase_order=None
                        from_building=None, exclude_request=None):
     """Batch dropdown on an item row: one option per (batch, warehouse)
     holding stock of this item — only enabled batches of the source
-    document's project(s), only warehouses of the From building — with the
+    document's project(s), only NAP% warehouses of the From building — with the
     stock / reserved / available numbers described at the top."""
     if not item_code:
         return []
@@ -813,7 +818,8 @@ def search_batch_stock(item_code, txt=None, work_order=None, purchase_order=None
     needle = (txt or "").strip().lower()
     candidates = [
         b for b in _batch_balances(list(batch_meta), from_building=from_building)
-        if not needle or needle in b.batch.lower() or needle in b.warehouse.lower()
+        if is_allowed_warehouse(b.warehouse)
+        and (not needle or needle in b.batch.lower() or needle in b.warehouse.lower())
     ]
     reservations = _reservations([b.batch for b in candidates], exclude_request)
     options = []
