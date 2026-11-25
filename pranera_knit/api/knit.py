@@ -195,6 +195,28 @@ def assign_employee_to_job_card(job_card, employee_id):
     if not emp:
         frappe.throw(_("Employee {0} not found").format(employee_id))
 
+    # One open job card per operator per machine, so scanning a machine
+    # always lands the operator on exactly one job card. Several machines
+    # per operator stay allowed.
+    if jc.workstation:
+        busy = frappe.db.sql("""
+            SELECT jc.name FROM `tabJob Card` jc
+            JOIN `tabJob Card Time Log` tl
+              ON tl.parent = jc.name AND tl.parenttype = 'Job Card'
+            WHERE tl.employee = %(emp)s
+              AND jc.workstation = %(ws)s
+              AND jc.name != %(jc)s
+              AND jc.docstatus = 0
+              AND jc.status NOT IN ('Completed', 'Cancelled')
+            LIMIT 1
+        """, {"emp": emp.name, "ws": jc.workstation, "jc": job_card})
+        if busy:
+            frappe.throw(
+                _("{0} already has job card {1} open on {2}. Complete or submit it first.").format(
+                    emp.employee_name or emp.name, busy[0][0], jc.workstation),
+                title=_("Operator Busy On This Machine"),
+            )
+
     for row in frappe.get_all("Job Card Time Log",
                               filters={"parent": job_card, "parenttype": "Job Card",
                                        "parentfield": "time_logs"},
