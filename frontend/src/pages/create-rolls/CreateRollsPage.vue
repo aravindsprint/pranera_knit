@@ -208,16 +208,16 @@
               <select class="form-input" v-model="order.batch" :disabled="!receivedBatches.length">
                 <option value="">{{ receivedBatches.length ? 'Select the received batch' : 'No batch received yet' }}</option>
                 <option v-for="b in receivedBatches" :key="b.batch" :value="b.batch">
-                  {{ b.batch }} · {{ fmtNum(b.received_qty) }} {{ b.stock_uom }} received · {{ b.rolls }} rolls
+                  {{ b.batch }} · {{ fmtNum(b.received_qty) }} {{ b.stock_uom }} received · {{ b.rolls }} rolls{{ b.draft ? ' · Draft' : '' }}
                 </option>
               </select>
-              <div class="cro-hint cro-hint--warn" v-if="!receivedBatches.length && !draftReceipts.length">
+              <div class="cro-hint cro-hint--warn" v-if="!receivedBatches.length">
                 Nothing received for this item on this {{ tab === 'po' ? 'Purchase Order' : 'Subcontracting Order' }} yet.
-                Submit the {{ tab === 'po' ? 'Purchase' : 'Subcontracting' }} Receipt first — a roll on a batch that wasn't received can't be scanned.
+                Create the {{ tab === 'po' ? 'Purchase' : 'Subcontracting' }} Receipt (Draft is enough) first.
               </div>
-              <div class="cro-hint cro-hint--warn" v-if="draftReceipts.length">
+              <div class="cro-hint cro-hint--info" v-if="draftReceipts.length">
                 <strong>{{ draftReceipts.length === 1 ? 'This receipt is' : 'These receipts are' }} still in Draft</strong> —
-                ask stores to submit {{ draftReceipts.length === 1 ? 'it' : 'them' }}, then reopen this item to roll the batch:
+                you can create rolls on {{ draftReceipts.length === 1 ? 'its batch' : 'their batches' }} now; they can be scanned on a Pick Order once stores submit {{ draftReceipts.length === 1 ? 'it' : 'them' }}:
                 <ul class="cro-drafts">
                   <li v-for="d in draftReceipts" :key="d.receipt">
                     {{ d.receipt }} · {{ fmtNum(d.qty) }} {{ d.stock_uom }}<span v-if="d.batch"> · {{ d.batch }}</span>
@@ -469,12 +469,12 @@ const order = reactive({
   batch: '', actualWidth: '', rolls: [newRow()], showPaste: false, pasteText: '',
   loadingBatches: false, submitting: false, error: ''
 })
-// Batches of the chosen item actually received on this order's submitted
-// Purchase / Subcontracting Receipts — the only batches a scannable roll
-// can be created on (see pranera_knit/api/order_rolls.py).
+// Batches of the chosen item received on this order's Purchase /
+// Subcontracting Receipts — draft or submitted (see
+// pranera_knit/api/order_rolls.py). Draft-only batches carry `draft: true`.
 const receivedBatches = ref([])
-// Receipts for this item still in Draft — their batches can't be rolled
-// until they're submitted, so the page names them.
+// Receipts for this item still in Draft — their batches can be rolled, but
+// the rolls only become scannable once the receipt is submitted.
 const draftReceipts = ref([])
 
 function resetBatches() {
@@ -802,6 +802,7 @@ ${body}
 
 .cro-hint { font-size:12px; color:var(--slate-500,#64748b); margin-top:6px; }
 .cro-hint--warn { color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 10px; line-height:1.45; }
+.cro-hint--info { color:#1e40af; background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:8px 10px; line-height:1.45; }
 
 /* Received batch summary */
 .cro-batch-stats {

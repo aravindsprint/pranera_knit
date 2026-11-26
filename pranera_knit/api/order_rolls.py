@@ -4,8 +4,10 @@ Create Rolls page → "Purchase Order" / "Subcontract Order" tabs.
 
 Rolls for bought-in or subcontracted fabric are only scannable on a Pick
 Order when their batch was received on a submitted Purchase Receipt /
-Subcontracting Receipt (pick_order._is_received_external_roll). So this
-module only lets a roll be created against such a batch:
+Subcontracting Receipt (pick_order._is_received_external_roll). This
+module lets a roll be created against a batch on a receipt that is either
+submitted or still in Draft — stores often roll fabric before the receipt
+is submitted; the rolls become scannable once it is:
 
   get_received_batches  — the batches of one item actually received
       against the chosen order, with received qty, rolls already made and
@@ -15,7 +17,9 @@ module only lets a roll be created against such a batch:
                               purchase_order = the PO (subcontracted POs).
         Subcontracting Order→ Subcontracting Receipt Items with
                               subcontracting_order = the SCO.
-      Only submitted, non-return receipts. The batch comes from the row's
+      Draft and submitted, non-return receipts (cancelled ones are ignored),
+      so stores don't have to submit the receipt before rolls can be made;
+      batches seen only on drafts are flagged `draft`. The batch comes from the row's
       Serial and Batch Bundle when set (normal on this site), else batch_no.
 
   create_order_rolls    — creates one or many Rolls on one received batch,
@@ -38,18 +42,19 @@ MAX_ROLLS_PER_CALL = 200
 # ── Received batches ──────────────────────────────────────────────────────
 
 def _order_rows(item_code, purchase_order=None, subcontracting_order=None):
-    """Submitted, non-return receipt rows for this item + order."""
+    """Draft or submitted (not cancelled), non-return receipt rows for this
+    item + order."""
     rows = []
     if purchase_order:
         rows += frappe.db.sql(
             """
             select pri.batch_no, pri.serial_and_batch_bundle, pri.stock_qty as qty,
                    pri.stock_uom, pri.parent as receipt, 'Purchase Receipt' as receipt_type,
-                   pr.posting_date
+                   pr.posting_date, pr.docstatus
             from `tabPurchase Receipt Item` pri
             inner join `tabPurchase Receipt` pr on pr.name = pri.parent
             where pri.purchase_order = %(po)s and pri.item_code = %(item)s
-              and pr.docstatus = 1 and pr.is_return = 0
+              and pr.docstatus < 2 and pr.is_return = 0
             """,
             {"po": purchase_order, "item": item_code}, as_dict=True,
         )
@@ -59,11 +64,11 @@ def _order_rows(item_code, purchase_order=None, subcontracting_order=None):
             f"""
             select sri.batch_no, sri.serial_and_batch_bundle, sri.qty,
                    sri.stock_uom, sri.parent as receipt, 'Subcontracting Receipt' as receipt_type,
-                   sr.posting_date
+                   sr.posting_date, sr.docstatus
             from `tabSubcontracting Receipt Item` sri
             inner join `tabSubcontracting Receipt` sr on sr.name = sri.parent
             where {sr_filter} and sri.item_code = %(item)s
-              and sr.docstatus = 1 and sr.is_return = 0
+              and sr.docstatus < 2 and sr.is_return = 0
             """,
             {"po": purchase_order, "sco": subcontracting_order, "item": item_code}, as_dict=True,
         )
@@ -71,7 +76,9 @@ def _order_rows(item_code, purchase_order=None, subcontracting_order=None):
 
 
 def _received(item_code, purchase_order=None, subcontracting_order=None):
-    """{batch: {batch, received_qty, stock_uom, receipts, last_received}}"""
+    """{batch: {batch, received_qty, stock_uom, receipts, draft_receipts,
+    draft, last_received}}  — `draft` is True while every receipt of the
+    batch is still a draft."""
     rows = _order_rows(item_code, purchase_order, subcontracting_order)
     bundles = [r.serial_and_batch_bundle for r in rows if r.serial_and_batch_bundle]
     entries = {}
@@ -92,13 +99,17 @@ def _received(item_code, purchase_order=None, subcontracting_order=None):
         for batch, qty in parts:
             b = out.setdefault(batch, {
                 "batch": batch, "received_qty": 0.0, "stock_uom": r.stock_uom,
-                "receipts": [], "last_received": r.posting_date,
+                "receipts": [], "draft_receipts": [], "last_received": r.posting_date,
             })
             b["received_qty"] += qty
             if r.receipt not in b["receipts"]:
                 b["receipts"].append(r.receipt)
+                if not r.docstatus and r.receipt not in b["draft_receipts"]:
+                    b["draft_receipts"].append(r.receipt)
             if r.posting_date and (not b["last_received"] or r.posting_date > b["last_received"]):
                 b["last_received"] = r.posting_date
+    for b in out.values():
+        b["draft"] = len(b["draft_receipts"]) == len(b["receipts"])
     return out
 
 
@@ -150,9 +161,9 @@ def get_received_batches(item_code, purchase_order=None, subcontracting_order=No
 @frappe.whitelist()
 def get_draft_receipts(item_code, purchase_order=None, subcontracting_order=None):
     """Draft (not yet submitted) Purchase / Subcontracting Receipts for this
-    item on the order. Their batches aren't in stock yet, so no scannable
-    roll can be made on them — the Create Rolls page names them so the
-    operator knows which receipt to get submitted."""
+    item on the order. Rolls can be created on their batches, but those
+    batches aren't in stock until the receipt is submitted, so the Create
+    Rolls page names them as a reminder."""
     _check_order(purchase_order, subcontracting_order)
     if not item_code:
         return []
@@ -236,8 +247,8 @@ def create_order_rolls(item_code, batch, rolls, purchase_order=None, subcontract
     if batch not in received:
         order = purchase_order or subcontracting_order
         frappe.throw(_(
-            "Batch {0} was not received for {1} on {2}. Pick a batch from a submitted "
-            "Purchase / Subcontracting Receipt of this order."
+            "Batch {0} was not received for {1} on {2}. Pick a batch from a "
+            "Purchase / Subcontracting Receipt (draft or submitted) of this order."
         ).format(batch, item_code, order), title=_("Batch Not Received"))
 
     item = frappe.db.get_value(
