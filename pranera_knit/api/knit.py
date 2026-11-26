@@ -138,32 +138,56 @@ def get_job_card_by_workstation(scanned):
     """Backs `knit_scan_workstation`: the operator scans the QR on a machine
     and gets the open job card assigned to them on that machine.
 
-    Visibility follows job_card_permissions: a Job Card Operator only gets
-    job cards they are assigned to (Time Logs / Assign To); supervisors get
-    every open job card on the machine."""
+    Job cards assigned to the person scanning (Time Logs employee or Assign
+    To) always win, whatever other roles they hold — a user who is both
+    Job Card Operator and Fabric Knitting Supervisor used to get every open
+    card on the machine (PO-JOB23639 + two old unassigned ones on SJ01,
+    26-Nov-2026). Only when nothing on the machine is assigned to them does
+    a supervisor get the machine's other open cards (still filtered by
+    job_card_permissions)."""
+    from pranera_knit.job_card_permissions import employee_ids
+
     ws = _workstation_from_scan(scanned)
     if not ws:
-        return {"workstation": None, "job_cards": [],
+        return {"workstation": None, "job_cards": [], "assigned_to_me": 0,
                 "message": _("Machine {0} not found.").format(scanned)}
-    cond = job_card_condition(table="jc")
-    rows = frappe.db.sql(
-        f"""
-        SELECT jc.name, jc.work_order, jc.production_item, jc.item_name,
+
+    fields = """jc.name, jc.work_order, jc.production_item, jc.item_name,
                jc.commercial_name, jc.color, jc.width, jc.status, jc.workstation,
                jc.for_quantity, jc.total_completed_qty AS produced_qty,
-               jc.project, jc.docstatus, jc.quality_inspection, jc.stock_uom
-        FROM `tabJob Card` jc
+               jc.project, jc.docstatus, jc.quality_inspection, jc.stock_uom"""
+    base = """FROM `tabJob Card` jc
         WHERE jc.workstation = %(ws)s
           AND jc.docstatus = 0
-          AND jc.status NOT IN ('Completed', 'Cancelled')
-          {"AND " + cond if cond else ""}
-        ORDER BY FIELD(jc.status, 'Work In Progress') DESC, jc.modified DESC
-        LIMIT 20
-        """,
-        {"ws": ws}, as_dict=True,
+          AND jc.status NOT IN ('Completed', 'Cancelled')"""
+    order = "ORDER BY FIELD(jc.status, 'Work In Progress') DESC, jc.modified DESC LIMIT 20"
+
+    user = frappe.session.user
+    emps = employee_ids(user)
+    mine_parts = ["INSTR(IFNULL(jc._assign, ''), %(quser)s) > 0"]
+    if emps:
+        mine_parts.append("""jc.name IN (SELECT tl.parent FROM `tabJob Card Time Log` tl
+                              WHERE tl.parenttype = 'Job Card' AND tl.employee IN %(emps)s)""")
+    params = {"ws": ws, "quser": '"' + user + '"', "emps": tuple(emps) or ("",)}
+    mine = frappe.db.sql(
+        f"SELECT {fields} {base} AND ({' OR '.join(mine_parts)}) {order}",
+        params, as_dict=True,
     )
-    msg = "" if rows else _("No open job card is assigned to you on {0}. Ask your supervisor to assign one.").format(ws)
-    return {"workstation": ws, "job_cards": rows, "message": msg}
+    if mine:
+        return {"workstation": ws, "job_cards": mine, "assigned_to_me": 1, "message": ""}
+
+    if is_supervisor(user):
+        cond = job_card_condition(table="jc")
+        others = frappe.db.sql(
+            f"SELECT {fields} {base} {'AND ' + cond if cond else ''} {order}",
+            params, as_dict=True,
+        )
+        if others:
+            return {"workstation": ws, "job_cards": others, "assigned_to_me": 0,
+                    "message": _("Nothing on {0} is assigned to you — showing its open job cards.").format(ws)}
+
+    return {"workstation": ws, "job_cards": [], "assigned_to_me": 0,
+            "message": _("No open job card is assigned to you on {0}. Ask your supervisor to assign one.").format(ws)}
 
 
 @frappe.whitelist()
