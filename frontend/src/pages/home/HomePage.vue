@@ -167,9 +167,19 @@
         </div>
         <button class="assign-modal__close" @click="closeMachineScanner">✕</button>
       </div>
-      <div id="machine-scan-region" style="width:100%;border-radius:10px;overflow:hidden"></div>
+      <div v-show="!machineScan.choices.length" id="machine-scan-region" style="width:100%;border-radius:10px;overflow:hidden"></div>
       <div v-if="machineScan.busy" style="text-align:center;margin-top:10px;color:#64748b">Finding job card…</div>
       <div v-if="machineScan.error" style="margin-top:10px;color:#b91c1c;font-size:13px">{{ machineScan.error }}</div>
+      <div v-if="machineScan.choices.length" style="margin-top:4px">
+        <div style="font-size:13px;color:#475569;margin-bottom:8px">{{ machineScan.note || `${machineScan.choices.length} job cards on ${machineScan.ws} — tap the one to work on.` }}</div>
+        <button v-for="c in machineScan.choices" :key="c.name" class="ms-choice" @click="pickScannedCard(c)">
+          <div style="display:flex;justify-content:space-between;gap:8px">
+            <b>{{ c.name }}</b>
+            <span :class="`jc-badge jc-badge--${homeStore.statusColour(c.status)}`">{{ c.status }}</span>
+          </div>
+          <div style="font-size:12px;color:#64748b;margin-top:2px">{{ c.work_order }} · {{ c.commercial_name || c.item_name || c.production_item }}</div>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -500,13 +510,13 @@ async function openCreateRoll(jc) {
   router.push('/knit-app/create-roll')
 }
 // ── Scan Machine → assigned job card ─────────────────────────────────────
-const machineScan = ref({ open: false, busy: false, error: '' })
+const machineScan = ref({ open: false, busy: false, error: '', choices: [], ws: '', note: '' })
 const scanMsg = ref('')
 let machineQr = null
 
 async function openMachineScanner() {
   scanMsg.value = ''
-  machineScan.value = { open: true, busy: false, error: '' }
+  machineScan.value = { open: true, busy: false, error: '', choices: [], ws: '', note: '' }
   await nextTick()
   try {
     machineQr = new Html5Qrcode('machine-scan-region')
@@ -527,7 +537,7 @@ async function stopMachineScanner() {
 }
 async function closeMachineScanner() {
   await stopMachineScanner()
-  machineScan.value.open = false
+  machineScan.value = { open: false, busy: false, error: '', choices: [], ws: '', note: '' }
 }
 onBeforeUnmount(stopMachineScanner)
 
@@ -546,12 +556,13 @@ async function onMachineScanned(text) {
   if (machineScan.value.busy) return
   machineScan.value.busy = true
   await stopMachineScanner()
-  let cards = [], ws = '', msg = ''
+  let cards = [], ws = '', msg = '', mine = true
   try {
     if (isOnline.value) {
       const r = await call('knit_scan_workstation', { scanned: text })
       const d = r?.message || {}
       cards = d.job_cards || []; ws = d.workstation || text; msg = d.message || ''
+      mine = !!d.assigned_to_me
     } else {
       cards = matchCachedByMachine(text); ws = cards[0]?.workstation || text
     }
@@ -559,18 +570,25 @@ async function onMachineScanned(text) {
     cards = matchCachedByMachine(text); ws = cards[0]?.workstation || text
     if (!cards.length) msg = 'Scan failed: ' + (e.message || e)
   }
-  machineScan.value = { open: false, busy: false, error: '' }
+  machineScan.value.busy = false
 
-  if (cards.length === 1) {
+  if (cards.length === 1 && mine) {
+    await closeMachineScanner()
     await openCreateRoll(cards[0])
-  } else if (cards.length > 1) {
-    // More than one open job card on this machine — show only those.
-    search.value = ws
-    statusFilter.value = ''
-    scanMsg.value = `${cards.length} job cards on ${ws} — tap the one to work on.`
+  } else if (cards.length) {
+    // Pick from the scan's own result — never from the home list, which
+    // may be filtered or not yet refreshed (SJ01, 26-Nov-2026).
+    machineScan.value.choices = cards
+    machineScan.value.ws = ws
+    machineScan.value.note = mine ? '' : msg
   } else {
+    await closeMachineScanner()
     scanMsg.value = msg || `No open job card is assigned to you on ${ws}.`
   }
+}
+async function pickScannedCard(jc) {
+  await closeMachineScanner()
+  await openCreateRoll(jc)
 }
 
 function createQI(jc) { qiStore.setProductData(jc); router.push('/knit-app/create-qi') }
@@ -707,6 +725,10 @@ async function logout() {
 .jc-btn--assign { background:rgba(59,130,246,0.1); color:#2563eb; border:none; border-radius:8px;
   padding:0; width:36px; font-size:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
 .jc-btn--assign:hover { background:rgba(59,130,246,0.2); }
+
+/* Scan machine picker */
+.ms-choice { display:block; width:100%; text-align:left; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin-bottom:8px; cursor:pointer; font-size:14px; color:#0f172a; }
+.ms-choice:active { transform:scale(0.98); }
 
 /* Assign modal */
 .assign-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:300;
