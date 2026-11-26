@@ -319,7 +319,7 @@
         <div class="hint-text">
           <i class="pi pi-info-circle"></i>
           <span v-if="store.sourceType === 'Work Order'">Items come from the Work Order's Required Items. Pick a batch + warehouse per row (only the Work Order's project batches with stock in the From building are listed). One Outward Request per Work Order.</span>
-          <span v-else>Items come from the Raw Materials Supplied table of the submitted Subcontracting Receipt(s) for this PO, merged by item + batch.</span>
+          <span v-else>Items come from the Raw Materials Supplied table of the submitted Subcontracting Receipt(s) for this PO, merged by item + batch. If there's no submitted receipt yet (Draft PO is fine), they come from the finished good's BOM Raw Materials — pick a batch + warehouse per row.</span>
         </div>
         <div v-if="store.existingRequest" class="exists-box">
           <div class="exists-box__text">
