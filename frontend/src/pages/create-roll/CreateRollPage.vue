@@ -28,10 +28,11 @@
         class="cr-kd-banner" :class="{ 'cr-kd-banner--bad': knitDown.knit_down?.status === 'Rejected' }"
         @click="openKnitDown"
       >
-        <i class="pi" :class="knitDown.knit_down?.status === 'Pending' ? 'pi-clock' : 'pi-exclamation-triangle'"></i>
+        <i class="pi" :class="['Pending', 'Pending Final Approval'].includes(knitDown.knit_down?.status) ? 'pi-clock' : 'pi-exclamation-triangle'"></i>
         <div class="cr-kd-banner__text">
           <strong v-if="!knitDown.knit_down">Knit down not posted</strong>
           <strong v-else-if="knitDown.knit_down.status === 'Pending'">Knit down waiting for approval</strong>
+          <strong v-else-if="knitDown.knit_down.status === 'Pending Final Approval'">Knit down waiting for final approval</strong>
           <strong v-else>Knit down rejected</strong>
           <span>
             Rolls can be submitted only after production approves the knit down for {{ knitDown.workstation }}.

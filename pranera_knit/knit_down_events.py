@@ -16,6 +16,15 @@ custom_location, copied to the knit down) is one of theirs in Knit Down
 Settings → Approver Locations. Knit downs with no location can only be
 decided by a System Manager. System Manager can decide any.
 
+Two levels (patches/v1_27): each Approver Locations row has an Approval
+Level. At a location with any level-2 row (e.g. Pranera HO), a level-1
+approval only moves the knit down to "Pending Final Approval" (first
+approver / time / remarks kept in first_approved_*); one of the
+location's level-2 approvers then approves or rejects it. Level 2 has no
+GPS check. Rolls stay blocked until the final approval. Locations with
+no level-2 row keep the single approval. System Manager can decide
+either stage.
+
 GPS (patches/v1_24): with "Require GPS" on in Knit Down Settings, a Knit
 Down Approver's phone must also be within "GPS Range (metres)" (default
 200) of the knit down's Location (Location → Latitude / Longitude) when
@@ -66,7 +75,10 @@ OPERATIONS_BY_TYPE = {
     FABRIC: (KNIT_OPERATION,),
     COLLAR_CUFF: ("COLLAR KNITTING", "CUFF KNITTING"),
 }
-LIVE_STATUSES = ("Pending", "Approved")
+PENDING = "Pending"
+FINAL = "Pending Final Approval"
+OPEN_STATUSES = (PENDING, FINAL)
+LIVE_STATUSES = (PENDING, FINAL, "Approved")
 CLOSED_STATUSES = ("Approved", "Rejected")
 PERCENT_TOLERANCE = 1.0
 
@@ -116,26 +128,47 @@ def is_approver(user=None):
     return bool(APPROVER_ROLES & set(frappe.get_roles(user or frappe.session.user)))
 
 
-def approver_locations(user=None):
-    """Locations this user approves knit downs for (Knit Down Settings)."""
-    user = user or frappe.session.user
+def _approver_rows(filters):
+    """Knit Down Settings → Approver Locations rows as {user, location, level}."""
     if not frappe.db.exists("DocType", "Knit Down Approver Location"):
-        return set()
-    return set(frappe.get_all("Knit Down Approver Location",
-                              filters={"parenttype": SETTINGS, "user": user}, pluck="location"))
+        return []
+    has_level = frappe.get_meta("Knit Down Approver Location").has_field("level")
+    rows = frappe.get_all("Knit Down Approver Location", filters=dict(filters, parenttype=SETTINGS),
+                          fields=["user", "location"] + (["level"] if has_level else []))
+    for r in rows:
+        r.level = cint(r.get("level")) or 1
+    return rows
 
 
-def can_approve(user=None, location=None):
-    """Can `user` decide a knit down at `location`? System Manager: always.
-    Knit Down Approver: only for one of their locations (none set on the
-    knit down → no)."""
+def approver_locations(user=None, level=None):
+    """Locations this user approves knit downs for (Knit Down Settings),
+    optionally only at one approval level."""
+    rows = _approver_rows({"user": user or frappe.session.user})
+    return {r.location for r in rows if level is None or r.level == level}
+
+
+def needs_final_approval(location):
+    """True when `location` has a level-2 (final) approver."""
+    return bool(location) and any(r.level == 2 for r in _approver_rows({"location": location}))
+
+
+def stage_level(status):
+    """Approval level that decides a knit down in `status`."""
+    return 2 if status == FINAL else 1
+
+
+def can_approve(user=None, location=None, status=PENDING):
+    """Can `user` decide a knit down at `location` that is in `status`?
+    System Manager: always. Knit Down Approver: only at one of their
+    locations, at the level for that stage (Pending → level 1, Pending
+    Final Approval → level 2). No location on the knit down → no."""
     user = user or frappe.session.user
     roles = set(frappe.get_roles(user))
     if BYPASS_ROLE in roles:
         return True
     if APPROVER_ROLE not in roles or not location:
         return False
-    return location in approver_locations(user)
+    return location in approver_locations(user, level=stage_level(status))
 
 
 def gps_settings():
@@ -190,13 +223,11 @@ def check_gps(doc, gps):
     return dist
 
 
-def approvers_for(location):
-    """Users who may decide a knit down at `location` (for alerts)."""
-    users = set()
-    if location and frappe.db.exists("DocType", "Knit Down Approver Location"):
-        users = set(frappe.get_all("Knit Down Approver Location",
-                                   filters={"parenttype": SETTINGS, "location": location}, pluck="user"))
-    return users
+def approvers_for(location, level=1):
+    """Users who may decide a knit down at `location` at `level` (for alerts)."""
+    if not location:
+        return set()
+    return {r.user for r in _approver_rows({"location": location}) if r.level == level}
 
 
 # ── Validation ────────────────────────────────────────────────────────────
@@ -209,12 +240,18 @@ def validate_knit_down(doc, method=None):
             frappe.throw(_("Knit Down {0} is already {1}. Post a new knit down instead.")
                          .format(doc.name, before.status))
         return
+    if before and before.status == FINAL and _entry_changed(before, doc):
+        frappe.throw(_("Knit Down {0} is already approved at the unit and waiting for final "
+                       "approval; it can't be changed").format(doc.name))
 
     if doc.is_new():
         doc.status = "Pending"
         doc.requested_by = frappe.session.user
         doc.requested_on = now_datetime()
         doc.approved_by = doc.approved_on = doc.approver_remarks = None
+        for f in ("first_approved_by", "first_approved_on", "first_approver_remarks"):
+            if doc.meta.has_field(f):
+                doc.set(f, None)
 
     _validate_work_order(doc)
     _link_job_card(doc)
@@ -358,21 +395,40 @@ def _validate_unique(doc):
 
 
 def _validate_decision(doc, before):
-    old_status = before.status if before else "Pending"
+    old_status = before.status if before else PENDING
     if doc.status == old_status:
         return
-    if old_status != "Pending" or doc.status not in CLOSED_STATUSES:
+    allowed = {PENDING: (FINAL,) + CLOSED_STATUSES, FINAL: CLOSED_STATUSES}
+    if doc.status not in allowed.get(old_status, ()):
         frappe.throw(_("Invalid status change {0} → {1}").format(old_status, doc.status))
-    if not can_approve(location=doc.get("location")):
-        frappe.throw(_("You can't approve or reject knit downs for {0}. Ask a {1} for that location "
-                       "(Knit Down Settings) or a System Manager.")
-                     .format(doc.get("location") or _("a Work Order with no location"), APPROVER_ROLE),
+    final_stage = old_status == FINAL
+    level_2 = not final_stage and needs_final_approval(doc.get("location"))
+    # A level-1 approval at a two-level location only clears the first
+    # stage; "Approved" asked for there means "Pending Final Approval".
+    if not final_stage and doc.status == "Approved" and level_2:
+        doc.status = FINAL
+    if doc.status == FINAL and not level_2:
+        frappe.throw(_("{0} has no final approver set in Knit Down Settings")
+                     .format(doc.get("location") or _("This location")))
+
+    if not can_approve(location=doc.get("location"), status=old_status):
+        who = _("a level-2 (final) approver") if final_stage else _("a {0}").format(APPROVER_ROLE)
+        frappe.throw(_("You can't approve or reject knit downs for {0} at this stage. Ask {1} for "
+                       "that location (Knit Down Settings) or a System Manager.")
+                     .format(doc.get("location") or _("a Work Order with no location"), who),
                      frappe.PermissionError)
-    if needs_gps():
+    if needs_gps() and not final_stage:
         # Position comes from the Knit App (api/knit_down._decide → flags.gps).
+        # Final (level 2) approval can be given from anywhere.
         check_gps(doc, doc.flags.get("gps"))
     if doc.status == "Rejected" and not (doc.approver_remarks or "").strip():
         frappe.throw(_("Add a remark saying why the knit down is rejected"))
+    if doc.status == FINAL:
+        doc.first_approved_by = frappe.session.user
+        doc.first_approved_on = now_datetime()
+        doc.first_approver_remarks = doc.approver_remarks
+        doc.approved_by = doc.approved_on = doc.approver_remarks = None
+        return
     doc.approved_by = frappe.session.user
     doc.approved_on = now_datetime()
 
@@ -429,6 +485,9 @@ def ensure_approved(job_card, work_order=None):
     if not kd:
         msg = _("Knit down not approved for {0}. Post the knit down in Knit App → Knit Down Approval "
                 "and get it approved by production before submitting rolls.").format(where)
+    elif kd.status == FINAL:
+        msg = _("Knit down {0} for {1} is approved at the unit and waiting for final approval. "
+                "Rolls can be submitted once it's finally approved.").format(kd.name, where)
     elif kd.status == "Pending":
         msg = _("Knit down {0} for {1} is waiting for production approval. "
                 "Rolls can be submitted once it's approved.").format(kd.name, where)
