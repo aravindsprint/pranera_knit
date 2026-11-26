@@ -55,6 +55,9 @@
           </div>
         </div>
 
+        <div v-if="r.first_approver_remarks" class="remark">
+          <i class="pi pi-comment"></i> Unit: {{ r.first_approver_remarks }}
+        </div>
         <div v-if="r.approver_remarks" class="remark" :class="r.status === 'Rejected' ? 'remark--bad' : ''">
           <i class="pi pi-comment"></i> {{ r.approver_remarks }}
         </div>
@@ -62,13 +65,14 @@
         <div class="kd-card__foot">
           <span class="muted">
             {{ r.requested_by_name || r.requested_by }} · {{ fmtDateTime(r.requested_on) }}
+            <template v-if="r.first_approved_by"> · ✔ {{ r.first_approved_by_name }} {{ fmtTime(r.first_approved_on) }} (unit)</template>
             <template v-if="r.approved_by"> · {{ r.status === 'Approved' ? '✔' : '✖' }} {{ r.approved_by_name }} {{ fmtTime(r.approved_on) }}<template v-if="r.decision_distance_m !== null && r.decision_distance_m !== undefined && r.decision_latitude !== 0"> · {{ r.decision_distance_m }} m from unit</template></template>
           </span>
         </div>
 
-        <div v-if="r.status === 'Pending' && r.can_approve" class="decide-row" @click.stop>
+        <div v-if="isOpen(r.status) && r.can_approve" class="decide-row" @click.stop>
           <button class="btn btn-reject" @click="startDecision(r, 'Rejected')"><i class="pi pi-times"></i> Reject</button>
-          <button class="btn btn-approve" @click="startDecision(r, 'Approved')"><i class="pi pi-check"></i> Approve</button>
+          <button class="btn btn-approve" @click="startDecision(r, 'Approved')"><i class="pi pi-check"></i> {{ r.status === FINAL ? 'Final Approve' : 'Approve' }}</button>
         </div>
       </div>
     </div>
@@ -85,8 +89,13 @@
           <div class="value">{{ form.requested_by_name || '—' }}</div>
           <div class="muted small">{{ fmtDateTime(form.requested_on) }}</div>
         </div>
+        <div v-if="form.first_approved_by" class="status-card__full">
+          <div class="form-label">First Approved By (unit)</div>
+          <div class="value">{{ form.first_approved_by_name }} <span class="muted small">· {{ fmtDateTime(form.first_approved_on) }}</span></div>
+          <div v-if="form.first_approver_remarks" class="remark"><i class="pi pi-comment"></i> {{ form.first_approver_remarks }}</div>
+        </div>
         <div v-if="form.approved_by" class="status-card__full">
-          <div class="form-label">{{ form.status === 'Approved' ? 'Approved' : 'Rejected' }} By</div>
+          <div class="form-label">{{ form.status === 'Approved' ? (form.first_approved_by ? 'Final Approved' : 'Approved') : 'Rejected' }} By</div>
           <div class="value">{{ form.approved_by_name }} <span class="muted small">· {{ fmtDateTime(form.approved_on) }}</span></div>
           <div v-if="form.approver_remarks" class="remark" :class="form.status === 'Rejected' ? 'remark--bad' : ''">
             <i class="pi pi-comment"></i> {{ form.approver_remarks }}
@@ -209,13 +218,14 @@
         </div>
       </div>
 
-      <div v-if="form.name && form.status === 'Pending' && setup.can_approve && !form.can_approve" class="card muted small">
+      <div v-if="form.name && isOpen(form.status) && setup.can_approve && !form.can_approve" class="card muted small">
         <i class="pi pi-lock"></i>
-        {{ form.location ? `Only approvers for ${form.location} or a System Manager can approve this knit down.` : 'This work order has no location, so only a System Manager can approve it.' }}
+        <template v-if="form.status === FINAL">Approved at the unit — waiting for the final approver for {{ form.location }}.</template>
+        <template v-else>{{ form.location ? `Only approvers for ${form.location} or a System Manager can approve this knit down.` : 'This work order has no location, so only a System Manager can approve it.' }}</template>
       </div>
       <div v-if="form.name && form.can_approve" class="card decide-card">
         <button class="btn btn-reject" @click="startDecision(form, 'Rejected')"><i class="pi pi-times"></i> Reject</button>
-        <button class="btn btn-approve" @click="startDecision(form, 'Approved')"><i class="pi pi-check"></i> Approve</button>
+        <button class="btn btn-approve" @click="startDecision(form, 'Approved')"><i class="pi pi-check"></i> {{ form.status === FINAL ? 'Final Approve' : 'Approve' }}</button>
       </div>
 
       <div v-if="form.name && form.status === 'Rejected' && setup.can_create" class="card">
@@ -235,13 +245,16 @@
     <transition name="modal-fade">
       <div v-if="decision" class="modal-overlay" @click.self="decision = null">
         <div class="modal-box">
-          <h3 class="modal-title">{{ decision.status === 'Approved' ? 'Approve' : 'Reject' }} {{ decision.name }}</h3>
+          <h3 class="modal-title">{{ decision.status === 'Approved' ? (decision.final ? 'Final Approve' : 'Approve') : 'Reject' }} {{ decision.name }}</h3>
           <div class="modal-sub">{{ decision.work_order }} · {{ decision.workstation }}</div>
           <textarea
             v-model="decision.remarks" class="form-input" rows="3"
             :placeholder="decision.status === 'Approved' ? 'Remarks (optional)' : 'Why is it rejected? (required)'"
           ></textarea>
-          <div v-if="setup.needs_gps" class="modal-sub" style="margin-top:8px">
+          <div v-if="decision.status === 'Approved' && !decision.final && decision.needsFinal" class="modal-sub" style="margin-top:8px">
+            <i class="pi pi-info-circle"></i> {{ decision.location }} needs a second approval: after you approve, it goes to the final approver.
+          </div>
+          <div v-if="setup.needs_gps && !decision.final" class="modal-sub" style="margin-top:8px">
             <i class="pi pi-map-marker"></i>
             {{ locating ? 'Checking your location…' : `Your phone's location is checked: you must be within ${setup.gps_radius_m} m of the unit.` }}
           </div>
@@ -254,7 +267,7 @@
               @click="confirmDecision"
             >
               <i v-if="deciding" class="pi pi-spin pi-spinner"></i>
-              {{ decision.status === 'Approved' ? 'Approve' : 'Reject' }}
+              {{ decision.status === 'Approved' ? (decision.final ? 'Final Approve' : 'Approve') : 'Reject' }}
             </button>
           </div>
         </div>
@@ -342,7 +355,7 @@ function blankForm() {
     size: '', no_of_needles: '', no_of_course: '', texture: '', no_of_ply: '',
     required_size: null, required_needles: null, required_course: null, required_ply: null,
     knit_type: props.knitType, location: '',
-    yarns: [], requested_by_name: '', requested_on: '', approved_by: '', approved_by_name: '',
+    yarns: [], requested_by_name: '', requested_on: '', approved_by: '', approved_by_name: '', first_approved_by: '', first_approved_by_name: '', first_approved_on: '', first_approver_remarks: '', needs_final: false,
     approved_on: '', approver_remarks: '', can_edit: true, can_approve: false,
   }
 }
@@ -381,8 +394,12 @@ function fmtNum(v) {
 }
 function fmtPct(v) { return `${fmtNum(v || 0)}%` }
 function pctOff(y) { return Math.abs((parseFloat(y.actual_percent) || 0) - (parseFloat(y.bom_percent) || 0)) > 0.5 }
+// Two-level locations (Knit Down Settings → level-2 approvers): a first
+// approval moves the knit down to FINAL; a level-2 approver decides it.
+const FINAL = 'Pending Final Approval'
+function isOpen(s) { return s === 'Pending' || s === FINAL }
 function statusClass(s) {
-  return { Pending: 'pill--amber', Approved: 'pill--green', Rejected: 'pill--red' }[s] || 'pill--grey'
+  return { Pending: 'pill--amber', [FINAL]: 'pill--blue', Approved: 'pill--green', Rejected: 'pill--red' }[s] || 'pill--grey'
 }
 function deviation(actual, required) {
   const a = parseFloat(actual), r = parseFloat(required)
@@ -424,7 +441,7 @@ function specRows(r) {
   ]
 }
 function machineBlocked(m) {
-  return !!(m.knit_down && ['Pending', 'Approved'].includes(m.knit_down.status))
+  return !!(m.knit_down && ['Pending', FINAL, 'Approved'].includes(m.knit_down.status))
 }
 function fmtDateTime(dt) {
   if (!dt) return ''
@@ -595,7 +612,10 @@ const deciding = ref(false)
 const decisionError = ref('')
 function startDecision(r, status) {
   decisionError.value = ''
-  decision.value = { name: r.name, work_order: r.work_order, workstation: r.workstation, status, remarks: '' }
+  decision.value = {
+    name: r.name, work_order: r.work_order, workstation: r.workstation, status, remarks: '',
+    final: r.status === FINAL, needsFinal: !!r.needs_final, location: r.location,
+  }
 }
 // Phone GPS for the "must be at the unit" check (Knit Down Settings).
 const locating = ref(false)
@@ -621,7 +641,8 @@ async function confirmDecision() {
   decisionError.value = ''
   try {
     let gps = null
-    if (setup.needs_gps) {
+    // The final (level 2) approval has no GPS check.
+    if (setup.needs_gps && !d.final) {
       locating.value = true
       try { gps = await getPosition() } finally { locating.value = false }
     }
@@ -632,7 +653,7 @@ async function confirmDecision() {
     if (mode.value === 'form' && form.name === doc.name) applyDoc(doc)
     const i = rows.value.findIndex(r => r.name === doc.name)
     if (i >= 0) {
-      if (listStatus.value === 'Pending') rows.value.splice(i, 1)
+      if (listStatus.value === 'Pending' && !isOpen(doc.status)) rows.value.splice(i, 1)
       else rows.value[i] = { ...rows.value[i], ...doc, yarns: rows.value[i].yarns }
     }
   } catch (e) {
@@ -782,6 +803,7 @@ textarea.form-input { resize: vertical; }
 .pill--green { background: #dcfce7; color: #166534; }
 .pill--grey { background: #f1f5f9; color: #475569; }
 .pill--amber { background: #fef3c7; color: #92400e; }
+.pill--blue { background: #dbeafe; color: #1e40af; }
 .pill--red { background: #fee2e2; color: #991b1b; }
 
 .empty { text-align: center; color: #94a3b8; padding: 28px 12px; font-size: 14px; }

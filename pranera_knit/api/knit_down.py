@@ -11,13 +11,16 @@ Knitting team: pick a running Work Order + machine, enter the knit down
 (fabric: Dia, Gauge, GSM, Loop Length; collar / cuff: Size, Needles,
 Course, Texture, Loop Length, Ply, Gauge; plus yarn %, photo) → save_knit_down.
 Production team (Knit Down Approver): approve_knit_down / reject_knit_down.
+At a two-level location (Knit Down Settings → level-2 approvers) the first
+approval moves it to "Pending Final Approval" and a level-2 approver makes
+the final decision with the same two calls.
 """
 import frappe
 from frappe import _
 from frappe.utils import cint, flt
 
 from pranera_knit.knit_down_events import (
-    FABRIC, SPEC_FIELDS, approver_locations, bom_yarns, can_approve, gps_settings, is_approver,
+    FABRIC, FINAL, OPEN_STATUSES, PENDING, SPEC_FIELDS, approver_locations, needs_final_approval, bom_yarns, can_approve, gps_settings, is_approver,
     job_card_status, needs_gps,
     knit_type_for,
     knit_type_of_operation, latest_for, operations_for,
@@ -33,6 +36,7 @@ LIST_FIELDS = ["name", "status", "work_order", "workstation", "job_card", "item_
                "no_of_ply", "required_size", "required_needles", "required_course", "required_ply",
                "location", "requested_by", "requested_on", "approved_by", "approved_on",
                "approver_remarks", "photo", "decision_distance_m", "decision_latitude"]
+FIRST_FIELDS = ["first_approved_by", "first_approved_on", "first_approver_remarks"]
 OPEN_WO_STATUSES = ("Not Started", "In Process")
 
 
@@ -43,6 +47,7 @@ def get_setup():
         # also depends on its location (row / doc can_approve).
         "can_approve": is_approver(),
         "approver_locations": sorted(approver_locations()),
+        "final_approver_locations": sorted(approver_locations(level=2)),
         # The app reads the phone's GPS before approving / rejecting.
         "needs_gps": needs_gps(),
         "gps_radius_m": gps_settings().radius,
@@ -145,12 +150,15 @@ def reject_knit_down(name, remarks=None, latitude=None, longitude=None, accuracy
 
 def _decide(name, status, remarks, latitude=None, longitude=None, accuracy=None):
     doc = frappe.get_doc(DOCTYPE, name)
-    if not can_approve(location=doc.get("location")):
-        frappe.throw(_("You can't approve or reject knit downs for {0}")
-                     .format(doc.get("location") or _("a Work Order with no location")),
-                     frappe.PermissionError)
-    if doc.status != "Pending":
+    if doc.status not in OPEN_STATUSES:
         frappe.throw(_("Knit Down {0} is already {1}").format(name, doc.status))
+    if not can_approve(location=doc.get("location"), status=doc.status):
+        frappe.throw(_("You can't approve or reject knit downs for {0}{1}")
+                     .format(doc.get("location") or _("a Work Order with no location"),
+                             _(" at the final approval stage") if doc.status == FINAL else ""),
+                     frappe.PermissionError)
+    # "Approved" at the first stage of a two-level location becomes
+    # "Pending Final Approval" in knit_down_events._validate_decision.
     doc.status = status
     doc.approver_remarks = (remarks or "").strip() or None
     # Phone position for the GPS check in knit_down_events._validate_decision.
@@ -171,24 +179,34 @@ def get_knit_down(name):
     out["item_name"] = (doc.item_name or "").strip()
     out["requested_by_name"] = frappe.utils.get_fullname(doc.requested_by) if doc.requested_by else ""
     out["approved_by_name"] = frappe.utils.get_fullname(doc.approved_by) if doc.approved_by else ""
-    out["can_approve"] = doc.status == "Pending" and can_approve(location=doc.get("location"))
-    out["can_edit"] = doc.status == "Pending" and bool(doc.has_permission("write"))
+    first = doc.get("first_approved_by")
+    out["first_approved_by_name"] = frappe.utils.get_fullname(first) if first else ""
+    out["can_approve"] = doc.status in OPEN_STATUSES and \
+        can_approve(location=doc.get("location"), status=doc.status)
+    out["can_edit"] = doc.status == PENDING and bool(doc.has_permission("write"))
+    out["needs_final"] = needs_final_approval(doc.get("location"))
     return out
 
 
 @frappe.whitelist()
 def list_knit_downs(status=None, txt=None, limit=60, knit_type=None):
     filters = {"knit_type": knit_type or FABRIC}
-    if status:
+    if status == PENDING:
+        # The "Pending" queue holds both stages; each approver gets buttons
+        # only where they can decide (row can_approve).
+        filters["status"] = ["in", OPEN_STATUSES]
+    elif status:
         filters["status"] = status
     or_filters = None
     if txt:
         like = "%{0}%".format(txt.strip())
         or_filters = {"name": ["like", like], "work_order": ["like", like],
                       "workstation": ["like", like], "item_name": ["like", like]}
-    rows = frappe.get_list(DOCTYPE, filters=filters, or_filters=or_filters, fields=LIST_FIELDS,
+    fields = LIST_FIELDS + [f for f in FIRST_FIELDS if frappe.get_meta(DOCTYPE).has_field(f)]
+    rows = frappe.get_list(DOCTYPE, filters=filters, or_filters=or_filters, fields=fields,
                            order_by="creation desc", limit_page_length=min(cint(limit) or 60, 200))
-    users = {r.requested_by for r in rows} | {r.approved_by for r in rows}
+    users = {r.requested_by for r in rows} | {r.approved_by for r in rows} | \
+        {r.get("first_approved_by") for r in rows}
     names = {u: frappe.utils.get_fullname(u) for u in users if u}
     yarns = {}
     if rows:
@@ -197,12 +215,16 @@ def list_knit_downs(status=None, txt=None, limit=60, knit_type=None):
                                 fields=["parent", "item_code", "item_name", "bom_percent", "actual_percent"],
                                 order_by="parent asc, idx asc"):
             yarns.setdefault(y.pop("parent"), []).append(y)
+    final_at = {loc: needs_final_approval(loc) for loc in {r.get("location") for r in rows} if loc}
     for r in rows:
+        r.needs_final = final_at.get(r.get("location"), False)
         r.item_name = (r.item_name or "").strip()
         r.requested_by_name = names.get(r.requested_by, "")
         r.approved_by_name = names.get(r.approved_by, "")
+        r.first_approved_by_name = names.get(r.get("first_approved_by"), "")
         r.yarns = yarns.get(r.name, [])
-        r.can_approve = r.status == "Pending" and can_approve(location=r.get("location"))
+        r.can_approve = r.status in OPEN_STATUSES and \
+            can_approve(location=r.get("location"), status=r.status)
     return rows
 
 

@@ -25,7 +25,9 @@ Who gets what (wired in hooks.py / outward_request_events.py):
   * Vehicle Gate Entry: request added  → that request's creator (vehicle at gate)
   * Vehicle Gate Entry: departed       → creators of the requests it carried
   * Knit Down Approval posted         → "Knit Down Approver" role (production)
-  * Knit Down Approved / Rejected     → whoever posted it (knitting)
+  * Knit Down Approved / Rejected     → whoever posted it (knitting), and
+                                        the first approver on a two-level one
+  * Knit Down Pending Final Approval  → the location's level-2 approvers
 
 WhatsApp (whatsapp_alerts.py) is sent ONLY for Roll Pick Assignments, to
 the assigned picker (send(..., whatsapp=True) below). Every other alert is
@@ -235,10 +237,27 @@ def on_knit_down_update(doc, method=None):
 
 
 def _knit_down_decision_alert(doc):
-    if not doc.has_value_changed("status") or doc.status not in ("Approved", "Rejected"):
+    from pranera_knit.knit_down_events import FINAL, approvers_for
+    if not doc.has_value_changed("status"):
+        return
+    if doc.status == FINAL:
+        first = frappe.utils.get_fullname(doc.first_approved_by) if doc.get("first_approved_by") else ""
+        body = f"{doc.name}: {_knit_down_detail(doc)} ({(doc.item_name or '').strip()[:60]})"
+        if first:
+            body += f" — approved at unit by {first}"
+        if doc.get("first_approver_remarks"):
+            body += f": {doc.first_approver_remarks}"
+        send(sorted(approvers_for(doc.get("location"), level=2) - {doc.get("first_approved_by")}),
+             "Knit down ready for final approval", body,
+             _knit_down_path(doc), tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
+        return
+    if doc.status not in ("Approved", "Rejected"):
         return
     body = f"{doc.name}: {_knit_down_detail(doc)}"
     if doc.approver_remarks:
         body += f" — {doc.approver_remarks}"
-    send([doc.requested_by], f"Knit down {doc.status.lower()}", body,
+    to = [doc.requested_by]
+    if doc.get("first_approved_by") and doc.first_approved_by not in to:
+        to.append(doc.first_approved_by)
+    send(to, f"Knit down {doc.status.lower()}", body,
          _knit_down_path(doc), tag=f"kd:{doc.name}", ref=("Knit Down Approval", doc.name))
