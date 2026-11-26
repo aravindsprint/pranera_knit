@@ -19,6 +19,17 @@ Item fetching (get_outward_request_items):
   material once per finished item, so rows are merged on
   (item_code, batch, stock_uom) — in first-seen order.
 
+  If the PO has no submitted Subcontracting Receipt yet (e.g. the PO itself
+  is still a Draft), items come from the BOM of each PO row's finished
+  good instead — the "Raw Materials" table (BOM Item, parentfield items):
+      BOM       ← active Subcontracting BOM for the fg_item (its
+                  finished_good_bom), else the PO row's bom, else the
+                  fg_item's default active BOM
+      item_code ← item_code,  stock_uom ← stock_uom
+      qty       ← stock_qty / BOM quantity × PO row fg_item_qty
+      batch     ← blank (picked by the user)
+  Draft and submitted POs are both accepted; cancelled ones are refused.
+
   Work Order → its "Required Items" table (Work Order Item):
       item_code, stock_uom, qty ← required_qty. Work Order Item has no
       batch, so batch is left blank for the user to fill if needed.
@@ -91,8 +102,11 @@ def get_outward_request_items(work_order=None, purchase_order=None, from_buildin
 
 
 def _items_from_purchase_order(purchase_order):
-    if not frappe.db.exists("Purchase Order", purchase_order):
+    po_status = frappe.db.get_value("Purchase Order", purchase_order, "docstatus")
+    if po_status is None:
         frappe.throw(_("Purchase Order {0} not found").format(purchase_order))
+    if po_status == 2:
+        frappe.throw(_("Purchase Order {0} is cancelled").format(purchase_order))
 
     receipt_names = frappe.get_all(
         "Subcontracting Receipt Item",
@@ -105,8 +119,7 @@ def _items_from_purchase_order(purchase_order):
         pluck="name", order_by="posting_date asc, creation asc",
     )
     if not receipts:
-        frappe.throw(_("No submitted Subcontracting Receipt found for Purchase Order {0}")
-                     .format(purchase_order))
+        return _items_from_po_bom(purchase_order)
 
     supplied = frappe.get_all(
         "Subcontracting Receipt Supplied Item",
@@ -139,6 +152,65 @@ def _items_from_purchase_order(purchase_order):
             _merge(merged, r.rm_item_code, batch, r.stock_uom, qty)
 
     return {"source": "Purchase Order", "receipts": receipts, "items": _rows(merged)}
+
+
+def _subcontract_bom(fg_item, row_bom=None):
+    """BOM whose Raw Materials feed `fg_item`: the active Subcontracting
+    BOM's finished_good_bom, else the PO row's bom, else the item's
+    default active BOM."""
+    bom = frappe.db.get_value(
+        "Subcontracting BOM", {"finished_good": fg_item, "is_active": 1}, "finished_good_bom"
+    )
+    if bom:
+        return bom
+    if row_bom:
+        return row_bom
+    return (
+        frappe.db.get_value("BOM", {"item": fg_item, "is_active": 1, "is_default": 1, "docstatus": 1}, "name")
+        or frappe.db.get_value("BOM", {"item": fg_item, "is_active": 1, "docstatus": 1}, "name",
+                               order_by="creation desc")
+    )
+
+
+def _items_from_po_bom(purchase_order):
+    """No submitted Subcontracting Receipt yet: raw materials from the BOM
+    of each PO row's finished good, scaled to the row's fg_item_qty."""
+    po_rows = frappe.get_all(
+        "Purchase Order Item",
+        filters={"parenttype": "Purchase Order", "parent": purchase_order},
+        fields=["item_code", "fg_item", "fg_item_qty", "qty", "bom"],
+        order_by="idx asc",
+    )
+    merged, boms, missing = {}, [], []
+    for row in po_rows:
+        fg_item = row.fg_item
+        if not fg_item:
+            continue
+        bom = _subcontract_bom(fg_item, row.bom)
+        if not bom:
+            missing.append(fg_item)
+            continue
+        if bom not in boms:
+            boms.append(bom)
+        bom_qty = flt(frappe.db.get_value("BOM", bom, "quantity")) or 1
+        fg_qty = flt(row.fg_item_qty) or flt(row.qty)
+        for bi in frappe.get_all(
+            "BOM Item",
+            filters={"parenttype": "BOM", "parent": bom, "parentfield": "items"},
+            fields=["item_code", "stock_qty", "qty", "stock_uom"],
+            order_by="idx asc",
+        ):
+            per_unit = flt(bi.stock_qty) or flt(bi.qty)
+            _merge(merged, bi.item_code, "", bi.stock_uom, per_unit / bom_qty * fg_qty)
+
+    if not boms:
+        if missing:
+            frappe.throw(_("No active BOM found for finished good(s) {0} on Purchase Order {1}")
+                         .format(", ".join(missing), purchase_order))
+        frappe.throw(_("Purchase Order {0} has no Subcontracting Receipt and no finished good "
+                       "to take a BOM from").format(purchase_order))
+
+    return {"source": "Purchase Order", "receipts": boms, "boms": boms, "items": _rows(merged)}
 
 
 def _items_from_work_order(work_order):
