@@ -1,0 +1,83 @@
+/* Shared styles for the table-view pages (Machine Status / Operator Job Cards). */
+.tv-page { min-height: 100vh; display: flex; flex-direction: column; background: #f1f5f9; }
+.tv-content { flex: 1; padding: 12px 16px 32px; width: 100%; box-sizing: border-box; min-width: 0; }
+
+.tv-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.tv-spacer { flex: 1; }
+
+.tv-seg { display: inline-flex; background: #e2e8f0; border-radius: 10px; padding: 3px; gap: 3px; }
+.tv-seg__btn {
+  border: none; background: transparent; padding: 7px 12px; border-radius: 8px; font-size: 12px; font-weight: 700;
+  color: #475569; cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.tv-seg__btn--on { background: white; color: #0f172a; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+
+.tv-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tv-chip {
+  padding: 7px 12px; border-radius: 999px; border: 1.5px solid #e2e8f0; background: white; white-space: nowrap;
+  font-size: 12px; font-weight: 700; color: #475569; cursor: pointer; font-family: inherit;
+}
+.tv-chip--on { background: var(--app-primary, #059669); border-color: var(--app-primary, #059669); color: white; }
+.tv-dates { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #64748b; }
+.tv-date { padding: 7px 8px; border: 1.5px solid #e2e8f0; border-radius: 8px; font-size: 13px; font-family: inherit; background: white; }
+.tv-go { padding: 8px 14px; border: none; border-radius: 8px; background: var(--app-primary, #059669); color: white; font-weight: 700; cursor: pointer; }
+
+.tv-btn {
+  display: inline-flex; align-items: center; gap: 4px; padding: 8px 14px; border-radius: 10px; border: 1.5px solid transparent;
+  font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; text-decoration: none; white-space: nowrap;
+}
+.tv-btn:disabled { opacity: 0.5; cursor: default; }
+.tv-btn--ghost { background: white; border-color: #e2e8f0; color: #334155; }
+.tv-btn--xls { background: #15803d; color: white; }
+.tv-btn--pdf { background: #b91c1c; color: white; }
+
+.tv-refresh {
+  width: 38px; height: 38px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: white; flex-shrink: 0;
+  font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+
+.tv-search {
+  flex: 1 1 220px; padding: 9px 12px; border: 1.5px solid #e2e8f0; border-radius: 10px;
+  font-size: 14px; background: white; outline: none; font-family: inherit; min-width: 0;
+}
+.tv-search:focus, .tv-select:focus { border-color: var(--app-primary, #059669); }
+.tv-select {
+  padding: 9px 10px; border: 1.5px solid #e2e8f0; border-radius: 10px; font-size: 13px; background: white;
+  font-family: inherit; outline: none; color: #334155;
+}
+
+.tv-info { font-size: 11px; color: #94a3b8; margin: 2px 2px 10px; }
+.tv-note { font-size: 11px; color: #94a3b8; margin: 6px 2px; }
+.tv-err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+.tv-loading { display: flex; align-items: center; justify-content: center; gap: 8px; color: #64748b; padding: 32px; background: white; border-radius: 12px; }
+
+.tv-badge { font-size: 10px; font-weight: 800; padding: 3px 9px; border-radius: 999px; text-transform: uppercase; }
+.tv-badge--running, .tv-badge--current { background: #d1fae5; color: #065f46; }
+.tv-badge--idle, .tv-badge--upcoming { background: #fef3c7; color: #92400e; }
+.tv-badge--no_work_order, .tv-badge--unassigned { background: #fee2e2; color: #991b1b; }
+.tv-badge--finished { background: #ede9fe; color: #5b21b6; }
+
+.tv-role { font-size: 11px; font-weight: 700; }
+.tv-role--running { color: #059669; }
+.tv-role--also { color: #1e40af; }
+.tv-role--upcoming { color: #d97706; }
+.tv-role--unfinished { color: #64748b; }
+
+.tv-pct { display: inline-flex; align-items: center; gap: 6px; }
+.tv-pct__bar { width: 46px; height: 5px; background: #e2e8f0; border-radius: 999px; overflow: hidden; display: inline-block; }
+.tv-pct__bar > span { display: block; height: 100%; background: var(--app-primary, #059669); }
+
+.tv-stale { color: #b91c1c; font-weight: 700; font-size: 11.5px; }
+:deep(.tv-row--stale td) { background: #fff7ed !important; }
+
+.tv-spinner {
+  width: 14px; height: 14px; border: 2px solid rgba(15, 23, 42, 0.2); border-top-color: #0f172a;
+  border-radius: 50%; display: inline-block; animation: tv-spin 0.7s linear infinite;
+}
+@keyframes tv-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 600px) {
+  .tv-spacer { display: none; }
+  .tv-search { flex-basis: 100%; }
+  .tv-select { flex: 1 1 45%; }
+}

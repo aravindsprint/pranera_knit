@@ -15,6 +15,7 @@
           <input type="date" v-model="toDate" class="oj-date" :min="fromDate" />
           <button class="oj-go" @click="load">Go</button>
         </div>
+        <router-link to="/knit-app/operator-job-cards-table" class="oj-tablelink" title="Table view with Excel / PDF download">☰ Table</router-link>
         <button class="oj-refresh" :disabled="loading" @click="load" title="Refresh">
           <span v-if="loading" class="oj-spinner"></span><span v-else>↻</span>
         </button>
@@ -274,6 +275,10 @@ onBeforeUnmount(() => clearInterval(timer))
   font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 
+.oj-tablelink {
+  height: 38px; padding: 0 12px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: white; flex-shrink: 0;
+  display: flex; align-items: center; font-size: 13px; font-weight: 700; color: #334155; text-decoration: none; white-space: nowrap;
+}
 .oj-kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
 .oj-kpi { background: white; border-radius: 14px; padding: 12px 6px; text-align: center; border: 1px solid #e2e8f0; }
 .oj-kpi__num { font-size: 24px; font-weight: 900; line-height: 1; color: #0f172a; font-variant-numeric: tabular-nums; }

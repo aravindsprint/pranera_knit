@@ -106,6 +106,10 @@ export default defineConfig(({ command }) => ({
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
+        // Excel / PDF export libraries (table-view pages) are loaded on demand
+        // and online-only: keep them out of the precache so phones don't download
+        // ~1.5 MB they may never use.
+        globIgnores: ['**/chunks/exceljs*', '**/chunks/jspdf*', '**/chunks/html2canvas*', '**/chunks/purify*'],
         // Serve the cached SPA shell for in-app navigations when offline,
         // so reloading /knit-app/home works with no network. Exclude /api and
         // /files so those still hit the network (and their own caches below).
@@ -128,6 +132,8 @@ export default defineConfig(({ command }) => ({
           /^\/knit-app\/production-report/,
           /^\/knit-app\/process-loss/,
           /^\/knit-app\/no-access/,
+          /^\/knit-app\/workstation-status-table/,
+          /^\/knit-app\/operator-job-cards-table/,
         ],
         runtimeCaching: [
           {

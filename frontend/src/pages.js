@@ -31,6 +31,8 @@ export const SUB_PAGES = {
   '/knit-app/roll-wise-pick-order-execution': 'my-pick-orders',
   '/knit-app/collar-cuff-dashboard': 'dashboard',
   '/knit-app/production-roll-summary': 'production-report',
+  '/knit-app/workstation-status-table': 'workstation-status',
+  '/knit-app/operator-job-cards-table': 'operator-job-cards',
 }
 
 export function pageKeyForPath(path) {
