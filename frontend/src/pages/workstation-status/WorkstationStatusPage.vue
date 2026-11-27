@@ -26,6 +26,7 @@
             @click="typeFilter = t"
           >{{ t }}</button>
         </div>
+        <router-link to="/knit-app/workstation-status-table" class="ws-tablelink" title="Table view with Excel / PDF download">☰ Table</router-link>
         <button class="ws-refresh" :disabled="loading" @click="load" title="Refresh">
           <span v-if="loading" class="ws-spinner"></span><span v-else>↻</span>
         </button>
@@ -286,6 +287,10 @@ onBeforeUnmount(() => clearInterval(timer))
   width: 38px; height: 38px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: white;
   font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
+}
+.ws-tablelink {
+  height: 38px; padding: 0 12px; border-radius: 10px; border: 1.5px solid #e2e8f0; background: white; flex-shrink: 0;
+  display: flex; align-items: center; font-size: 13px; font-weight: 700; color: #334155; text-decoration: none; white-space: nowrap;
 }
 .ws-updated { font-size: 11px; color: #94a3b8; margin: 4px 2px 12px; }
 
