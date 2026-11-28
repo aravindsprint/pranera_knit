@@ -264,7 +264,7 @@ def _fill_single_warehouse(rows, from_building):
     balances = _batch_balances([r["batch"] for r in batched], from_building=from_building)
     by_batch = {}
     for b in balances:
-        if is_allowed_warehouse(b.warehouse):
+        if is_allowed_warehouse(b.warehouse, from_building):
             by_batch.setdefault(b.batch, []).append(b.warehouse)
     for r in batched:
         whs = by_batch.get(r["batch"], [])
@@ -902,7 +902,7 @@ def search_batch_stock(item_code, txt=None, work_order=None, purchase_order=None
                        from_building=None, exclude_request=None):
     """Batch dropdown on an item row: one option per (batch, warehouse)
     holding stock of this item — only enabled batches of the source
-    document's project(s), only NAP% warehouses of the From building — with the
+    document's project(s), only warehouses of the From building (NAP% when no From is set) — with the
     stock / reserved / available numbers described at the top."""
     if not item_code:
         return []
@@ -938,7 +938,7 @@ def search_batch_stock(item_code, txt=None, work_order=None, purchase_order=None
     needle = (txt or "").strip().lower()
     candidates = [
         b for b in _batch_balances(list(batch_meta), from_building=from_building)
-        if is_allowed_warehouse(b.warehouse)
+        if is_allowed_warehouse(b.warehouse, from_building)
         and (not needle or needle in b.batch.lower() or needle in b.warehouse.lower())
     ]
     reservations = _reservations([b.batch for b in candidates], exclude_request)
