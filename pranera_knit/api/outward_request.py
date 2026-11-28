@@ -503,33 +503,61 @@ def reject_same_day(name, remarks=None):
     return get_outward_request(name)
 
 
-@frappe.whitelist()
-def list_outward_requests(request_status=None, txt=None, limit=50, same_day_approval=None,
-                          stage=None, overdue=None):
-    """stage: not_assigned | assigned | picked | completed (Outward Request
-    status); overdue=1: not completed and dated over 2 days ago. Each row
-    carries its requested / picked / sent / pending quantities (progress)."""
-    filters = {}
+LIST_VIEWS = ("total", "pending", "completed")
+
+
+def _base_filters(from_building=None, to_building=None):
+    filters = []
+    if from_building:
+        filters.append(["from_building", "=", from_building])
+    if to_building:
+        filters.append(["to_building", "=", to_building])
+    return filters
+
+
+def _txt_or_filters(txt):
+    if not txt:
+        return None
+    like = f"%{txt}%"
+    return [[f, "like", like] for f in
+            ("name", "to_building", "from_building", "work_order", "purchase_order")]
+
+
+def _list_filters(from_building=None, to_building=None, view=None, stage=None, overdue=None,
+                  same_day_approval=None, request_status=None):
+    """view: total (everything) | pending (not completed, not rejected) |
+    completed; stage / overdue / same_day_approval narrow it further."""
+    filters = _base_filters(from_building, to_building)
+    if view == "pending" or frappe.utils.cint(overdue):
+        filters.append(["request_status", "!=", "Completed"])
+        filters.append(["same_day_approval", "!=", "Rejected"])
+    elif view == "completed":
+        filters.append(["request_status", "=", "Completed"])
     if request_status:
-        filters["request_status"] = request_status
+        filters.append(["request_status", "=", request_status])
     if same_day_approval:
-        filters["same_day_approval"] = same_day_approval
+        filters.append(["same_day_approval", "=", same_day_approval])
     if stage in progress_mod.STAGES:
         values = [v for v in progress_mod.STAGES[stage][1] if v]
-        filters["status"] = ["in", values] if values else ["is", "not set"]
+        filters.append(["status", "in", values] if values else ["status", "is", "not set"])
     if frappe.utils.cint(overdue):
-        filters["request_status"] = ["!=", "Completed"]
-        filters["date"] = ["<=", progress_mod.overdue_before()]
-        filters["same_day_approval"] = ["!=", "Rejected"]
-    or_filters = None
-    if txt:
-        like = f"%{txt}%"
-        or_filters = {
-            "name": ["like", like], "to_building": ["like", like], "from_building": ["like", like],
-            "work_order": ["like", like], "purchase_order": ["like", like],
-        }
+        filters.append(["date", "<=", progress_mod.overdue_before()])
+    return filters
+
+
+@frappe.whitelist()
+def list_outward_requests(request_status=None, txt=None, limit=50, same_day_approval=None,
+                          stage=None, overdue=None, from_building=None, to_building=None,
+                          view=None):
+    """from_building / to_building: exact building; view: total | pending |
+    completed; stage: not_assigned | assigned | picked | completed (Outward
+    Request status); overdue=1: not completed and dated over 2 days ago.
+    Each row carries its requested / picked / sent / pending quantities."""
     rows = frappe.get_list(
-        "Outward Request", filters=filters, or_filters=or_filters,
+        "Outward Request",
+        filters=_list_filters(from_building, to_building, view, stage, overdue,
+                              same_day_approval, request_status),
+        or_filters=_txt_or_filters(txt),
         fields=LIST_FIELDS, order_by="creation desc", limit_page_length=int(limit or 50),
     )
     names = {r.created_by for r in rows if r.created_by}
@@ -549,9 +577,29 @@ def list_outward_requests(request_status=None, txt=None, limit=50, same_day_appr
 
 
 @frappe.whitelist()
-def get_outward_summary():
-    """Open requests: pending Kgs / Pcs, count per stage, over-2-days count."""
-    return progress_mod.summary()
+def get_outward_summary(from_building=None, to_building=None, view=None, stage=None,
+                        overdue=None, same_day_approval=None, txt=None):
+    """Quantity cards and chip counts for the list, under the same filters.
+
+    Chip counts use From / To / search only, so each chip shows what it would
+    list. The quantity cards cover every request the list's full filter
+    matches (not just the first page): requested qty for Total, pending
+    (requested − sent) for Pending, sent qty for Completed."""
+    view = view if view in LIST_VIEWS else "pending"
+    or_filters = _txt_or_filters(txt)
+    base = frappe.get_list(
+        "Outward Request", filters=_base_filters(from_building, to_building),
+        or_filters=or_filters, fields=["name", "date", "status", "request_status", "same_day_approval"],
+        limit_page_length=0,
+    )
+    matching = frappe.get_list(
+        "Outward Request",
+        filters=_list_filters(from_building, to_building, view, stage, overdue, same_day_approval),
+        or_filters=or_filters, pluck="name", limit_page_length=0,
+    )
+    s = progress_mod.summary_for(base, matching, view)
+    s["view"] = view
+    return s
 
 
 # ── Lookups for the form ──────────────────────────────────────────────────

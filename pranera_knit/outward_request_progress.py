@@ -139,31 +139,48 @@ def overdue_before():
     return add_days(nowdate(), -OVERDUE_DAYS)
 
 
-def summary():
-    """Open (not completed, not rejected) requests: pending per UOM, count per
-    stage, and how many are over 2 days."""
-    rows = frappe.db.sql("""
-        SELECT name, date, status, request_status FROM `tabOutward Request`
-        WHERE IFNULL(request_status, '') != 'Completed'
-          AND IFNULL(same_day_approval, '') != 'Rejected'
-    """, as_dict=True)
+# Quantity shown on the summary cards for each list view.
+VIEW_METRIC = {"total": "requested", "pending": "pending", "completed": "sent"}
+CARD_UOMS = ("Kgs", "Pcs")   # always shown, even at 0, so the cards don't jump
+
+
+def _is_open(r):
+    return (r.request_status or "") != "Completed" and (r.same_day_approval or "") != "Rejected"
+
+
+def summary_for(base_rows, matching_names, view="pending"):
+    """base_rows: requests under From / To / search (name, date, status,
+    request_status, same_day_approval) — gives the chip counts.
+    matching_names: requests the list's full filter matches — gives the
+    quantity cards, summed per UOM using the view's metric."""
+    open_rows = [r for r in base_rows if _is_open(r)]
     counts = {k: 0 for k in STAGES}
-    counts["completed"] = frappe.db.count("Outward Request", {"request_status": "Completed"})
     cutoff = getdate(overdue_before())
     overdue = 0
-    for r in rows:
+    for r in open_rows:
         counts[stage_of(r.status)] += 1
         if r.date and getdate(r.date) <= cutoff:
             overdue += 1
-    pending = {}
-    for p in progress([r.name for r in rows]).values():
+    counts["completed"] = sum(1 for r in base_rows if (r.request_status or "") == "Completed")
+
+    metric = VIEW_METRIC.get(view, "pending")
+    qty = {u.lower(): {"uom": u, "qty": 0.0, "requests": 0} for u in CARD_UOMS}
+    for p in progress(matching_names).values():
         for t in p["by_uom"]:
-            u = pending.setdefault(t["uom"], {"uom": t["uom"], "pending": 0.0, "requests": 0})
-            if t["pending"] > 0:
-                u["pending"] += t["pending"]
+            u = qty.setdefault(t["uom"].lower(), {"uom": t["uom"], "qty": 0.0, "requests": 0})
+            if t[metric] > 0:
+                u["qty"] += t[metric]
                 u["requests"] += 1
-    pending = sorted(({**u, "pending": round(u["pending"], 2)} for u in pending.values()),
-                     key=lambda u: {"kgs": 0, "pcs": 1}.get(u["uom"].lower(), 2))
-    return {"pending": pending, "stages": [{"key": k, "label": STAGES[k][0], "count": counts[k]}
-                                           for k in STAGES],
-            "overdue": overdue, "overdue_days": OVERDUE_DAYS, "open": len(rows)}
+    qty = sorted(({**u, "qty": round(u["qty"], 2)} for u in qty.values()
+                  if u["uom"] in CARD_UOMS or u["qty"] > 0),
+                 key=lambda u: {"kgs": 0, "pcs": 1}.get(u["uom"].lower(), 2))
+    return {
+        "metric": metric, "qty": qty,
+        "stages": [{"key": k, "label": STAGES[k][0], "count": counts[k]} for k in STAGES],
+        "overdue": overdue, "overdue_days": OVERDUE_DAYS,
+        "counts": {
+            "total": len(base_rows), "pending": len(open_rows), "completed": counts["completed"],
+            "awaiting_approval": sum(1 for r in open_rows if (r.same_day_approval or "") == "Pending"),
+        },
+        "matching": len(matching_names),
+    }
