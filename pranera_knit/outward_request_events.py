@@ -32,13 +32,20 @@ from frappe.utils import now_datetime, flt
 PENDING, PROCESSING, COMPLETED = "Pending", "Processing", "Completed"
 ASSIGNED, PICKED = "Roll Pick Assigned", "Picked"
 
-# Every row's warehouse must be a NAP warehouse (name LIKE 'NAP%').
+# Legacy rule from before "From" was selectable: with no From building set,
+# every row's warehouse must be a NAP warehouse (name LIKE 'NAP%'). Once a
+# From building is set, the row's warehouse only has to belong to that
+# building (_validate_from_and_warehouses) — e.g. JV_WAREHOUSE → JV/A107.
 WAREHOUSE_PREFIX = "NAP"
 QTY_TOLERANCE = 0.001
 
 
-def is_allowed_warehouse(warehouse):
-    return bool(warehouse) and warehouse.upper().startswith(WAREHOUSE_PREFIX)
+def is_allowed_warehouse(warehouse, from_building=None):
+    if not warehouse:
+        return False
+    if from_building:
+        return True
+    return warehouse.upper().startswith(WAREHOUSE_PREFIX)
 
 
 # ── Outward Request itself ────────────────────────────────────────────────
@@ -135,9 +142,10 @@ def _validate_from_and_warehouses(doc):
 
 
 def _validate_warehouse_prefix(doc):
+    from_building = doc.get("from_building")
     for row in doc.get("items") or []:
         wh = row.get("warehouse")
-        if wh and not is_allowed_warehouse(wh):
+        if wh and not is_allowed_warehouse(wh, from_building):
             frappe.throw(_("Row {0}: Warehouse {1} is not allowed — only {2}% warehouses can be used")
                          .format(row.idx, wh, WAREHOUSE_PREFIX))
 
