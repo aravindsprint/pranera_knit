@@ -770,16 +770,28 @@ export const getOutwardRequest = (name) =>
 
 // stage: not_assigned | assigned | picked | completed; overdue: over 2 days.
 // Each row has progress: [{ uom, requested, picked, sent, pending, pick_diff_pct }].
-export const listOutwardRequests = ({ requestStatus, txt, sameDayApproval, stage, overdue } = {}) =>
+export const listOutwardRequests = ({
+  requestStatus, txt, sameDayApproval, stage, overdue, fromBuilding, toBuilding, view,
+} = {}) =>
   call(`${OR_API}.list_outward_requests`, {
     request_status: requestStatus || undefined, txt: txt || undefined,
     same_day_approval: sameDayApproval || undefined,
     stage: stage || undefined, overdue: overdue ? 1 : undefined,
+    from_building: fromBuilding || undefined, to_building: toBuilding || undefined,
+    view: view || undefined,
   }).then(r => r.message || [])
 
-// Open requests: pending Kgs / Pcs, count per stage, over-2-days count.
-export const getOutwardSummary = () =>
-  call(`${OR_API}.get_outward_summary`).then(r => r.message)
+// Quantity cards (requested / pending / sent per UOM, by view) and chip
+// counts, under the same From / To / view / stage / search filters as the list.
+export const getOutwardSummary = ({
+  txt, sameDayApproval, stage, overdue, fromBuilding, toBuilding, view,
+} = {}) =>
+  call(`${OR_API}.get_outward_summary`, {
+    txt: txt || undefined, same_day_approval: sameDayApproval || undefined,
+    stage: stage || undefined, overdue: overdue ? 1 : undefined,
+    from_building: fromBuilding || undefined, to_building: toBuilding || undefined,
+    view: view || undefined,
+  }).then(r => r.message)
 
 // Server-clock date rules: today, default_date, cutoff_time / cutoff_label,
 // after_cutoff, require_approval, is_approver, approvers.

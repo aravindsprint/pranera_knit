@@ -11,20 +11,45 @@
         <i class="pi pi-plus"></i> New Outward Request
       </button>
 
-      <div v-if="store.summary" class="qty-summary">
+      <div v-if="store.summary" class="qty-summary" :class="{ 'qty-summary--loading': store.loadingList }">
         <div v-for="u in summaryUoms" :key="u.uom" class="qty-summary__box">
-          <div class="qty-summary__label">Pending {{ uomLabel(u.uom) }}</div>
-          <div class="qty-summary__value">{{ fmtProg(u.pending) }} <small>{{ u.uom }}</small></div>
-          <div class="qty-summary__label">{{ u.requests }} requests</div>
+          <div class="qty-summary__label">{{ viewLabel }} {{ uomLabel(u.uom) }}</div>
+          <div class="qty-summary__value">{{ fmtProg(u.qty) }} <small>{{ u.uom }}</small></div>
+          <div class="qty-summary__label">{{ u.requests }} {{ u.requests === 1 ? 'request' : 'requests' }}</div>
         </div>
       </div>
 
       <div class="card card--tight">
-        <div class="chips">
+        <div class="list-filters">
+          <div>
+            <label class="form-label">From</label>
+            <AutoComplete
+              :model-value="store.listFrom" @update:model-value="v => setBuilding('listFrom', v)"
+              :options="store.buildingOptions" placeholder="All buildings"
+            />
+          </div>
+          <div>
+            <label class="form-label">To</label>
+            <AutoComplete
+              :model-value="store.listTo" @update:model-value="v => setBuilding('listTo', v)"
+              :options="store.buildingOptions" placeholder="All buildings"
+            />
+          </div>
+        </div>
+
+        <div class="segmented" style="margin-top:12px">
           <button
-            v-for="f in listFilters" :key="f.value" class="chip"
-            :class="{ 'chip--active': store.listFilter === f.value, 'chip--alert': f.alert && f.count }"
-            @click="setFilter(f.value)"
+            v-for="v in viewTabs" :key="v.value" class="segmented__btn"
+            :class="{ 'segmented__btn--active': store.listView === v.value }"
+            @click="setView(v.value)"
+          >{{ v.label }}<span v-if="v.count !== undefined" class="chip__n">{{ v.count }}</span></button>
+        </div>
+
+        <div v-if="store.listView === 'pending'" class="chips" style="margin-top:10px">
+          <button
+            v-for="f in pendingChips" :key="f.value" class="chip"
+            :class="{ 'chip--active': store.listSub === f.value, 'chip--alert': f.alert && f.count }"
+            @click="setSub(f.value)"
           >{{ f.label }}<span v-if="f.count !== undefined" class="chip__n">{{ f.count }}</span></button>
         </div>
         <input
@@ -36,7 +61,10 @@
       <div v-if="store.loadingList && !store.requests.length" class="empty">
         <i class="pi pi-spin pi-spinner"></i> Loading...
       </div>
-      <div v-else-if="!store.requests.length" class="empty">No outward requests yet.</div>
+      <div v-else-if="!store.requests.length" class="empty">No outward requests match these filters.</div>
+      <div v-else-if="store.summary && store.summary.matching > store.requests.length" class="muted small" style="text-align:center">
+        Showing the latest {{ store.requests.length }} of {{ store.summary.matching }} requests — the totals above cover all {{ store.summary.matching }}.
+      </div>
 
       <button v-for="r in store.requests" :key="r.name" class="req-card" @click="openExisting(r.name)">
         <div class="req-card__top">
@@ -593,22 +621,35 @@ const store = useOutwardRequestStore()
 const route = useRoute()
 const router = useRouter()
 const savedName = ref('')
-// Stage chips with counts from get_outward_summary.
-const listFilters = computed(() => {
+// Total / Pending / Completed, then (Pending only) stage chips — counts
+// from get_outward_summary under the current From / To / search.
+const viewTabs = computed(() => {
+  const c = store.summary?.counts || {}
+  return [
+    { label: 'Total', value: 'total', count: c.total },
+    { label: 'Pending', value: 'pending', count: c.pending },
+    { label: 'Completed', value: 'completed', count: c.completed },
+  ]
+})
+const pendingChips = computed(() => {
   const sum = store.summary
   const count = k => sum?.stages?.find(s => s.key === k)?.count
   const list = [
-    { label: 'All', value: '' },
-    { label: 'Not assigned', value: 'stage:not_assigned', count: count('not_assigned') },
-    { label: 'Assigned', value: 'stage:assigned', count: count('assigned') },
-    { label: 'Picked', value: 'stage:picked', count: count('picked') },
-    { label: 'Completed', value: 'stage:completed' },
+    { label: 'All pending', value: '' },
+    { label: 'Not assigned', value: 'not_assigned', count: count('not_assigned') },
+    { label: 'Assigned', value: 'assigned', count: count('assigned') },
+    { label: 'Picked', value: 'picked', count: count('picked') },
     { label: `Over ${OVERDUE_DAYS} days`, value: 'OVERDUE', count: sum?.overdue, alert: true },
   ]
-  if (store.isApprover) list.push({ label: 'Awaiting Approval', value: 'AWAITING_APPROVAL' })
+  if (store.isApprover) {
+    list.push({ label: 'Awaiting Approval', value: 'AWAITING_APPROVAL', count: sum?.counts?.awaiting_approval })
+  }
   return list
 })
-const summaryUoms = computed(() => store.summary?.pending || [])
+const viewLabel = computed(() =>
+  ({ total: 'Total', pending: 'Pending', completed: 'Completed' })[store.summary?.view || store.listView] || 'Pending'
+)
+const summaryUoms = computed(() => store.summary?.qty || [])
 function uomLabel(u) {
   return { kgs: 'fabric', pcs: 'collar / cuff' }[String(u || '').toLowerCase()] || u
 }
@@ -681,8 +722,19 @@ function openNew() {
 function openExisting(name) {
   router.push({ query: { name } })
 }
-function setFilter(v) {
-  store.listFilter = v
+function setView(v) {
+  if (store.listView === v) return
+  store.listView = v
+  store.listSub = ''
+  store.loadList()
+}
+function setSub(v) {
+  store.listSub = v
+  store.loadList()
+}
+function setBuilding(key, v) {
+  if ((store[key] || '') === (v || '')) return
+  store[key] = v || ''
   store.loadList()
 }
 
@@ -897,6 +949,12 @@ function fmtQty(n) {
 .req-card__vehicle { font-size: 13px; font-weight: 600; color: #0f6e56; display: flex; gap: 6px; align-items: center; }
 .vehicle-box { margin-top: 14px; }
 .qty-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.qty-summary--loading { opacity: .55; transition: opacity .15s; }
+.list-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.list-filters .form-label { margin-bottom: 4px; }
+@media (max-width: 400px) { .list-filters { grid-template-columns: 1fr; } }
+.segmented__btn .chip__n { color: #94a3b8; }
+.segmented__btn--active .chip__n { color: inherit; }
 .qty-summary__box { background: #fff; border-radius: 12px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 .qty-summary__label { font-size: 12px; color: #64748b; }
 .qty-summary__value { font-size: 22px; font-weight: 700; color: #0f172a; }

@@ -35,9 +35,14 @@ const nextKey = () => `r${++keySeq}`
 export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   // ── List ────────────────────────────────────────────────────────────────
   const requests = ref([])
-  // '' | stage:not_assigned | stage:assigned | stage:picked | stage:completed | OVERDUE | AWAITING_APPROVAL
-  const listFilter = ref('')
-  const summary = ref(null)         // get_outward_summary: pending per UOM, stage counts, overdue
+  // List filters. From starts on NAP; clearing it shows every building.
+  const listFrom = ref('NAP')
+  const listTo = ref('')
+  const listView = ref('pending')   // total | pending | completed
+  // Within Pending: '' | not_assigned | assigned | picked | OVERDUE | AWAITING_APPROVAL
+  const listSub = ref('')
+  const summary = ref(null)         // get_outward_summary: qty per UOM for the view, chip counts
+  let listSeq = 0
   const listSearch = ref('')
   const loadingList = ref(false)
 
@@ -203,25 +208,29 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   )
 
   async function loadList() {
+    const seq = ++listSeq
     loadingList.value = true
     error.value = ''
     try {
-      const f = listFilter.value
+      const sub = listView.value === 'pending' ? listSub.value : ''
+      const params = {
+        fromBuilding: listFrom.value, toBuilding: listTo.value, view: listView.value,
+        sameDayApproval: sub === 'AWAITING_APPROVAL' ? 'Pending' : '',
+        stage: ['not_assigned', 'assigned', 'picked'].includes(sub) ? sub : '',
+        overdue: sub === 'OVERDUE',
+        txt: listSearch.value,
+      }
       const [rows, sum] = await Promise.all([
-        listOutwardRequests({
-          sameDayApproval: f === 'AWAITING_APPROVAL' ? 'Pending' : '',
-          stage: f.startsWith('stage:') ? f.slice(6) : '',
-          overdue: f === 'OVERDUE',
-          txt: listSearch.value,
-        }),
-        getOutwardSummary().catch(() => summary.value),
+        listOutwardRequests(params),
+        getOutwardSummary(params).catch(() => summary.value),
       ])
+      if (seq !== listSeq) return   // a newer filter change already answered
       requests.value = rows
       summary.value = sum
     } catch (e) {
-      error.value = e.message
+      if (seq === listSeq) error.value = e.message
     } finally {
-      loadingList.value = false
+      if (seq === listSeq) loadingList.value = false
     }
   }
 
@@ -527,7 +536,7 @@ export const useOutwardRequestStore = defineStore('outwardRequest', () => {
   return {
     pickPlan, pickForm, warehouses, users, creatingPick, pickError, canCreatePick, pickFormValid,
     startPick, onSubcontractingOrderChange, searchUsers, createPick, cancelPick,
-    requests, listFilter, listSearch, loadingList, summary,
+    requests, listFrom, listTo, listView, listSub, listSearch, loadingList, summary,
     name, date, fromBuilding, toBuilding, sourceType, workOrder, purchaseOrder, items, receipts, meta,
     buildings, workOrders, purchaseOrders, buildingOptions,
     fetching, saving, error, fetchedFor,
